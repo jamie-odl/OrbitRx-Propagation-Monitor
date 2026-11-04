@@ -28,4 +28,6 @@ def test_flux_trend_arrow_labels_the_direction(): # N-new-8
     assert flux_trend_arrow([100, 110]) == "↑ (rising)"
     assert flux_trend_arrow([110, 100]) == "↓ (falling)"
     assert flux_trend_arrow([100, 101]) == "→ (steady)"
-    assert flux_trend_arrow([100]) == "--"
+    # Too little history: show nothing, never a bare "--" placeholder (M7).
+    assert flux_trend_arrow([100]) == ""
+    assert "--" not in flux_trend_arrow([])

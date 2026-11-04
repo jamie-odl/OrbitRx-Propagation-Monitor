@@ -15,7 +15,7 @@ class AppState:
     a_index: float | None = None
     a_index_source: str | None = None
     flux: float | None = None
-    flux_trend: str = "--"
+    flux_trend: str = ""
     sunspot_observed: float | None = None
     sunspot_predicted: float | None = None
     solar_wind_speed: float | None = None

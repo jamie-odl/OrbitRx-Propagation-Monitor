@@ -87,7 +87,7 @@ def bands_summary(flux: float | None, kp: float) -> str:
 def flux_trend_arrow(recent_flux: list[float]) -> str:
     """Solar flux trend, e.g. "↑ (rising)" (N-new-8: arrow alone has no meaning)."""
     if len(recent_flux) < 2:
-        return "--"
+        return ""  # not enough history yet; show nothing rather than a bare "--" (M7)
     delta = recent_flux[-1] - recent_flux[-2]
     if delta > 2:
         return "↑ (rising)"

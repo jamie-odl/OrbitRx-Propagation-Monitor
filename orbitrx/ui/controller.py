@@ -326,7 +326,7 @@ class OrbitRxController:
         return {
             "kp": f"Kp: {s.kp_index:.2f}",
             "kp_forecast": f"Kp Forecast: {s.kp_forecast}",
-            "solar": f"Solar Flux: {format_value(s.flux)} {s.flux_trend}",
+            "solar": f"Solar Flux: {format_value(s.flux)} {s.flux_trend}".rstrip(),
             "sunspot": f"Sunspot: {ss:.1f}" if ss else "Sunspot: n/a",
             "a_index": f"A-index: {a_txt}",
             "solar_wind": f"Wind: {format_value(s.solar_wind_speed, unit=' km/s')}  "

@@ -245,6 +245,8 @@ class QtOrbitRxApplication(QMainWindow):
             lbl.setWordWrap(True)
             lbl.setStyleSheet("padding: 2px;")
             self._labels[key] = lbl
+            if key == "solar":
+                lbl.setToolTip("Solar flux trend versus the previous reading: rising, steady or falling. Higher flux usually helps the upper HF bands.")
             stats_form.addRow(lbl)
         stats_scroll.setWidget(stats_form_widget)
         stats_outer.addWidget(stats_scroll, stretch=1)
