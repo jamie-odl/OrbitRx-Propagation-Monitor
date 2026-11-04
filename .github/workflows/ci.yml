@@ -72,6 +72,7 @@ jobs:
           path: |
             screenshots/rig-wizard.png
             screenshots/rig-wizard-fallback.png
+            screenshots/rig-wizard-dropdown.png
             rig-wizard-ports.txt
           retention-days: 30
           if-no-files-found: warn
