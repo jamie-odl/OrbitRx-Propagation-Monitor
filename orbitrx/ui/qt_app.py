@@ -15,7 +15,7 @@ from orbitrx.ui.controller import OrbitRxController
 from orbitrx.ui.map_widget import PropagationMapWidget, QT_AVAILABLE
 from orbitrx.spots.settings import clamp_poll_seconds
 from orbitrx.ui.formatting import (
-    concise_date_offset_formats, format_hour_offset, format_replay_offset, pad_datetime_range,
+    format_hour_offset, format_replay_offset, history_plot_date_format, pad_datetime_range,
 )
 from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
 from orbitrx.ui.theme import ERR, MUTED, OK, apply_theme
@@ -47,7 +47,7 @@ try:
     import matplotlib
     matplotlib.use("QtAgg")
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-    from matplotlib.dates import AutoDateLocator, ConciseDateFormatter
+    from matplotlib.dates import AutoDateLocator, DateFormatter
     from matplotlib.figure import Figure
     PLOT_QT = True
 except ImportError:
@@ -215,6 +215,10 @@ class QtOrbitRxApplication(QMainWindow):
         right_scroll.setMinimumWidth(400)
         right_scroll.setMaximumWidth(420)
         right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # S3: the Stats tab below has its own scroll area; only one vertical scrollbar
+        # should ever be visible in the right column, so this outer one stays off.
+        right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._right_scroll = right_scroll
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
 
@@ -241,13 +245,16 @@ class QtOrbitRxApplication(QMainWindow):
         stats_scroll.setWidgetResizable(True)
         stats_scroll.setFrameShape(QFrame.Shape.NoFrame)
         stats_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._stats_scroll = stats_scroll
         stats_form_widget = QWidget()
         stats_form = QFormLayout(stats_form_widget)
         stats_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         stats_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         for key in [
+            # S6: "band_grid" is deliberately absent - the band_panel tiles above are the
+            # single source for per-band conditions, so there is no second wrapping line.
             "kp", "kp_forecast", "solar", "sunspot", "a_index", "solar_wind", "time",
-            "bands", "band_grid", "muf", "path_muf", "hamqsl", "sunrise", "sunset",
+            "bands", "muf", "path_muf", "hamqsl", "sunrise", "sunset",
             "location", "cluster", "solar_forecast", "contest", "dx",
         ]:
             lbl = QLabel(f"{key}: --")
@@ -255,7 +262,7 @@ class QtOrbitRxApplication(QMainWindow):
             lbl.setStyleSheet("padding: 2px;")
             self._labels[key] = lbl
             if key == "solar":
-                lbl.setToolTip("Solar flux trend versus the previous reading: rising, steady or falling. Higher flux usually helps the upper HF bands.")
+                lbl.setToolTip("Change vs previous reading")
             stats_form.addRow(lbl)
         stats_scroll.setWidget(stats_form_widget)
         stats_outer.addWidget(stats_scroll, stretch=1)
@@ -275,7 +282,7 @@ class QtOrbitRxApplication(QMainWindow):
         hist_row = QHBoxLayout()
         self.hist_date = QDateEdit()
         self.hist_date.setCalendarPopup(True)
-        self.hist_date.setDisplayFormat("yyyy-MM-dd")
+        self.hist_date.setDisplayFormat("dd MMM yyyy")  # S1: no ISO dates in the UI
         self.hist_date.setDate(QDate.currentDate())
         hist_row.addWidget(self.hist_date)
         hist_row.addWidget(QPushButton("Refresh", clicked=self._refresh_plot_tab))
@@ -569,12 +576,12 @@ class QtOrbitRxApplication(QMainWindow):
         for spine in ax.spines.values():
             spine.set_color("#37474F")
 
+        lo, hi = pad_datetime_range(min(times), max(times))
         locator = AutoDateLocator(maxticks=7)
         ax.xaxis.set_major_locator(locator)
-        ax.xaxis.set_major_formatter(
-            ConciseDateFormatter(locator, offset_formats=concise_date_offset_formats())
-        )
-        lo, hi = pad_datetime_range(min(times), max(times))
+        # M4: every tick shows HH:mm (never minutes alone); "dd MMM HH:mm" once the
+        # range spans more than a day, so the day is still unambiguous.
+        ax.xaxis.set_major_formatter(DateFormatter(history_plot_date_format(lo, hi)))
         ax.set_xlim(lo, hi)
 
         kp_line, = ax.plot(times, kp, label="Kp", marker="o", color="#64B5F6")
@@ -676,12 +683,14 @@ class QtOrbitRxApplication(QMainWindow):
         fields["home_lat"].setRange(-90.0, 90.0)
         fields["home_lat"].setDecimals(4)
         fields["home_lat"].setSpecialValueText("n/a")
+        fields["home_lat"].setMinimumHeight(30)  # M3: room for both spin arrows
         fields["home_lat"].setValue(float(cfg.get("home_lat") or -90.0) if cfg.get("home_lat") is not None else -90.0)
         self._add_settings_row(station, "Home latitude", fields["home_lat"])
         fields["home_lon"] = QDoubleSpinBox()
         fields["home_lon"].setRange(-180.0, 180.0)
         fields["home_lon"].setDecimals(4)
         fields["home_lon"].setSpecialValueText("n/a")
+        fields["home_lon"].setMinimumHeight(30)
         fields["home_lon"].setValue(float(cfg.get("home_lon") or -180.0) if cfg.get("home_lon") is not None else -180.0)
         self._add_settings_row(station, "Home longitude", fields["home_lon"])
         fields["ip_geolocation_enabled"] = QCheckBox("Look up my location from my IP")
@@ -751,12 +760,14 @@ class QtOrbitRxApplication(QMainWindow):
         fields["target_dx_lat"].setRange(-90.0, 90.0)
         fields["target_dx_lat"].setDecimals(4)
         fields["target_dx_lat"].setSpecialValueText("n/a")
+        fields["target_dx_lat"].setMinimumHeight(30)
         fields["target_dx_lat"].setValue(float(cfg.get("target_dx_lat") or -90.0) if cfg.get("target_dx_lat") is not None else -90.0)
         self._add_settings_row(dxc, "Target latitude", fields["target_dx_lat"])
         fields["target_dx_lon"] = QDoubleSpinBox()
         fields["target_dx_lon"].setRange(-180.0, 180.0)
         fields["target_dx_lon"].setDecimals(4)
         fields["target_dx_lon"].setSpecialValueText("n/a")
+        fields["target_dx_lon"].setMinimumHeight(30)
         fields["target_dx_lon"].setValue(float(cfg.get("target_dx_lon") or -180.0) if cfg.get("target_dx_lon") is not None else -180.0)
         self._add_settings_row(dxc, "Target longitude", fields["target_dx_lon"])
 
@@ -796,6 +807,7 @@ class QtOrbitRxApplication(QMainWindow):
         poll.setRange(300, 3600)
         poll.setSuffix(" s")
         poll.setSingleStep(60)
+        poll.setMinimumHeight(30)
         poll.setValue(clamp_poll_seconds(cfg.get("pskreporter_poll_seconds", 300)))
         fields["pskreporter_poll_seconds"] = poll
         self._add_settings_row(spots, "Poll interval", poll)
@@ -844,6 +856,7 @@ class QtOrbitRxApplication(QMainWindow):
         refresh_secs = QSpinBox()
         refresh_secs.setRange(10, 3600)
         refresh_secs.setSuffix(" s")
+        refresh_secs.setMinimumHeight(30)
         refresh_secs.setValue(int(cfg.get("refresh_interval_seconds", 60)))
         fields["refresh_interval_seconds"] = refresh_secs
         self._add_settings_row(services, "Space weather refresh", refresh_secs)

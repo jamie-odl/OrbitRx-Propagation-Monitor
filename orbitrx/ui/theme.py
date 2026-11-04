@@ -16,7 +16,7 @@ BORDER = "#26394A"
 CONTROL_BORDER = "#6B8094"  # ~4.4:1 on BG, ~4.0:1 on SURFACE
 CHECK_BORDER = "#7A8896"  # ~4.9:1 on BG
 TEXT = "#E3EAF2"
-MUTED = "#8FA3B5"
+MUTED = "#9AA7B4"  # ~6.9:1 on BG (S2)
 ACCENT = "#4FC3F7"
 OK = "#81C784"
 WARN = "#FFB74D"
@@ -50,6 +50,7 @@ QGroupBox {{ border: 1px solid {BORDER}; border-radius: 6px; margin-top: 10px; p
 QGroupBox::title {{ subcontrol-origin: margin; left: 8px; color: {MUTED}; font-size: {FONT_CAPTION}px; }}
 QLineEdit, QComboBox, QAbstractSpinBox {{ background: {SURFACE}; border: 1px solid {CONTROL_BORDER}; border-radius: 4px; padding: 4px 6px; }}
 QLineEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {{ border-color: {ACCENT}; }}
+QAbstractSpinBox {{ padding-right: 18px; }}
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
     subcontrol-origin: border; width: 16px; border-left: 1px solid {CONTROL_BORDER}; background: {SURFACE};
 }}

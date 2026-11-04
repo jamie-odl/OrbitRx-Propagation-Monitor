@@ -164,3 +164,50 @@ def test_night_mask_dark_opposite_sun():
     assert mask.getpixel((180, 90))[3] == 0          # sub-solar point is lit
     assert mask.getpixel((5, 90))[3] > 100           # antipode is dark
     assert math.isclose(mask.size[0], 360)
+
+
+def test_sun_marker_wraps_at_left_edge(): # S4
+    from orbitrx.map_renderer import MapRenderer
+    anns = MapRenderer._wrap_sun_marker(2.0, 100.0, 900)
+    assert [a.kind for a in anns] == ["sun", "sun"]
+    assert anns[0].data == {"x": 2.0, "y": 100.0}
+    assert anns[1].data == {"x": 902.0, "y": 100.0}  # wrapped copy near the right edge
+
+
+def test_sun_marker_wraps_at_right_edge(): # S4
+    from orbitrx.map_renderer import MapRenderer
+    anns = MapRenderer._wrap_sun_marker(898.0, 100.0, 900)
+    assert len(anns) == 2
+    assert anns[1].data == {"x": -2.0, "y": 100.0}  # wrapped copy near the left edge
+
+
+def test_sun_marker_not_wrapped_away_from_both_edges(): # S4
+    from orbitrx.map_renderer import MapRenderer
+    anns = MapRenderer._wrap_sun_marker(450.0, 100.0, 900)
+    assert len(anns) == 1
+
+
+def test_weather_labels_drops_redundant_per_band_row(tmp_path, monkeypatch): # S6
+    monkeypatch.chdir(tmp_path)
+    from orbitrx.ui.controller import OrbitRxController
+    ctrl = OrbitRxController()
+    labels = ctrl.weather_labels()
+    assert "band_grid" not in labels
+    assert not any("Per-band" in v for v in labels.values())
+
+
+def test_solar_flux_trend_word_shown_whenever_a_value_exists(tmp_path, monkeypatch): # S7
+    monkeypatch.chdir(tmp_path)
+    from orbitrx.ui.controller import OrbitRxController
+    ctrl = OrbitRxController()
+
+    ctrl.state.flux = 111.0
+    ctrl.state.flux_trend = ""  # no previous reading yet
+    assert ctrl.weather_labels()["solar"] == "Solar Flux: 111.0 → (steady)"
+
+    ctrl.state.flux_trend = "↑ (rising)"
+    assert ctrl.weather_labels()["solar"] == "Solar Flux: 111.0 ↑ (rising)"
+
+    ctrl.state.flux = None
+    ctrl.state.flux_trend = ""
+    assert ctrl.weather_labels()["solar"] == "Solar Flux: n/a"

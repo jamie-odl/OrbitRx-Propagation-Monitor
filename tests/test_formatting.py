@@ -9,9 +9,11 @@ from orbitrx.ui.formatting import (
     decimal_hours_to_hhmm,
     format_hour_offset,
     format_iso_utc,
+    format_map_hud_datetime,
     format_replay_offset,
     format_source_label,
     format_value,
+    history_plot_date_format,
     pad_datetime_range,
 )
 
@@ -96,3 +98,26 @@ def test_concise_date_offset_formats_use_day_month_year_order(): # N-new-7
     import datetime
     d = datetime.datetime(2026, 11, 4)
     assert d.strftime(formats[3]) == "04 Nov 2026"
+
+
+def test_history_plot_date_format_is_hh_mm_within_a_day(): # M4
+    lo = datetime.datetime(2026, 11, 4, 21, 30, tzinfo=datetime.timezone.utc)
+    hi = datetime.datetime(2026, 11, 4, 23, 0, tzinfo=datetime.timezone.utc)
+    fmt = history_plot_date_format(lo, hi)
+    assert fmt == "%H:%M"
+    assert hi.strftime(fmt) == "23:00"
+
+
+def test_history_plot_date_format_adds_day_beyond_a_day(): # M4
+    lo = datetime.datetime(2026, 11, 2, 0, 0, tzinfo=datetime.timezone.utc)
+    hi = datetime.datetime(2026, 11, 4, 23, 0, tzinfo=datetime.timezone.utc)
+    fmt = history_plot_date_format(lo, hi)
+    assert fmt == "%d %b %H:%M"
+    assert hi.strftime(fmt) == "04 Nov 23:00"
+
+
+def test_format_map_hud_datetime_has_no_iso_date(): # S1
+    dt = datetime.datetime(2026, 11, 4, 23, 1, tzinfo=datetime.timezone.utc)
+    text = format_map_hud_datetime(dt)
+    assert text == "04 Nov 2026 23:01 UTC"
+    assert "2026-11-04" not in text

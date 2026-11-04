@@ -80,6 +80,19 @@ def concise_date_offset_formats() -> list[str]:
     return ["", "%Y", "%b %Y", "%d %b %Y", "%d %b %Y", "%d %b %Y %H:%M"]
 
 
+def history_plot_date_format(lo: datetime.datetime, hi: datetime.datetime) -> str:
+    """matplotlib tick format for the history plot x-axis (M4): every tick shows
+    hours and minutes, with the day added once the range spans more than a day.
+    """
+    span_hours = (hi - lo).total_seconds() / 3600.0
+    return "%H:%M" if span_hours <= 24 else "%d %b %H:%M"
+
+
+def format_map_hud_datetime(dt: datetime.datetime) -> str:
+    """Map HUD timestamp with no ISO date, e.g. "04 Nov 2026 23:01 UTC" (S1)."""
+    return dt.strftime("%d %b %Y %H:%M") + " UTC"
+
+
 def pad_datetime_range(
     lo: datetime.datetime, hi: datetime.datetime, frac: float = 0.05
 ) -> tuple[datetime.datetime, datetime.datetime]:

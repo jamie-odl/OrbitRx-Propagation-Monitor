@@ -93,6 +93,18 @@ class MapRenderer:
         night.putalpha(mask)
         return night
 
+    @staticmethod
+    def _wrap_sun_marker(x: float, y: float, width: int, radius: float = 16.0) -> list[MapAnnotation]:
+        """Sun annotation(s), plus a wrapped copy so the marker is never clipped at the
+        map's left/right edge (S4): the glow drawn in the Qt widget has radius 16px.
+        """
+        anns = [MapAnnotation("sun", {"x": x, "y": y})]
+        if x - radius < 0:
+            anns.append(MapAnnotation("sun", {"x": x + width, "y": y}))
+        elif x + radius > width:
+            anns.append(MapAnnotation("sun", {"x": x - width, "y": y}))
+        return anns
+
     def _terminator_lat(self, lon_deg: float, decl_rad: float, sun_lon_rad: float) -> float:
         lon_rad = math.radians(lon_deg)
         tan_dec = math.tan(decl_rad)
@@ -189,7 +201,7 @@ class MapRenderer:
         annotations: list[MapAnnotation] = []
         sun_lon_wrapped = (sun_lon_deg + 180) % 360 - 180
         sx, sy = self.world_to_map(decl_deg, sun_lon_wrapped)
-        annotations.append(MapAnnotation("sun", {"x": sx, "y": sy}))
+        annotations.extend(self._wrap_sun_marker(sx, sy, w))
 
         if state.user_lat is not None and state.user_lon is not None:
             ux, uy = self.world_to_map(state.user_lat, state.user_lon)

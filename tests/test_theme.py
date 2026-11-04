@@ -62,6 +62,15 @@ def test_qss_styles_spinbox_up_down_buttons(): # N-new-2
     assert "QAbstractSpinBox::down-arrow" in QSS
 
 
+def test_qss_spinbox_reserves_room_for_both_arrows(): # M3
+    """padding-right makes space for the button column so it never overhangs the field,
+    and both buttons sit fully inside the border with a visible separator."""
+    assert "QAbstractSpinBox { padding-right: 18px; }" in QSS
+    assert "subcontrol-origin: border; width: 16px; border-left: 1px solid" in QSS
+    assert "subcontrol-position: top right" in QSS
+    assert "subcontrol-position: bottom right" in QSS
+
+
 def test_type_scale_has_four_distinct_sizes():
     sizes = {FONT_CAPTION, FONT_BODY, FONT_SECTION, FONT_TITLE}
     assert len(sizes) == 4
@@ -73,15 +82,23 @@ def test_qss_only_uses_type_scale_font_sizes():
     assert used <= allowed
 
 
-def test_no_inline_font_size_below_caption_minimum(): # S7
-    """No caption anywhere (inline QSS or QFont) may render smaller than FONT_CAPTION."""
+def test_no_inline_font_size_below_caption_minimum(): # S2, S7
+    """No caption anywhere (inline QSS, QFont, or HTML) may render smaller than
+    FONT_CAPTION, whether expressed in px, pt, or via setPointSize(F)/setPixelSize."""
     ui_dir = Path(__file__).resolve().parents[1] / "orbitrx" / "ui"
+    pt_minimum = FONT_CAPTION * 0.75  # 11px == 8.25pt at 96 DPI
     for path in ui_dir.glob("*.py"):
         text = path.read_text(encoding="utf-8")
         for size in re.findall(r"font-size:\s*(\d+)px", text):
             assert int(size) >= FONT_CAPTION, f"{path.name}: font-size {size}px"
+        for size in re.findall(r"font-size:\s*([\d.]+)pt", text):
+            assert float(size) >= pt_minimum, f"{path.name}: font-size {size}pt"
         for size in re.findall(r"QFont\([^)]*?,\s*(\d+)\)", text):
             assert int(size) >= FONT_CAPTION, f"{path.name}: QFont size {size}"
+        for size in re.findall(r"setPointSizeF?\(\s*([\d.]+)\s*\)", text):
+            assert float(size) >= pt_minimum, f"{path.name}: setPointSize(F) {size}"
+        for size in re.findall(r"setPixelSize\(\s*(\d+)\s*\)", text):
+            assert int(size) >= FONT_CAPTION, f"{path.name}: setPixelSize {size}"
 
 
 def test_qss_disables_dialog_button_box_icons(): # N-new-9

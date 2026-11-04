@@ -40,6 +40,10 @@ def test_hist_date_is_a_calendar_popup_date_edit(window):
     assert window.hist_date.calendarPopup() is True
 
 
+def test_hist_date_display_format_has_no_iso_date(window): # S1
+    assert window.hist_date.displayFormat() == "dd MMM yyyy"
+
+
 def test_plot_builds_dual_axes_for_kp_and_sfi(window):
     now = datetime.datetime.now(datetime.timezone.utc)
     for i in range(5):
@@ -73,6 +77,32 @@ def test_plot_legend_uses_dark_theme_colors(window):
     assert legend is not None
     for text in legend.get_texts():
         assert text.get_color().lower() in ("#e3eaf2", "e3eaf2")
+
+
+def test_plot_x_axis_ticks_show_hours_and_minutes(window, monkeypatch): # M4
+    rows = [
+        {"ts": "2026-11-04T21:30:00+00:00", "kp": 2.0, "flux": 110},
+        {"ts": "2026-11-04T23:00:00+00:00", "kp": 2.5, "flux": 115},
+    ]
+    monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    window.tabs.setCurrentIndex(1)
+    window._refresh_plot_tab()
+    canvas = window.plot_container.itemAt(0).widget()
+    ax = canvas.figure.get_axes()[0]
+    assert ax.xaxis.get_major_formatter().fmt == "%H:%M"
+
+
+def test_plot_x_axis_ticks_include_day_for_multi_day_range(window, monkeypatch): # M4, regression
+    rows = [
+        {"ts": "2026-11-02T00:00:00+00:00", "kp": 2.0, "flux": 110},
+        {"ts": "2026-11-04T23:00:00+00:00", "kp": 2.5, "flux": 115},
+    ]
+    monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    window.tabs.setCurrentIndex(1)
+    window._refresh_plot_tab()
+    canvas = window.plot_container.itemAt(0).widget()
+    ax = canvas.figure.get_axes()[0]
+    assert ax.xaxis.get_major_formatter().fmt == "%d %b %H:%M"
 
 
 def test_no_data_shows_placeholder_not_crash(window):

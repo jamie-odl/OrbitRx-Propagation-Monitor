@@ -66,6 +66,71 @@ def test_static_map_fills_most_of_viewport_width(tmp_path, monkeypatch): # S3
     app.processEvents()
 
 
+def test_no_visible_qlabel_renders_below_caption_minimum(tmp_path, monkeypatch): # S2
+    monkeypatch.chdir(tmp_path)
+    from PySide6.QtWidgets import QApplication, QLabel
+    from PySide6.QtGui import QFontInfo
+
+    import orbitrx.spots.service as svc
+    monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
+    import orbitrx.dx as dx
+    monkeypatch.setattr(dx.DxClusterService, "start", lambda self: None)
+    from orbitrx.ui.controller import OrbitRxController
+    monkeypatch.setattr(OrbitRxController, "fetch_weather", lambda self: None)
+    monkeypatch.setattr(OrbitRxController, "refresh_location", lambda self: None)
+
+    app = QApplication.instance() or QApplication([])
+    from orbitrx.ui.qt_app import QtOrbitRxApplication
+    win = QtOrbitRxApplication()
+    win.show()
+    app.processEvents()
+    # Populate the labels that only get real text after a refresh ("Weather updated...").
+    win._refresh_labels_and_map()
+    win.ctrl.state.cluster_status = "connected"
+    win._render_cluster_label()
+    app.processEvents()
+
+    checked = 0
+    for lbl in win.findChildren(QLabel):
+        if not lbl.isVisible():
+            continue
+        checked += 1
+        px = QFontInfo(lbl.font()).pixelSize()
+        assert px >= 11, f"{lbl.objectName() or lbl.text()[:30]!r} renders at {px}px"
+    assert checked > 10  # sanity: we actually scanned a meaningful number of labels
+
+    win.ctrl.stop()
+    win.deleteLater()
+    app.processEvents()
+
+
+def test_right_column_has_only_one_vertical_scrollbar(tmp_path, monkeypatch): # S3
+    monkeypatch.chdir(tmp_path)
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+
+    import orbitrx.spots.service as svc
+    monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
+    import orbitrx.dx as dx
+    monkeypatch.setattr(dx.DxClusterService, "start", lambda self: None)
+    from orbitrx.ui.controller import OrbitRxController
+    monkeypatch.setattr(OrbitRxController, "fetch_weather", lambda self: None)
+    monkeypatch.setattr(OrbitRxController, "refresh_location", lambda self: None)
+
+    app = QApplication.instance() or QApplication([])
+    from orbitrx.ui.qt_app import QtOrbitRxApplication
+    win = QtOrbitRxApplication()
+    win.show()
+    app.processEvents()
+
+    assert win._right_scroll.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert win._stats_scroll.verticalScrollBarPolicy() != Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+
+    win.ctrl.stop()
+    win.deleteLater()
+    app.processEvents()
+
+
 def test_action_button_grid_has_no_ragged_hole(tmp_path, monkeypatch): # N-new-5
     monkeypatch.chdir(tmp_path)
     from PySide6.QtWidgets import QApplication, QPushButton

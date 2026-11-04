@@ -17,7 +17,7 @@ from orbitrx.logger import setup_logging
 from orbitrx.map_renderer import MapLayers
 from orbitrx.dx import resolve_target_position
 from orbitrx.hamqsl import fetch_solar_xml, hamqsl_path_muf
-from orbitrx.propagation import band_chip, band_grid, bands_summary, estimate_muf, flux_trend_arrow
+from orbitrx.propagation import band_grid, bands_summary, estimate_muf, flux_trend_arrow
 from orbitrx.state import AppState
 from orbitrx.storage import DataStore
 from orbitrx.ui.formatting import decimal_hours_to_hhmm, format_iso_utc, format_source_label, format_value
@@ -298,7 +298,6 @@ class OrbitRxController:
     def weather_labels(self) -> dict[str, str]:
         s = self.state
         ss = s.sunspot_observed or s.sunspot_predicted
-        grid = " ".join(f"{band_chip(v)}{k}" for k, v in s.band_grid.items())
         loc = f"You: {s.user_lat:.3f}, {s.user_lon:.3f}" if s.user_lat else "You: n/a"
         sr_txt = ss_txt = "n/a"
         if s.user_lat and s.user_lon:
@@ -323,17 +322,19 @@ class OrbitRxController:
         path_muf_txt = f"Path MUF: {format_value(s.path_muf)} MHz"
         if s.path_muf_label:
             path_muf_txt += f" → {s.path_muf_label}"
+        # S7: a trend word is shown whenever a flux value exists, "steady" when there is
+        # no previous reading to compare against (flux_trend is only "" in that case).
+        flux_trend = s.flux_trend or ("→ (steady)" if s.flux is not None else "")
         return {
             "kp": f"Kp: {s.kp_index:.2f}",
             "kp_forecast": f"Kp Forecast: {s.kp_forecast}",
-            "solar": f"Solar Flux: {format_value(s.flux)} {s.flux_trend}".rstrip(),
+            "solar": f"Solar Flux: {format_value(s.flux)} {flux_trend}".rstrip(),
             "sunspot": f"Sunspot: {ss:.1f}" if ss else "Sunspot: n/a",
             "a_index": f"A-index: {a_txt}",
             "solar_wind": f"Wind: {format_value(s.solar_wind_speed, unit=' km/s')}  "
                             f"Bz: {format_value(s.bz, unit=' nT')}",
             "time": f"NOAA data: {format_iso_utc(s.time_utc)}",
             "bands": f"Bands: {s.bands_summary}",
-            "band_grid": f"Per-band: {grid}",
             "muf": f"MUF: {format_value(s.muf)} / LUF: {format_value(s.luf)} MHz",
             "path_muf": path_muf_txt,
             "hamqsl": f"HamQSL: {s.hamqsl_band_hint or 'n/a'}",

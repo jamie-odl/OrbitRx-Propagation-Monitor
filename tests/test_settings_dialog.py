@@ -87,6 +87,14 @@ def test_lat_lon_spin_box_ranges(window, key, lo, hi):
     assert field.maximum() == hi
 
 
+@pytest.mark.parametrize(
+    "key", ["home_lat", "home_lon", "target_dx_lat", "target_dx_lon", "pskreporter_poll_seconds", "refresh_interval_seconds"],
+)
+def test_spin_boxes_are_tall_enough_for_both_arrows(window, key): # M3
+    dlg = window._build_settings_dialog()
+    assert dlg.fields[key].minimumHeight() >= 30
+
+
 def test_poll_interval_spin_box_has_five_minute_floor(window):
     dlg = window._build_settings_dialog()
     field = dlg.fields["pskreporter_poll_seconds"]

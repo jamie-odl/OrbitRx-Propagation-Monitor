@@ -169,6 +169,28 @@ def test_present_saved_port_is_kept(app, cfg, monkeypatch):
     assert combo.currentData() == "COM7"
 
 
+def test_port_label_has_no_nested_brackets(): # S5
+    from orbitrx.ui.rig_wizard import _port_label
+
+    assert _port_label("COM2", "Communications Port (COM2)") == "COM2 - Communications Port"
+    assert _port_label("COM5", "USB Serial") == "COM5 - USB Serial"
+    assert _port_label("COM9", "") == "COM9"
+    assert _port_label("COM9", "COM9") == "COM9"
+    assert "(" not in _port_label("COM2", "Communications Port (COM2)")
+
+
+def test_populate_port_combo_strips_nested_brackets(app, cfg, monkeypatch): # S5
+    from orbitrx.cat import CatController
+    from orbitrx.ui.rig_wizard import populate_port_combo
+    from PySide6.QtWidgets import QComboBox
+
+    cat = CatController(cfg)
+    monkeypatch.setattr(cat, "list_ports_detailed", lambda: [("COM2", "Communications Port (COM2)")])
+    combo = QComboBox()
+    populate_port_combo(combo, cat, "COM2")
+    assert combo.itemText(0) == "COM2 - Communications Port"
+
+
 def test_rig_wizard_selects_first_real_port_when_saved_port_missing(app, cfg, monkeypatch):
     from orbitrx.cat import CatController
     from orbitrx.ui.rig_wizard import RigWizardDialog

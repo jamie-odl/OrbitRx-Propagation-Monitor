@@ -11,6 +11,19 @@ from orbitrx.config import AppConfig
 from orbitrx.ui.theme import ERR, OK
 
 
+def _port_label(device: str, desc: str) -> str:
+    """"COM2 - Communications Port", never "COM2 (Communications Port (COM2))" (S5):
+    pyserial's description often already repeats the device name in brackets.
+    """
+    desc = (desc or "").strip()
+    suffix = f" ({device})"
+    if desc.endswith(suffix):
+        desc = desc[: -len(suffix)].strip()
+    if not desc or desc == device:
+        return device
+    return f"{device} - {desc}"
+
+
 def populate_port_combo(combo: QComboBox, cat: CatController, current_port: str) -> None:
     """Fill a serial-port combo from the same enumeration CatController uses everywhere,
     so Settings and the rig wizard never disagree (N-new-1)."""
@@ -18,7 +31,7 @@ def populate_port_combo(combo: QComboBox, cat: CatController, current_port: str)
     ports = cat.list_ports_detailed()
     if ports:
         for device, desc in ports:
-            combo.addItem(f"{device} ({desc})" if desc != device else device, device)
+            combo.addItem(_port_label(device, desc), device)
     else:
         fallback = current_port or default_port_fallback()
         combo.addItem(fallback, fallback)

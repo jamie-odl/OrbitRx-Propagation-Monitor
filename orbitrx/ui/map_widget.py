@@ -6,7 +6,7 @@ from typing import Any
 from PIL import Image
 
 from orbitrx.map_renderer import MapLayers, MapRenderer, MapScene
-from orbitrx.ui.formatting import format_hour_offset
+from orbitrx.ui.formatting import format_hour_offset, format_map_hud_datetime
 from orbitrx.ui.theme import FONT_CAPTION
 
 try:
@@ -162,7 +162,7 @@ class PropagationMapWidget(QWidget):
         now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=offset)
         extra = f"  ({format_hour_offset(offset)})" if offset else ""
         self.hud.setText(
-            f"Greyline @ {now.strftime('%Y-%m-%d %H:%M UTC')}{extra} · "
+            f"Greyline @ {format_map_hud_datetime(now)}{extra} · "
             "Scroll to zoom · Right-drag to pan · Double-click to reset · Click a spot to tune"
         )
 
