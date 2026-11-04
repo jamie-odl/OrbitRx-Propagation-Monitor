@@ -25,3 +25,6 @@ desktop.ini
 _debug_map.png
 .pytest_cache/
 config.json
+
+# Spot cache
+data/

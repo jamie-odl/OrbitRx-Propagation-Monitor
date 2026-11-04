@@ -32,7 +32,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "target_dx_lon": None,
     "theme": "dark",
     "window_geometry": "1300x700",
-    "map_layers": {"greyline": True, "night": True, "dx_arcs": True, "aurora": True, "grid": False},
+    "map_layers": {"greyline": True, "night": True, "dx_arcs": True, "aurora": True, "grid": False,
+                   "spot_arcs": True, "spot_heatmap": False},
     "log_max_mb": 10,
     "offline_cache_enabled": True,
     "show_demo_spots": False,
@@ -41,6 +42,20 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "minimize_to_tray": True,
     "check_updates_on_launch": True,
     "rig_profiles": [],
+    # Rig control backend: "serial" (pyserial CAT) or "omnirig" (Windows OmniRig COM)
+    "rig_control": "serial",
+    "omnirig_rig_number": 1,
+    # Location: manual lat/lon by default; IP geolocation is opt-in (privacy)
+    "ip_geolocation_enabled": False,
+    "home_lat": None,
+    "home_lon": None,
+    # Live Spots (PSKReporter). Poll interval is clamped to 300 s minimum.
+    "spots_enabled": True,
+    "spots_mode": "FT8",
+    "spots_callsign": "",
+    "pskreporter_poll_seconds": 300,
+    "spot_alerts_enabled": True,
+    "watchlist": {"callsigns": [], "countries": [], "prefixes": [], "regions": []},
 }
 
 

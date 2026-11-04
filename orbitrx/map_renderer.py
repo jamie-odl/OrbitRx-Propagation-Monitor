@@ -73,6 +73,26 @@ class MapRenderer:
         lat = 90 - (y / (h / 2)) * 90
         return max(-90.0, min(90.0, lat)), lon
 
+    @staticmethod
+    def _night_mask(w: int, h: int, decl_rad: float, sun_lon_rad: float) -> Image.Image:
+        """Smooth night-side shading from solar elevation on a coarse grid, upscaled."""
+        gw, gh = 360, 180
+        sin_d, cos_d = math.sin(decl_rad), math.cos(decl_rad)
+        alpha = bytearray(gw * gh)
+        for j in range(gh):
+            lat = math.radians(90 - (j + 0.5))
+            sl, cl = math.sin(lat) * sin_d, math.cos(lat) * cos_d
+            row = j * gw
+            for i in range(gw):
+                lon = math.radians(-180 + i + 0.5)
+                elev = sl + cl * math.cos(lon - sun_lon_rad)  # sin(solar elevation)
+                # civil twilight blend: full dark below -6 degrees
+                alpha[row + i] = int(min(1.0, -elev / 0.105) * 120) if elev < 0 else 0
+        mask = Image.frombytes("L", (gw, gh), bytes(alpha)).resize((w, h), Image.BILINEAR)
+        night = Image.new("RGBA", (w, h), (0, 0, 20, 0))
+        night.putalpha(mask)
+        return night
+
     def _terminator_lat(self, lon_deg: float, decl_rad: float, sun_lon_rad: float) -> float:
         lon_rad = math.radians(lon_deg)
         tan_dec = math.tan(decl_rad)
@@ -132,11 +152,7 @@ class MapRenderer:
             term_points.append((x, y))
 
         if layers.night:
-            for x in range(0, w, step):
-                lon_deg = (x / w) * 360 - 180
-                sun_angle = (lon_deg - sun_lon_deg + 180) % 360 - 180
-                if abs(sun_angle) > 90:
-                    od.line([(x, 0), (x, h - 1)], fill=(0, 0, 0, 100))
+            overlay.alpha_composite(self._night_mask(w, h, decl_rad, sun_lon_rad))
 
         if layers.greyline and len(term_points) > 1:
             od.line(term_points, fill=(255, 100, 30, 255), width=4)

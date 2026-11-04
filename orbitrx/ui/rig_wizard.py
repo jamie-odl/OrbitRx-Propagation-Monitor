@@ -74,7 +74,7 @@ class RigWizardDialog(QDialog):
         result = self.cat.tune(14.200, confirm=None)
         self.status.setText(result)
         if "Sent CAT" in result:
-            QMessageBox.information(self, "CAT", "Rig responded — profile looks good.")
+            QMessageBox.information(self, "CAT", "Rig responded. Profile looks good.")
 
     def _save(self) -> None:
         profile = {

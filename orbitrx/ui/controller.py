@@ -22,6 +22,8 @@ from orbitrx.state import AppState
 from orbitrx.storage import DataStore
 from orbitrx.utils import estimate_location, local_time_at_lon, sun_times
 from orbitrx.weather import fetch_space_weather_data
+from orbitrx.alerts import show_toast
+from orbitrx.spots.service import SpotsService
 
 try:
     import platform
@@ -68,12 +70,26 @@ class OrbitRxController:
             store=self.store,
         )
 
+        self.on_live_spots: Callable[[], None] = lambda: None
+        self.spots = SpotsService(
+            self.cfg,
+            on_spots=lambda _s: self.on_live_spots(),
+            on_alert=self._spot_alert,
+            location=lambda: (self.state.user_lat, self.state.user_lon),
+        )
+
+    def _spot_alert(self, title: str, message: str) -> None:
+        show_toast(f"OrbitRx: {title}", message)
+        self._on_status(f"{title}: {message}")
+
     def start(self) -> None:
         self._dx.start()
+        self.spots.start()
 
     def stop(self) -> None:
         self.cat.disconnect()
         self._dx.stop()
+        self.spots.stop()
 
     def layers_from_config(self) -> MapLayers:
         ml = self.cfg.get("map_layers", {})
@@ -113,6 +129,20 @@ class OrbitRxController:
         self._on_dx()
 
     def refresh_location(self) -> None:
+        """Use the manual home position; IP geolocation only when the user opted in."""
+        home_lat, home_lon = self.cfg.get("home_lat"), self.cfg.get("home_lon")
+        if home_lat is not None and home_lon is not None:
+            try:
+                self.state.user_lat = float(home_lat)
+                self.state.user_lon = float(home_lon)
+            except (TypeError, ValueError):
+                self.log.warning("Invalid home_lat/home_lon in config")
+            self._on_weather()
+            return
+        if not self.cfg.get("ip_geolocation_enabled", False):
+            self._on_weather()
+            return
+
         def worker():
             try:
                 r = urllib.request.urlopen("https://ipinfo.io/json", timeout=5)
@@ -147,8 +177,13 @@ class OrbitRxController:
                     self._on_status(f"Weather error: {e}")
                     self.state.weather_fetch_in_progress = False
                     return
-            self._apply_weather(data, offline)
-            self.state.weather_fetch_in_progress = False
+            try:
+                self._apply_weather(data, offline)
+            except Exception:
+                self.log.exception("Applying weather data failed")
+                self._on_status("Space weather update failed, see logs/orbitrx.log")
+            finally:
+                self.state.weather_fetch_in_progress = False
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -205,8 +240,10 @@ class OrbitRxController:
         )
         self.state.alert_excellent_last = el
         self.state.alert_storm_last = sl
-        prefix = "[OFFLINE] " if offline else ""
-        self._on_status(prefix + "Conditions updated" if not offline else prefix + "Offline cache")
+        if offline:
+            self._on_status("Offline: NOAA unreachable, showing cached space weather")
+        else:
+            self._on_status("Conditions updated")
         self._on_weather()
 
     def _path_target(self) -> tuple[float, float, str]:
@@ -303,7 +340,7 @@ class OrbitRxController:
             "hamqsl": f"HamQSL: {s.hamqsl_band_hint or '--'}",
             "sunrise": f"Sunrise UTC: {sr_txt}",
             "sunset": f"Sunset UTC: {ss_txt}",
-            "alerts": "Alerts: " + (" | ".join(s.alerts) or "none"),
+            "alerts": "Alerts:\n" + ("\n".join(s.alerts[:3]) or "none"),
             "location": loc,
             "solar_forecast": f"27-Day: {s.solar_forecast}",
             "contest": f"Next: {nc['name']}" if nc else "Next: none",

@@ -15,23 +15,38 @@ except ImportError:
     WEBENGINE_AVAILABLE = False
     QWidget = object  # type: ignore
 
+from pathlib import Path
+
 from orbitrx.map_renderer import MapLayers, MapRenderer
+from orbitrx.paths import bundled_root
+
+
+def _assets_dir() -> Path:
+    bundle = bundled_root()
+    if bundle and (bundle / "orbitrx" / "ui" / "assets").is_dir():
+        return bundle / "orbitrx" / "ui" / "assets"
+    return Path(__file__).resolve().parent / "assets"
+
+
+ASSETS_DIR = _assets_dir()
 
 _LEAFLET_HTML = """<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8"/>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-<style>html,body,#map{margin:0;height:100%;background:#101820}</style>
+<style>__LEAFLET_CSS__</style>
+<script>__LEAFLET_JS__</script>
+<script>__QWEBCHANNEL_JS__</script>
+<style>html,body,#map{margin:0;height:100%;background:#101820}
+.orbitrx-dark-tiles{filter:invert(100%) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.6)}</style>
 </head><body>
 <div id="map"></div>
 <script>
 let spotBridge = null;
 new QWebChannel(qt.webChannelTransport, ch => { spotBridge = ch.objects.spotBridge; });
 const map = L.map('map', {worldCopyJump: true, zoomControl: true}).setView([20, 0], 2);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-  attribution: '&copy; OSM &copy; CARTO', maxZoom: 18
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  maxZoom: 12, className: 'orbitrx-dark-tiles'
 }).addTo(map);
 let userM=null, sunM=null, dxLayer=L.layerGroup().addTo(map), termLine=null, nightPane=[];
 function setPayload(p) {
@@ -70,8 +85,40 @@ function setPayload(p) {
     }
   });
 }
+let liveArcs=L.layerGroup().addTo(map), liveHeat=L.layerGroup().addTo(map);
+function setLiveSpots(p) {
+  liveArcs.clearLayers(); liveHeat.clearLayers();
+  if (p.heatmap) {
+    (p.heat||[]).forEach(c => {
+      L.circle([c[0], c[1]], {radius: 280000, stroke:false, fillColor:'#FF5252', fillOpacity: 0.12 + 0.5*c[2]}).addTo(liveHeat);
+    });
+  }
+  if (p.arcs) {
+    (p.spots||[]).forEach(s => {
+      L.polyline([s.tx, s.rx], {color:s.color, weight:2, opacity:0.8}).bindTooltip(s.label).addTo(liveArcs);
+      L.circleMarker(s.tx, {radius:3, color:s.color, fillOpacity:1}).addTo(liveArcs);
+    });
+  }
+}
 map.on('click', e => { if (spotBridge) spotBridge.mapClicked(e.latlng.lat, e.latlng.lng); });
 </script></body></html>"""
+
+
+def _leaflet_html() -> str:
+    """Build the page with bundled Leaflet and Qt's qwebchannel.js inlined (no CDN, no qrc fetch)."""
+    from PySide6.QtCore import QFile, QIODevice
+
+    js = ""
+    f = QFile(":/qtwebchannel/qwebchannel.js")
+    if f.open(QIODevice.OpenModeFlag.ReadOnly):
+        js = bytes(f.readAll()).decode("utf-8")
+        f.close()
+    leaflet_dir = ASSETS_DIR / "leaflet"
+    css = (leaflet_dir / "leaflet.css").read_text(encoding="utf-8").replace("url(images/", "url(leaflet/images/")
+    ljs = (leaflet_dir / "leaflet.js").read_text(encoding="utf-8")
+    return (_LEAFLET_HTML.replace("__LEAFLET_CSS__", css)
+            .replace("__LEAFLET_JS__", ljs)
+            .replace("__QWEBCHANNEL_JS__", js))
 
 
 if WEBENGINE_AVAILABLE:
@@ -98,10 +145,15 @@ if WEBENGINE_AVAILABLE:
             self._layers = MapLayers()
             layout = QVBoxLayout(self)
             layout.setContentsMargins(0, 0, 0, 0)
-            self.hud = QLabel("Leaflet map — Carto dark tiles")
-            self.hud.setStyleSheet("color: #B3E5FC; padding: 4px; background: #0B1220;")
+            self.hud = QLabel("Interactive map, OpenStreetMap tiles")
+            self.hud.setObjectName("muted")
             layout.addWidget(self.hud)
             self.web = QWebEngineView()
+            # OSM tile policy asks apps to identify themselves.
+            from orbitrx import __version__
+            self.web.page().profile().setHttpUserAgent(
+                f"OrbitRx/{__version__} (+https://github.com/jamie-odl/OrbitRx-Propagation-Monitor)"
+            )
             self.web.settings().setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
             layout.addWidget(self.web, stretch=1)
             self._bridge = _SpotBridge()
@@ -110,7 +162,8 @@ if WEBENGINE_AVAILABLE:
             channel = QWebChannel(self.web.page())
             channel.registerObject("spotBridge", self._bridge)
             self.web.page().setWebChannel(channel)
-            self.web.setHtml(_LEAFLET_HTML, QUrl("https://orbitrx.local/"))
+            # Leaflet JS/CSS are bundled under ui/assets (no CDN). Map tiles still load online.
+            self.web.setHtml(_leaflet_html(), QUrl.fromLocalFile(str(ASSETS_DIR) + "/"))
             self._ready = False
             self.web.loadFinished.connect(self._on_ready)
 
@@ -126,6 +179,11 @@ if WEBENGINE_AVAILABLE:
 
         def set_base_map(self, _base_rgba) -> None:
             pass
+
+        def set_live_spots(self, payload: dict[str, Any]) -> None:
+            """payload: {"arcs": bool, "heatmap": bool, "spots": [...], "heat": [...]}"""
+            if self._ready:
+                self.web.page().runJavaScript(f"setLiveSpots({json.dumps(payload)});")
 
         def update_scene(
             self,

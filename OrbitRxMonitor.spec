@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_submodules
 
-hiddenimports = ['PySide6', 'matplotlib.backends.backend_qtagg']
+hiddenimports = ['PySide6', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebChannel', 'matplotlib.backends.backend_qtagg', 'serial', 'serial.tools.list_ports']
 hiddenimports += collect_submodules('orbitrx')
 
 
@@ -9,7 +9,7 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('world_map.jpg', '.')],
+    datas=[('world_map.jpg', '.'), ('orbitrx/ui/assets', 'orbitrx/ui/assets'), ('LICENSE', '.'), ('NOTICE', '.'), ('PRIVACY.md', '.')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

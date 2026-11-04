@@ -1,0 +1,45 @@
+OrbitRx Propagation Monitor
+Copyright (c) 2026 Jamie Sibley. Licensed under the MIT License (see LICENSE).
+
+OrbitRx is an independent project. It is not affiliated with or endorsed by any
+of the data providers below. Each source remains subject to its own terms of use.
+
+DATA SOURCES
+------------
+NOAA Space Weather Prediction Center (SWPC), https://www.swpc.noaa.gov/
+  Kp index and forecast, F10.7 solar flux, sunspot predictions, solar wind,
+  Dst and alerts. US Government work, public domain.
+
+HamQSL solar data by Paul Herrman N0NBH, https://www.hamqsl.com/
+  Supplementary band condition data (solarxml.php).
+
+PSKReporter by Philip Gladstone N1DQ, https://pskreporter.info/
+  Live FT8/FT4/WSPR reception reports. OrbitRx polls no more often than every
+  5 minutes, as requested by the service, and identifies itself with an
+  OrbitRx User-Agent.
+
+DX cluster nodes (default: VE7CC, NC7J), operated by their respective sysops.
+
+QRZ.com XML API (optional, needs the user's own subscription and key).
+
+Contest Calendar by WA7BNM, https://www.contestcalendar.com/
+
+ipinfo.io (optional, OFF by default). Only used when the user turns on
+  "Look up my approximate location from my IP address". See PRIVACY.md.
+
+MAPS AND LIBRARIES
+------------------
+Leaflet 1.9.4, https://leafletjs.com/ (BSD 2-Clause). Bundled locally in
+  orbitrx/ui/assets/leaflet/ with its LICENSE-leaflet.txt.
+Map tiles: (c) OpenStreetMap contributors (ODbL), served by the OpenStreetMap
+  Foundation tile servers under their tile usage policy. Loaded online only when
+  the interactive map backend is selected.
+Static world map image: see README "Map image" note.
+
+Ported code: the live spots, analytics, watchlist, rotor and OmniRig modules
+in orbitrx/spots/ come from the author's earlier project "WSPR / FT8 Global
+Matrix" (same author, relicensed here under MIT).
+
+Python dependencies: PySide6 / Qt (LGPLv3), Pillow (MIT-CMU), matplotlib
+(PSF-based), pyserial (BSD), pywin32 (PSF). PyInstaller (GPL with bootloader
+exception) is used only to build the Windows executable.

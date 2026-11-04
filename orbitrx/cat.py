@@ -30,6 +30,8 @@ def _yaesu_cmd(freq_hz: int) -> bytes:
     return f"FA{freq_hz:08d};".encode("ascii")
 
 
+RIG_BACKENDS = ("serial", "omnirig")
+
 RIG_PROFILES = {
     "kenwood": _kenwood_cmd,
     "icom": _icom_cmd,
@@ -41,6 +43,19 @@ class CatController:
     def __init__(self, cfg: AppConfig) -> None:
         self.cfg = cfg
         self._ser = None
+
+    def backend(self) -> str:
+        value = str(self.cfg.get("rig_control", "serial") or "serial").lower()
+        return value if value in RIG_BACKENDS else "serial"
+
+    def _tune_omnirig(self, freq_val: float) -> str:
+        from orbitrx.spots.models import CatControlSettings
+        from orbitrx.spots.omnirig import tune_frequency_hz
+
+        settings = CatControlSettings(enabled=True, rig_number=int(self.cfg.get("omnirig_rig_number", 1) or 1))
+        ok, msg = tune_frequency_hz(freq_val * 1_000_000, settings)
+        self._log(f"OMNIRIG {'OK' if ok else 'FAIL'} {freq_val} {msg}")
+        return msg
 
     def list_ports(self) -> list[str]:
         if not CAT_AVAILABLE:
@@ -86,6 +101,8 @@ class CatController:
         msg = f"Tuning to {freq_val} MHz"
         if self.cfg.get("cat_confirm_before_tune") and confirm and not confirm(msg):
             return "cancelled"
+        if self.backend() == "omnirig":
+            return self._tune_omnirig(freq_val)
         if not CAT_AVAILABLE:
             self._log(f"WOULD_TUNE {freq_val}")
             return "pyserial not installed"

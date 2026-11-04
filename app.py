@@ -1,5 +1,7 @@
-"""OrbitRx Propagation Monitor — entry point."""
+"""OrbitRx Propagation Monitor entry point."""
+import sys
+
 from orbitrx.main import main
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

@@ -1,14 +1,11 @@
+# Runtime
 pillow>=10.0
 matplotlib>=3.8
 PySide6>=6.6
-# Optional Leaflet map (pip install PySide6-Addons on some platforms)
-# PySide6-Addons includes QtWebEngine
-
-# Optional — app runs without these
 pyserial>=3.5
-customtkinter>=5.2
-win10toast>=0.9
 pystray>=0.19
+win10toast>=0.9; sys_platform == "win32"
+pywin32>=306; sys_platform == "win32"
 
 # Dev / build
 pytest>=8.0

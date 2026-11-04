@@ -1,14 +1,19 @@
-; Inno Setup script for OrbitRx Monitor (item 50)
-; Build exe first: build.bat
-; Then compile this script with Inno Setup 6+
+; Inno Setup 6 script for OrbitRx (unsigned).
+; Build the exe first (build.bat or CI), then: iscc /DAppVer=5.1.0 installer\OrbitRxMonitor.iss
 
 [Setup]
 AppName=OrbitRx Propagation Monitor
-AppVersion=5.0.0
-AppVerName=OrbitRx Monitor 5.0.0
-AppPublisher=OrbitRx
-AppSupportURL=https://github.com/thevenomv/OrbitRx-Propagation-Monitor
-AppUpdatesURL=https://github.com/thevenomv/OrbitRx-Propagation-Monitor/releases
+#ifndef AppVer
+  #define AppVer "5.1.0"
+#endif
+AppVersion={#AppVer}
+AppVerName=OrbitRx Propagation Monitor {#AppVer}
+AppPublisher=Jamie Sibley
+LicenseFile=..\LICENSE
+OutputDir=..\dist
+UninstallDisplayIcon={app}\OrbitRxMonitor.exe
+AppSupportURL=https://github.com/jamie-odl/OrbitRx-Propagation-Monitor
+AppUpdatesURL=https://github.com/jamie-odl/OrbitRx-Propagation-Monitor/releases
 DefaultDirName={autopf}\OrbitRxMonitor
 DefaultGroupName=OrbitRx
 OutputBaseFilename=OrbitRxMonitor-Setup
@@ -19,11 +24,16 @@ PrivilegesRequired=lowest
 [Files]
 Source: "..\dist\OrbitRxMonitor.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\world_map.jpg"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\config.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\PRIVACY.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\OrbitRx Monitor"; Filename: "{app}\OrbitRxMonitor.exe"
-Name: "{autodesktop}\OrbitRx Monitor"; Filename: "{app}\OrbitRxMonitor.exe"
+Name: "{autodesktop}\OrbitRx Monitor"; Filename: "{app}\OrbitRxMonitor.exe"; Tasks: desktopicon
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut"; Flags: unchecked
 
 [Run]
 Filename: "{app}\OrbitRxMonitor.exe"; Description: "Launch OrbitRx"; Flags: postinstall nowait skipifsilent

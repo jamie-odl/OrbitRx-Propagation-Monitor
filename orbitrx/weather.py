@@ -71,6 +71,19 @@ def _latest_list_columns(
     return None, None
 
 
+_ALERT_HEADS = ("ALERT:", "WARNING:", "WATCH:", "SUMMARY:", "CONTINUED ALERT:", "EXTENDED WARNING:", "CANCEL")
+
+
+def summarise_alert(message: str, issued: str | None = None) -> str:
+    """Reduce a NOAA SWPC alert bulletin to one readable line."""
+    lines = [ln.strip() for ln in message.replace("\r", "").split("\n") if ln.strip()]
+    head = next((ln for ln in lines if ln.upper().startswith(_ALERT_HEADS)), lines[0] if lines else "")
+    head = head[:90]
+    if issued:
+        return f"{str(issued)[:16]} UTC  {head}"
+    return head
+
+
 def get_solar_cycle_forecast() -> str:
     try:
         url = "https://services.swpc.noaa.gov/products/solar-cycle-25-f10-7-predicted-range.json"
@@ -212,7 +225,7 @@ def fetch_space_weather_data() -> dict[str, Any]:
                 result["alerts"].append(f"{row[0]} {row[1]}")
             elif isinstance(row, dict):
                 msg = row.get("message") or row.get("text") or str(row)
-                result["alerts"].append(str(msg)[:80])
+                result["alerts"].append(summarise_alert(str(msg), row.get("issue_datetime")))
     except Exception:
         pass
 

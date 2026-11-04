@@ -7,8 +7,16 @@
   "dx_cluster_port": 23,
   "dx_cluster_callsign": "W1AW-9",
   "dx_cluster_nodes": [
-    {"name": "VE7CC", "host": "dxc.ve7cc.net", "port": 23},
-    {"name": "NC7J", "host": "nc7j.com", "port": 7373}
+    {
+      "name": "VE7CC",
+      "host": "dxc.ve7cc.net",
+      "port": 23
+    },
+    {
+      "name": "NC7J",
+      "host": "nc7j.com",
+      "port": 7373
+    }
   ],
   "dx_filter_bands_mhz": [],
   "dx_filter_continents": [],
@@ -24,6 +32,18 @@
     "night": true,
     "dx_arcs": true,
     "aurora": true,
-    "grid": false
-  }
+    "grid": false,
+    "spot_arcs": true,
+    "spot_heatmap": false
+  },
+  "rig_control": "serial",
+  "omnirig_rig_number": 1,
+  "ip_geolocation_enabled": false,
+  "home_lat": null,
+  "home_lon": null,
+  "spots_enabled": true,
+  "spots_mode": "FT8",
+  "spots_callsign": "",
+  "pskreporter_poll_seconds": 300,
+  "spot_alerts_enabled": true
 }

@@ -5,7 +5,7 @@ import re
 import urllib.request
 from typing import Any
 
-GITHUB_REPO = "thevenomv/OrbitRx-Propagation-Monitor"
+GITHUB_REPO = "jamie-odl/OrbitRx-Propagation-Monitor"
 
 
 def _parse_version(tag: str) -> tuple[int, ...]:
