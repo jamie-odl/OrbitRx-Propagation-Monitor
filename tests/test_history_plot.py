@@ -110,3 +110,28 @@ def test_no_data_shows_placeholder_not_crash(window):
     window.hist_date.setDate(window.hist_date.date().addYears(-5))
     window._refresh_plot_tab()
     assert "No data" in window.plot_placeholder.text()
+
+
+def test_short_range_ticks_are_unique_hh_mm():  # M4
+    import datetime
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.dates import AutoDateLocator, DateFormatter
+    from orbitrx.ui.formatting import history_plot_date_format, pad_datetime_range, widen_to_min_span
+    t0 = datetime.datetime(2026, 11, 4, 23, 29, 10)
+    times = [t0, t0 + datetime.timedelta(seconds=70)]
+    lo, hi = widen_to_min_span(*pad_datetime_range(times[0], times[1]))
+    fig, ax = plt.subplots()
+    ax.plot(times, [1, 2])
+    ax.xaxis.set_major_locator(AutoDateLocator(maxticks=7))
+    fmt = history_plot_date_format(lo, hi)
+    assert fmt == "%H:%M"
+    ax.xaxis.set_major_formatter(DateFormatter(fmt))
+    ax.set_xlim(lo, hi)
+    fig.canvas.draw()
+    labels = [t.get_text() for t in ax.get_xticklabels() if t.get_text()]
+    plt.close(fig)
+    assert len(labels) >= 2
+    assert len(labels) == len(set(labels))
+    assert all(len(l) == 5 and l[2] == ":" for l in labels)

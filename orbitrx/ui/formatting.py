@@ -117,3 +117,16 @@ def humanize_iso_dates(text: str) -> str:
             return m.group(0)
         return dt.strftime("%d %b ") + m.group(5)
     return _ISO_STAMP.sub(_sub, text)
+
+
+def widen_to_min_span(
+    lo: datetime.datetime, hi: datetime.datetime, minutes: int = 10
+) -> tuple[datetime.datetime, datetime.datetime]:
+    """Widen a short plot range to at least `minutes`, centred, so HH:mm ticks are
+    never duplicated (M4)."""
+    span = hi - lo
+    need = datetime.timedelta(minutes=minutes)
+    if span >= need:
+        return lo, hi
+    mid = lo + span / 2
+    return mid - need / 2, mid + need / 2
