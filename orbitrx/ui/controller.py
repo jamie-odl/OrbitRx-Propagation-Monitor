@@ -243,8 +243,6 @@ class OrbitRxController:
         self.state.alert_storm_last = sl
         if offline:
             self._on_status("Offline: NOAA unreachable, showing cached space weather")
-        else:
-            self._on_status("Conditions updated")
         self._on_weather()
 
     def _path_target(self) -> tuple[float, float, str]:

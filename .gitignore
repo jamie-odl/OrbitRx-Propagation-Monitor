@@ -5,6 +5,7 @@ build/
 dist/
 *.spec.bak
 build_spec.spec
+file_version_info.txt
 
 # Runtime / local data
 propagation_log.csv

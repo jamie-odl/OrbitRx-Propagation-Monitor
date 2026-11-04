@@ -24,6 +24,40 @@ def cfg(tmp_path):
     return AppConfig(path=Path(tmp_path) / "c.json").load()
 
 
+def test_rig_wizard_port_combo_is_editable(app, cfg):
+    from orbitrx.cat import CatController
+    from orbitrx.ui.rig_wizard import RigWizardDialog
+    dlg = RigWizardDialog(cfg, CatController(cfg))
+    assert dlg.port_combo.isEditable() is True
+
+
+def test_populate_port_combo_uses_cat_controller_enumeration(app, cfg, monkeypatch): # N-new-1
+    from PySide6.QtWidgets import QComboBox
+    from orbitrx.cat import CatController
+    from orbitrx.ui.rig_wizard import populate_port_combo
+
+    cat = CatController(cfg)
+    monkeypatch.setattr(cat, "list_ports_detailed", lambda: [("COM5", "USB Serial")])
+    combo = QComboBox()
+    populate_port_combo(combo, cat, "")
+    assert combo.count() == 1
+    assert combo.itemData(0) == "COM5"
+    assert "COM5" in combo.itemText(0)
+
+
+def test_populate_port_combo_falls_back_when_no_ports(app, cfg, monkeypatch): # N-new-1
+    from PySide6.QtWidgets import QComboBox
+    from orbitrx.cat import CatController
+    from orbitrx.ui.rig_wizard import populate_port_combo
+
+    cat = CatController(cfg)
+    monkeypatch.setattr(cat, "list_ports_detailed", lambda: [])
+    combo = QComboBox()
+    populate_port_combo(combo, cat, "COM9")
+    assert combo.count() == 1
+    assert combo.currentText() == "COM9"
+
+
 def test_rig_wizard_title_is_rig_setup(app, cfg):
     from orbitrx.cat import CatController
     from orbitrx.ui.rig_wizard import RigWizardDialog

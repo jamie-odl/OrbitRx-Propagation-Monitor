@@ -19,6 +19,7 @@ from pathlib import Path
 
 from orbitrx.map_renderer import MapLayers, MapRenderer
 from orbitrx.paths import bundled_root
+from orbitrx.ui.formatting import format_hour_offset
 
 
 def _assets_dir() -> Path:
@@ -244,7 +245,7 @@ if WEBENGINE_AVAILABLE:
             self.web.page().runJavaScript(js)
             offset = state.slider_offset_hours
             now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=offset)
-            extra = f"  (+{offset:.1f}h)" if offset else ""
+            extra = f"  ({format_hour_offset(offset)})" if offset else ""
             self.hud.setText(
                 f"Leaflet @ {now.strftime('%Y-%m-%d %H:%M UTC')}{extra} · "
                 "Scroll to zoom · Click a spot to tune"

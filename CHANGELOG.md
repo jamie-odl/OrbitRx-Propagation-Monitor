@@ -5,6 +5,35 @@ All notable changes to OrbitRx are documented here. Format follows
 
 ## [Unreleased]
 
+### Fixed (design review V2 follow-ups)
+- Removed the duplicate "Click a spot to tune" hint on the Leaflet map header.
+- Station > Location privacy text is fully visible at the default Settings size
+  (separate word-wrapped label next to a shorter checkbox label).
+- Field borders (text/combo/spin/date inputs) now meet 3:1 contrast against
+  both the window and field backgrounds; spin box up/down buttons have a
+  proper panel, divider and arrow glyphs instead of rendering as black slivers.
+- Static map now fills the viewport width (`KeepAspectRatioByExpanding`)
+  instead of letterboxing to ~80%.
+- Time offset / spot replay sliders read "+N h" / "Live" / "-N h" (whole
+  hours) instead of "+0.0h".
+- Settings field columns line up at the same x on every page; the serial port
+  field is now an editable combo box populated from the same port enumeration
+  as the Rig wizard on both screens.
+- Removed the stray "Conditions updated" status line that duplicated
+  "Weather updated".
+- History plot date axis uses "dd MMM yyyy" (e.g. "04 Nov 2026") consistently
+  with the rest of the UI.
+- Solar flux trend now reads e.g. "↑ (rising)" instead of a bare arrow.
+- Dialog buttons (Save/Cancel/Close) never show platform icons.
+- Action button grid renamed to "Export snapshot" / "Export DX CSV" and is
+  laid out as two full rows with no ragged hole.
+- Installer sets `AppCopyright`; PyInstaller build generates a Windows version
+  resource from `VERSION` and no longer UPX-compresses the exe (suspected
+  cause of the malformed PE security directory).
+- Added `tools/screenshot_rig_wizard.py` and a `windows-screenshot` CI job
+  that captures the real Rig wizard (real serial-port enumeration) as
+  evidence on every push.
+
 ## [5.1.0] - not yet released
 
 ### Added

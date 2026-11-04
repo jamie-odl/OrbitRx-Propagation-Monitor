@@ -11,6 +11,24 @@ from orbitrx.config import AppConfig
 from orbitrx.ui.theme import ERR, OK
 
 
+def populate_port_combo(combo: QComboBox, cat: CatController, current_port: str) -> None:
+    """Fill a serial-port combo from the same enumeration CatController uses everywhere,
+    so Settings and the rig wizard never disagree (N-new-1)."""
+    combo.clear()
+    ports = cat.list_ports_detailed()
+    if ports:
+        for device, desc in ports:
+            combo.addItem(f"{device} ({desc})" if desc != device else device, device)
+    else:
+        fallback = current_port or default_port_fallback()
+        combo.addItem(fallback, fallback)
+    idx = combo.findData(current_port)
+    if idx >= 0:
+        combo.setCurrentIndex(idx)
+    elif current_port:
+        combo.setEditText(current_port)
+
+
 class RigWizardDialog(QDialog):
     """Detect serial port, test CAT, save rig profile."""
 
@@ -25,6 +43,7 @@ class RigWizardDialog(QDialog):
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
         self.port_combo = QComboBox()
+        self.port_combo.setEditable(True)
         self._fill_ports()
         form.addRow("Serial port", self.port_combo)
 
@@ -67,18 +86,7 @@ class RigWizardDialog(QDialog):
         lay.addWidget(buttons)
 
     def _fill_ports(self) -> None:
-        self.port_combo.clear()
-        ports = self.cat.list_ports_detailed()
-        if ports:
-            for device, desc in ports:
-                self.port_combo.addItem(f"{device} ({desc})" if desc != device else device, device)
-        else:
-            fallback = self.cfg.get("cat_port") or default_port_fallback()
-            self.port_combo.addItem(fallback, fallback)
-        current = str(self.cfg.get("cat_port", ""))
-        idx = self.port_combo.findData(current)
-        if idx >= 0:
-            self.port_combo.setCurrentIndex(idx)
+        populate_port_combo(self.port_combo, self.cat, str(self.cfg.get("cat_port", "") or ""))
 
     def _current_port(self) -> str:
         data = self.port_combo.currentData()

@@ -1,4 +1,6 @@
-from orbitrx.propagation import estimate_muf, band_condition, voacap_lite_path_muf, band_grid
+from orbitrx.propagation import (
+    band_condition, band_grid, estimate_muf, flux_trend_arrow, voacap_lite_path_muf,
+)
 
 
 def test_estimate_muf():
@@ -20,3 +22,10 @@ def test_path_muf():
 def test_band_grid_keys():
     g = band_grid(150, 2)
     assert "10m" in g and "20m" in g
+
+
+def test_flux_trend_arrow_labels_the_direction(): # N-new-8
+    assert flux_trend_arrow([100, 110]) == "↑ (rising)"
+    assert flux_trend_arrow([110, 100]) == "↓ (falling)"
+    assert flux_trend_arrow([100, 101]) == "→ (steady)"
+    assert flux_trend_arrow([100]) == "--"

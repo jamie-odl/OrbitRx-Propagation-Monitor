@@ -62,6 +62,24 @@ def format_source_label(raw: str | None) -> str:
     return NOAA_SOURCE_LABELS.get(raw, raw)
 
 
+def format_hour_offset(hours: float) -> str:
+    """Forward time-offset slider readout, e.g. 0 -> "+0 h", 3 -> "+3 h" (S6)."""
+    return f"+{int(round(hours))} h"
+
+
+def format_replay_offset(hours: float) -> str:
+    """Spot-replay slider readout, e.g. 0 -> "Live", 2 -> "-2 h" (S6)."""
+    h = int(round(hours))
+    return "Live" if h == 0 else f"-{h} h"
+
+
+def concise_date_offset_formats() -> list[str]:
+    """ConciseDateFormatter offset_formats using "dd MMM yyyy" day order (N-new-7),
+    consistent with format_iso_utc elsewhere instead of matplotlib's default "yyyy-MMM-dd".
+    """
+    return ["", "%Y", "%b %Y", "%d %b %Y", "%d %b %Y", "%d %b %Y %H:%M"]
+
+
 def pad_datetime_range(
     lo: datetime.datetime, hi: datetime.datetime, frac: float = 0.05
 ) -> tuple[datetime.datetime, datetime.datetime]:

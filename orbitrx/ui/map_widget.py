@@ -6,6 +6,7 @@ from typing import Any
 from PIL import Image
 
 from orbitrx.map_renderer import MapLayers, MapRenderer, MapScene
+from orbitrx.ui.formatting import format_hour_offset
 from orbitrx.ui.theme import FONT_CAPTION
 
 try:
@@ -109,7 +110,9 @@ class PropagationMapWidget(QWidget):
         self._base_item.setPos(0, 0)
         w, h = base_rgba.width, base_rgba.height
         self.scene.setSceneRect(0, 0, w, h)
-        self.view.fitInView(QRectF(0, 0, w, h), Qt.AspectRatioMode.KeepAspectRatio)
+        # Expanding (not KeepAspectRatio) so the map fills the viewport width (S3)
+        # instead of letterboxing; any vertical overflow is reachable via right-drag pan.
+        self.view.fitInView(QRectF(0, 0, w, h), Qt.AspectRatioMode.KeepAspectRatioByExpanding)
         self._view_fitted = True
 
     def _overlay_refresh_key(self, scene: MapScene, state: Any) -> tuple:
@@ -155,7 +158,7 @@ class PropagationMapWidget(QWidget):
         self._draw_vectors(scene)
         offset = state.slider_offset_hours
         now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=offset)
-        extra = f"  (+{offset:.1f}h)" if offset else ""
+        extra = f"  ({format_hour_offset(offset)})" if offset else ""
         self.hud.setText(
             f"Greyline @ {now.strftime('%Y-%m-%d %H:%M UTC')}{extra} · "
             "Scroll to zoom · Right-drag to pan · Double-click to reset · Click a spot to tune"
@@ -279,4 +282,4 @@ class PropagationMapWidget(QWidget):
         if self._base_item.pixmap() and not self._base_item.pixmap().isNull():
             r = self._base_item.boundingRect()
             if r.width() > 0 and r.height() > 0:
-                self.view.fitInView(r, Qt.AspectRatioMode.KeepAspectRatio)
+                self.view.fitInView(r, Qt.AspectRatioMode.KeepAspectRatioByExpanding)

@@ -14,8 +14,10 @@ from orbitrx.ui.band_panel import BandPanelWidget
 from orbitrx.ui.controller import OrbitRxController
 from orbitrx.ui.map_widget import PropagationMapWidget, QT_AVAILABLE
 from orbitrx.spots.settings import clamp_poll_seconds
-from orbitrx.ui.formatting import pad_datetime_range
-from orbitrx.ui.rig_wizard import RigWizardDialog
+from orbitrx.ui.formatting import (
+    concise_date_offset_formats, format_hour_offset, format_replay_offset, pad_datetime_range,
+)
+from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
 from orbitrx.ui.theme import ERR, MUTED, OK, apply_theme
 from orbitrx.update_checker import check_github_release
 
@@ -52,6 +54,10 @@ except ImportError:
 
 CONTINENT_OPTS = [("NA", "North America"), ("SA", "South America"), ("EU", "Europe"),
                   ("AF", "Africa"), ("AS", "Asia"), ("OC", "Oceania")]
+
+# Shared label column width for every Settings page, so the field column starts at the
+# same x regardless of which page's labels happen to be widest (N-new-3).
+SETTINGS_LABEL_WIDTH = 170
 
 
 class _UiInvoker(QObject):
@@ -182,7 +188,7 @@ class QtOrbitRxApplication(QMainWindow):
         self.time_slider.setValue(0)
         self.time_slider.valueChanged.connect(self._slider_moved)
         slider_row.addWidget(self.time_slider)
-        self.lbl_slider = QLabel("+0.0h")
+        self.lbl_slider = QLabel(format_hour_offset(0))
         self.lbl_slider.setFixedWidth(56)
         self.lbl_slider.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         slider_row.addWidget(self.lbl_slider)
@@ -191,7 +197,7 @@ class QtOrbitRxApplication(QMainWindow):
         replay_row = QHBoxLayout()
         replay_row.addWidget(QLabel("Spot replay (hours ago):"))
         self.replay_slider = QSlider(Qt.Orientation.Horizontal)
-        self.replay_slider.setRange(0, 48)  # half-hour steps over the last 24 h
+        self.replay_slider.setRange(0, 48)  # whole-hour steps, up to 48 hours ago
         self.replay_slider.setValue(0)
         self.replay_slider.setToolTip("0 = live. Drag left to right to replay cached PSKReporter spots.")
         self.replay_slider.valueChanged.connect(self._replay_moved)
@@ -283,18 +289,27 @@ class QtOrbitRxApplication(QMainWindow):
 
         btn_row = QGridLayout()
         btn_row.setSpacing(6)
-        for idx, (text, slot) in enumerate([
+        action_buttons = [
             ("Location", self.ctrl.refresh_location),
             ("Weather", self.ctrl.fetch_weather),
             ("Settings", self._settings),
             ("Rig", self._rig_wizard),
-            ("Export", self._export_json),
-            ("DX CSV", self._export_dx),
+            ("Export snapshot", self._export_json),
+            ("Export DX CSV", self._export_dx),
             ("About", self._about),
-        ]):
+        ]
+        columns = 4
+        for idx, (text, slot) in enumerate(action_buttons):
             btn = QPushButton(text, clicked=slot)
             btn.setMinimumWidth(0)
-            btn_row.addWidget(btn, idx // 4, idx % 4)
+            btn_row.addWidget(btn, idx // columns, idx % columns)
+        # Fill the trailing cells with a spacer so the grid reads as 2 tidy rows,
+        # not a ragged one with a hole (N-new-5).
+        remainder = len(action_buttons) % columns
+        if remainder:
+            last_row = (len(action_buttons) - 1) // columns
+            for col in range(remainder, columns):
+                btn_row.addWidget(QWidget(), last_row, col)
         right_layout.addLayout(btn_row)
         right_layout.addStretch()
         right_scroll.setWidget(right_panel)
@@ -337,7 +352,7 @@ class QtOrbitRxApplication(QMainWindow):
         self._map_label = "Map: loading..."
         try:
             if self._map_backend == "leaflet":
-                self._map_label = "Interactive map · OpenStreetMap · Click a spot to tune"
+                self._map_label = "Interactive map · OpenStreetMap"
                 self.banner.setText(self._map_label)
                 return
             map_path = ensure_map_image()
@@ -368,8 +383,7 @@ class QtOrbitRxApplication(QMainWindow):
         )
 
     def _replay_moved(self, val: int) -> None:
-        hours = val / 2.0
-        self.lbl_replay.setText("Live" if val == 0 else f"-{hours:.1f}h")
+        self.lbl_replay.setText(format_replay_offset(val))
         self._refresh_live_spots()
 
     def _refresh_live_spots(self) -> None:
@@ -378,7 +392,7 @@ class QtOrbitRxApplication(QMainWindow):
         if not hasattr(self.map_widget, "set_live_spots"):
             return
         val = self.replay_slider.value() if hasattr(self, "replay_slider") else 0
-        spots = self.ctrl.spots.snapshot() if val == 0 else self.ctrl.spots.replay(val / 2.0)
+        spots = self.ctrl.spots.snapshot() if val == 0 else self.ctrl.spots.replay(float(val))
         self.map_widget.set_live_spots({
             "arcs": self._layer_checks["spot_arcs"].isChecked(),
             "heatmap": self._layer_checks["spot_heatmap"].isChecked(),
@@ -426,8 +440,8 @@ class QtOrbitRxApplication(QMainWindow):
         self._refresh_map()
 
     def _slider_moved(self, val: int) -> None:
-        self.ctrl.state.slider_offset_hours = val / 2.0
-        self.lbl_slider.setText(f"+{self.ctrl.state.slider_offset_hours:.1f}h")
+        self.ctrl.state.slider_offset_hours = float(val)
+        self.lbl_slider.setText(format_hour_offset(val))
         self._refresh_map()
 
     def _on_map_click(self, x: float, y: float) -> None:
@@ -536,7 +550,9 @@ class QtOrbitRxApplication(QMainWindow):
 
         locator = AutoDateLocator(maxticks=7)
         ax.xaxis.set_major_locator(locator)
-        ax.xaxis.set_major_formatter(ConciseDateFormatter(locator))
+        ax.xaxis.set_major_formatter(
+            ConciseDateFormatter(locator, offset_formats=concise_date_offset_formats())
+        )
         lo, hi = pad_datetime_range(min(times), max(times))
         ax.set_xlim(lo, hi)
 
@@ -602,6 +618,13 @@ class QtOrbitRxApplication(QMainWindow):
         pages_list.addItem(title)
         return form
 
+    def _add_settings_row(self, form: QFormLayout, text: str, field) -> QLabel:
+        """addRow with a fixed-width label so every Settings page lines up (N-new-3)."""
+        label = QLabel(text)
+        label.setMinimumWidth(SETTINGS_LABEL_WIDTH)
+        form.addRow(label, field)
+        return label
+
     def _build_settings_dialog(self, initial_page: str | None = None) -> QDialog:
         from orbitrx.cat import RIG_PROFILES
 
@@ -627,41 +650,50 @@ class QtOrbitRxApplication(QMainWindow):
         # --- Station ---
         station = self._add_form_page(page_list, stack, "Station")
         fields["spots_callsign"] = QLineEdit(str(cfg.get("spots_callsign", "") or ""))
-        station.addRow("My callsign", fields["spots_callsign"])
+        self._add_settings_row(station, "My callsign", fields["spots_callsign"])
         fields["home_lat"] = QDoubleSpinBox()
         fields["home_lat"].setRange(-90.0, 90.0)
         fields["home_lat"].setDecimals(4)
         fields["home_lat"].setSpecialValueText("n/a")
         fields["home_lat"].setValue(float(cfg.get("home_lat") or -90.0) if cfg.get("home_lat") is not None else -90.0)
-        station.addRow("Home latitude", fields["home_lat"])
+        self._add_settings_row(station, "Home latitude", fields["home_lat"])
         fields["home_lon"] = QDoubleSpinBox()
         fields["home_lon"].setRange(-180.0, 180.0)
         fields["home_lon"].setDecimals(4)
         fields["home_lon"].setSpecialValueText("n/a")
         fields["home_lon"].setValue(float(cfg.get("home_lon") or -180.0) if cfg.get("home_lon") is not None else -180.0)
-        station.addRow("Home longitude", fields["home_lon"])
-        fields["ip_geolocation_enabled"] = QCheckBox("Look up my approximate location from my IP address (sends your IP to ipinfo.io)")
+        self._add_settings_row(station, "Home longitude", fields["home_lon"])
+        fields["ip_geolocation_enabled"] = QCheckBox("Look up my location from my IP")
         fields["ip_geolocation_enabled"].setChecked(bool(cfg.get("ip_geolocation_enabled", False)))
-        station.addRow("Location", fields["ip_geolocation_enabled"])
+        ip_col = QVBoxLayout()
+        ip_col.addWidget(fields["ip_geolocation_enabled"])
+        ip_note = QLabel("Sends your IP address to ipinfo.io to estimate your location.")
+        ip_note.setWordWrap(True)
+        ip_note.setObjectName("muted")
+        ip_col.addWidget(ip_note)
+        self._add_settings_row(station, "Location", ip_col)
 
         # --- Rig ---
         rig = self._add_form_page(page_list, stack, "Rig")
-        fields["cat_port"] = QLineEdit(str(cfg.get("cat_port", "") or ""))
-        rig.addRow("Serial port", fields["cat_port"])
+        cat_port = QComboBox()
+        cat_port.setEditable(True)
+        populate_port_combo(cat_port, self.ctrl.cat, str(cfg.get("cat_port", "") or ""))
+        fields["cat_port"] = cat_port
+        self._add_settings_row(rig, "Serial port", cat_port)
         rig_profile = QComboBox()
         rig_profile.addItems(sorted(RIG_PROFILES.keys()))
         pidx = rig_profile.findText(str(cfg.get("cat_rig_profile", "kenwood")))
         if pidx >= 0:
             rig_profile.setCurrentIndex(pidx)
         fields["cat_rig_profile"] = rig_profile
-        rig.addRow("Rig profile", rig_profile)
+        self._add_settings_row(rig, "Rig profile", rig_profile)
         baud = QComboBox()
         baud.addItems(["4800", "9600", "19200", "38400", "115200"])
         bidx = baud.findText(str(cfg.get("cat_baud", 9600)))
         if bidx >= 0:
             baud.setCurrentIndex(bidx)
         fields["cat_baud"] = baud
-        rig.addRow("Baud rate", baud)
+        self._add_settings_row(rig, "Baud rate", baud)
         rig_control = QComboBox()
         rig_control.addItem("Serial CAT (pyserial)", "serial")
         rig_control.addItem("OmniRig (Windows)", "omnirig")
@@ -669,14 +701,14 @@ class QtOrbitRxApplication(QMainWindow):
         if ridx >= 0:
             rig_control.setCurrentIndex(ridx)
         fields["rig_control"] = rig_control
-        rig.addRow("Rig control", rig_control)
+        self._add_settings_row(rig, "Rig control", rig_control)
         test_cat_row = QHBoxLayout()
         test_cat_btn = QPushButton("Test CAT")
         test_cat_result = QLabel("")
         test_cat_result.setWordWrap(True)
 
         def do_test_cat() -> None:
-            cfg.data["cat_port"] = fields["cat_port"].text().strip()
+            cfg.data["cat_port"] = (fields["cat_port"].currentData() or fields["cat_port"].currentText()).strip()
             cfg.data["cat_baud"] = int(fields["cat_baud"].currentText())
             cfg.data["cat_rig_profile"] = fields["cat_rig_profile"].currentText()
             result = self.ctrl.cat.tune(14.200, confirm=None)
@@ -691,21 +723,21 @@ class QtOrbitRxApplication(QMainWindow):
         # --- DX cluster ---
         dxc = self._add_form_page(page_list, stack, "DX cluster")
         fields["dx_cluster_callsign"] = QLineEdit(str(cfg.get("dx_cluster_callsign", "") or ""))
-        dxc.addRow("Cluster callsign", fields["dx_cluster_callsign"])
+        self._add_settings_row(dxc, "Cluster callsign", fields["dx_cluster_callsign"])
         fields["target_dx_callsign"] = QLineEdit(str(cfg.get("target_dx_callsign", "") or ""))
-        dxc.addRow("Target DX callsign", fields["target_dx_callsign"])
+        self._add_settings_row(dxc, "Target DX callsign", fields["target_dx_callsign"])
         fields["target_dx_lat"] = QDoubleSpinBox()
         fields["target_dx_lat"].setRange(-90.0, 90.0)
         fields["target_dx_lat"].setDecimals(4)
         fields["target_dx_lat"].setSpecialValueText("n/a")
         fields["target_dx_lat"].setValue(float(cfg.get("target_dx_lat") or -90.0) if cfg.get("target_dx_lat") is not None else -90.0)
-        dxc.addRow("Target latitude", fields["target_dx_lat"])
+        self._add_settings_row(dxc, "Target latitude", fields["target_dx_lat"])
         fields["target_dx_lon"] = QDoubleSpinBox()
         fields["target_dx_lon"].setRange(-180.0, 180.0)
         fields["target_dx_lon"].setDecimals(4)
         fields["target_dx_lon"].setSpecialValueText("n/a")
         fields["target_dx_lon"].setValue(float(cfg.get("target_dx_lon") or -180.0) if cfg.get("target_dx_lon") is not None else -180.0)
-        dxc.addRow("Target longitude", fields["target_dx_lon"])
+        self._add_settings_row(dxc, "Target longitude", fields["target_dx_lon"])
 
         band_box = QGroupBox("DX band filters (empty = all)")
         band_layout = QVBoxLayout(band_box)
@@ -738,14 +770,14 @@ class QtOrbitRxApplication(QMainWindow):
         if midx >= 0:
             spots_mode.setCurrentIndex(midx)
         fields["spots_mode"] = spots_mode
-        spots.addRow("Mode", spots_mode)
+        self._add_settings_row(spots, "Mode", spots_mode)
         poll = QSpinBox()
         poll.setRange(300, 3600)
         poll.setSuffix(" s")
         poll.setSingleStep(60)
         poll.setValue(clamp_poll_seconds(cfg.get("pskreporter_poll_seconds", 300)))
         fields["pskreporter_poll_seconds"] = poll
-        spots.addRow("Poll interval", poll)
+        self._add_settings_row(spots, "Poll interval", poll)
 
         # --- Map ---
         map_page = self._add_form_page(page_list, stack, "Map")
@@ -757,7 +789,7 @@ class QtOrbitRxApplication(QMainWindow):
         if idx >= 0:
             map_backend.setCurrentIndex(idx)
         fields["map_backend"] = map_backend
-        map_page.addRow("Map backend", map_backend)
+        self._add_settings_row(map_page, "Map backend", map_backend)
 
         # --- Services ---
         services = self._add_form_page(page_list, stack, "Services")
@@ -777,7 +809,7 @@ class QtOrbitRxApplication(QMainWindow):
         qrz_row.addWidget(qrz_key, stretch=1)
         qrz_btn = QPushButton("Test QRZ")
         qrz_row.addWidget(qrz_btn)
-        services.addRow("QRZ API key", qrz_row)
+        self._add_settings_row(services, "QRZ API key", qrz_row)
         qrz_result = QLabel("")
         qrz_result.setWordWrap(True)
 
@@ -793,7 +825,7 @@ class QtOrbitRxApplication(QMainWindow):
         refresh_secs.setSuffix(" s")
         refresh_secs.setValue(int(cfg.get("refresh_interval_seconds", 60)))
         fields["refresh_interval_seconds"] = refresh_secs
-        services.addRow("Space weather refresh", refresh_secs)
+        self._add_settings_row(services, "Space weather refresh", refresh_secs)
 
         dlg.fields = fields
         dlg.band_checks = band_checks
@@ -816,7 +848,7 @@ class QtOrbitRxApplication(QMainWindow):
         cfg.set("home_lat", None if fields["home_lat"].value() == -90.0 else fields["home_lat"].value())
         cfg.set("home_lon", None if fields["home_lon"].value() == -180.0 else fields["home_lon"].value())
         cfg.set("ip_geolocation_enabled", fields["ip_geolocation_enabled"].isChecked())
-        cfg.set("cat_port", fields["cat_port"].text().strip())
+        cfg.set("cat_port", (fields["cat_port"].currentData() or fields["cat_port"].currentText()).strip())
         cfg.set("cat_baud", int(fields["cat_baud"].currentText()))
         cfg.set("cat_rig_profile", fields["cat_rig_profile"].currentText())
         cfg.set("rig_control", fields["rig_control"].currentData())

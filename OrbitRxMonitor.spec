@@ -1,5 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
+import sys
+
 from PyInstaller.utils.hooks import collect_submodules
+
+sys.path.insert(0, '.')
+from tools.make_version_info import write_version_info  # noqa: E402
+
+# I3: VERSION is the single source of truth; regenerate the exe's Windows version
+# resource from it on every build instead of hand-maintaining a second copy.
+VERSION_INFO_FILE = write_version_info('VERSION', 'file_version_info.txt')
 
 hiddenimports = ['PySide6', 'PySide6.QtWebEngineWidgets', 'PySide6.QtWebChannel', 'matplotlib.backends.backend_qtagg', 'serial', 'serial.tools.list_ports']
 hiddenimports += collect_submodules('orbitrx')
@@ -47,7 +56,11 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # I4: UPX-compressing the onefile exe was the likely source of the malformed PE
+    # security directory the installer review flagged (UPX doesn't relocate/clear that
+    # directory correctly in some bootloader builds). Disabled until that's confirmed fixed
+    # upstream; signtool will need a clean, uncompressed PE to attach a real signature anyway.
+    upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,
@@ -57,4 +70,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon='assets/orbitrx.ico',
+    version=str(VERSION_INFO_FILE),
 )

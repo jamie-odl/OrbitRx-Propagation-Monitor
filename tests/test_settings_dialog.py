@@ -100,6 +100,15 @@ def test_refresh_interval_spin_box_has_suffix(window):
     assert field.suffix().strip() == "s"
 
 
+def test_serial_port_is_an_editable_combo_box(window): # N-new-1
+    from PySide6.QtWidgets import QComboBox
+
+    dlg = window._build_settings_dialog()
+    field = dlg.fields["cat_port"]
+    assert isinstance(field, QComboBox)
+    assert field.isEditable() is True
+
+
 def test_rig_profile_and_baud_are_combo_boxes_matching_wizard(window):
     from orbitrx.cat import RIG_PROFILES
     from PySide6.QtWidgets import QComboBox
@@ -124,6 +133,34 @@ def test_initial_page_opens_requested_page(window):
     dlg = window._build_settings_dialog(initial_page="Map")
     assert dlg.page_list.currentRow() == EXPECTED_PAGES.index("Map")
     assert dlg.stack.currentIndex() == EXPECTED_PAGES.index("Map")
+
+
+def test_ip_lookup_privacy_text_is_fully_visible(window): # R1
+    from PySide6.QtWidgets import QLabel
+
+    dlg = window._build_settings_dialog()
+    checkbox = dlg.fields["ip_geolocation_enabled"]
+    assert "ipinfo.io" not in checkbox.text()
+    station_page = dlg.stack.widget(EXPECTED_PAGES.index("Station"))
+    notes = [lbl for lbl in station_page.findChildren(QLabel) if "ipinfo.io" in lbl.text()]
+    assert len(notes) == 1
+    assert notes[0].wordWrap() is True
+
+
+def test_settings_label_column_is_consistent_across_pages(window): # N-new-3
+    from orbitrx.ui.qt_app import SETTINGS_LABEL_WIDTH
+
+    dlg = window._build_settings_dialog()
+    sample_fields = [
+        "spots_callsign", "cat_port", "dx_cluster_callsign",
+        "spots_mode", "map_backend", "refresh_interval_seconds",
+    ]
+    for key in sample_fields:
+        field = dlg.fields[key]
+        form = field.parentWidget().layout()
+        label = form.labelForField(field)
+        assert label is not None, key
+        assert label.minimumWidth() == SETTINGS_LABEL_WIDTH, key
 
 
 def test_settings_dialog_saves_values_into_config(window):

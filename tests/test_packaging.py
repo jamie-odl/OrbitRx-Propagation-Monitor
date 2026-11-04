@@ -38,7 +38,76 @@ def test_inno_setup_has_publisher_version_and_icon():
     assert "SignTool" not in text  # M12: no signing
 
 
+def test_inno_setup_has_copyright_matching_about(): # I2
+    text = (ROOT / "installer" / "OrbitRxMonitor.iss").read_text(encoding="utf-8")
+    assert "AppCopyright=Copyright (C) 2026 Jamie Sibley" in text
+
+
 def test_inno_setup_default_version_matches_version_file():
     text = (ROOT / "installer" / "OrbitRxMonitor.iss").read_text(encoding="utf-8")
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
     assert f'#define AppVer "{version}"' in text
+
+
+def test_spec_references_generated_version_info_file(): # I3
+    text = (ROOT / "OrbitRxMonitor.spec").read_text(encoding="utf-8")
+    assert "make_version_info" in text
+    assert "version=str(VERSION_INFO_FILE)" in text
+
+
+def test_spec_disables_upx_for_the_main_exe(): # I4
+    text = (ROOT / "OrbitRxMonitor.spec").read_text(encoding="utf-8")
+    assert "upx=False" in text
+
+
+def test_version_tuple4_pads_and_truncates_to_four_ints():
+    from tools.make_version_info import version_tuple4
+    assert version_tuple4("5.1.0") == (5, 1, 0, 0)
+    assert version_tuple4("5.1") == (5, 1, 0, 0)
+    assert version_tuple4("5.1.0.3") == (5, 1, 0, 3)
+
+
+def test_build_version_info_text_has_expected_fields_and_parses():
+    import ast
+    from tools.make_version_info import build_version_info_text
+
+    text = build_version_info_text("5.1.0")
+    tree = ast.parse(text, mode="exec")
+    assert len(tree.body) == 1 and isinstance(tree.body[0], ast.Expr)
+    assert "u'CompanyName', u'Obsidian Dynamics (Jamie Sibley)'" in text
+    assert "u'ProductName', u'OrbitRx Propagation Monitor'" in text
+    assert "u'LegalCopyright', u'Copyright (C) 2026 Jamie Sibley'" in text
+    assert "u'FileVersion', u'5.1.0.0'" in text
+    assert "u'ProductVersion', u'5.1.0'" in text
+    assert "filevers=(5, 1, 0, 0)" in text
+
+
+def test_screenshot_rig_wizard_tool_exists_and_uses_real_enumeration(): # M9 evidence
+    path = ROOT / "tools" / "screenshot_rig_wizard.py"
+    assert path.is_file()
+    text = path.read_text(encoding="utf-8")
+    assert "list_ports_detailed" in text
+    assert "frameGeometry" in text
+    assert "grabWindow" in text
+    assert ".grab()" in text  # dialog.grab() fallback
+
+
+def test_ci_has_windows_screenshot_job():
+    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "windows-screenshot:" in text
+    assert "runs-on: windows-latest" in text
+    assert "screenshot_rig_wizard.py" in text
+    assert "rig-wizard-windows-screenshot" in text
+    assert "com0com" in text
+    assert "continue-on-error: true" in text
+    assert "list_ports -v" in text
+
+
+def test_write_version_info_reads_version_file(tmp_path):
+    from tools.make_version_info import write_version_info
+
+    version_file = tmp_path / "VERSION"
+    version_file.write_text("9.2.1\n", encoding="utf-8")
+    out = write_version_info(version_file, tmp_path / "file_version_info.txt")
+    assert out.is_file()
+    assert "filevers=(9, 2, 1, 0)" in out.read_text(encoding="utf-8")

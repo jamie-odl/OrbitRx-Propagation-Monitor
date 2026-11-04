@@ -85,14 +85,15 @@ def bands_summary(flux: float | None, kp: float) -> str:
 
 
 def flux_trend_arrow(recent_flux: list[float]) -> str:
+    """Solar flux trend, e.g. "↑ (rising)" (N-new-8: arrow alone has no meaning)."""
     if len(recent_flux) < 2:
         return "--"
     delta = recent_flux[-1] - recent_flux[-2]
     if delta > 2:
-        return "↑"
+        return "↑ (rising)"
     if delta < -2:
-        return "↓"
-    return "→"
+        return "↓ (falling)"
+    return "→ (steady)"
 
 
 def aurora_oval_lat(kp: float) -> float:

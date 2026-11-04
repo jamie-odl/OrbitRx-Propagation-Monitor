@@ -5,8 +5,11 @@ from __future__ import annotations
 import datetime
 
 from orbitrx.ui.formatting import (
+    concise_date_offset_formats,
     decimal_hours_to_hhmm,
+    format_hour_offset,
     format_iso_utc,
+    format_replay_offset,
     format_source_label,
     format_value,
     pad_datetime_range,
@@ -73,3 +76,23 @@ def test_pad_datetime_range_single_point_still_pads():
     t = datetime.datetime(2026, 11, 4, 12, 0, tzinfo=datetime.timezone.utc)
     plo, phi = pad_datetime_range(t, t)
     assert plo < t < phi
+
+
+def test_format_hour_offset_is_integer_with_space(): # S6
+    assert format_hour_offset(0) == "+0 h"
+    assert format_hour_offset(3) == "+3 h"
+    assert format_hour_offset(48) == "+48 h"
+
+
+def test_format_replay_offset_live_or_integer_hours(): # S6
+    assert format_replay_offset(0) == "Live"
+    assert format_replay_offset(2) == "-2 h"
+    assert format_replay_offset(48) == "-48 h"
+
+
+def test_concise_date_offset_formats_use_day_month_year_order(): # N-new-7
+    formats = concise_date_offset_formats()
+    assert formats[3] == "%d %b %Y"
+    import datetime
+    d = datetime.datetime(2026, 11, 4)
+    assert d.strftime(formats[3]) == "04 Nov 2026"

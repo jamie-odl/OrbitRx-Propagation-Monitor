@@ -9,6 +9,7 @@ AppName=OrbitRx Propagation Monitor
 AppVersion={#AppVer}
 AppVerName=OrbitRx Propagation Monitor {#AppVer}
 AppPublisher=Obsidian Dynamics (Jamie Sibley)
+AppCopyright=Copyright (C) 2026 Jamie Sibley
 VersionInfoVersion={#AppVer}.0
 VersionInfoCompany=Obsidian Dynamics
 VersionInfoProductName=OrbitRx Propagation Monitor
