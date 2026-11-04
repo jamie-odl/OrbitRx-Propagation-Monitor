@@ -1,0 +1,20 @@
+<receptionReports>
+  <receptionReport
+    receiverCallsign="W1AW"
+    receiverLocator="FN31pr"
+    senderCallsign="G7XYZ"
+    senderLocator="IO92xp"
+    frequency="14074000"
+    flowStartSeconds="1774785209"
+    mode="FT8"
+    sNR="-12" />
+  <receptionReport
+    receiverCallsign="VK2ABC"
+    receiverLocator="QF56od"
+    senderCallsign="JA1ABC"
+    senderLocator="PM95uq"
+    frequency="28074000"
+    flowStartSeconds="1774785210"
+    mode="FT8"
+    sNR="5" />
+</receptionReports>
