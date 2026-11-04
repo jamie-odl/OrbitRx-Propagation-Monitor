@@ -27,4 +27,4 @@ _debug_map.png
 config.json
 
 # Spot cache
-data/
+/data/
