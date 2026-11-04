@@ -31,6 +31,7 @@ if not QT_AVAILABLE:
 from PySide6.QtCore import QDate, QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QGridLayout,
     QApplication, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QScrollArea, QSlider,
@@ -204,7 +205,9 @@ class QtOrbitRxApplication(QMainWindow):
 
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
-        right_scroll.setMaximumWidth(380)
+        right_scroll.setMinimumWidth(400)
+        right_scroll.setMaximumWidth(420)
+        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
 
@@ -243,6 +246,10 @@ class QtOrbitRxApplication(QMainWindow):
         stats_outer.addWidget(QLabel("Alerts"))
         self.alerts_list = QListWidget()
         self.alerts_list.setMaximumHeight(90)
+        self.alerts_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.alerts_list.setTextElideMode(Qt.TextElideMode.ElideRight)
+        self.alerts_list.setWordWrap(False)
+        self.alerts_list.setUniformItemSizes(True)
         stats_outer.addWidget(self.alerts_list)
         self.tabs.addTab(stats_tab, "Stats")
 
@@ -274,8 +281,9 @@ class QtOrbitRxApplication(QMainWindow):
         self.click_lbl.setObjectName("muted")
         right_layout.addWidget(self.click_lbl)
 
-        btn_row = QHBoxLayout()
-        for text, slot in [
+        btn_row = QGridLayout()
+        btn_row.setSpacing(6)
+        for idx, (text, slot) in enumerate([
             ("Location", self.ctrl.refresh_location),
             ("Weather", self.ctrl.fetch_weather),
             ("Settings", self._settings),
@@ -283,8 +291,10 @@ class QtOrbitRxApplication(QMainWindow):
             ("Export", self._export_json),
             ("DX CSV", self._export_dx),
             ("About", self._about),
-        ]:
-            btn_row.addWidget(QPushButton(text, clicked=slot))
+        ]):
+            btn = QPushButton(text, clicked=slot)
+            btn.setMinimumWidth(0)
+            btn_row.addWidget(btn, idx // 4, idx % 4)
         right_layout.addLayout(btn_row)
         right_layout.addStretch()
         right_scroll.setWidget(right_panel)
@@ -597,7 +607,7 @@ class QtOrbitRxApplication(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Settings")
-        dlg.resize(700, 520)
+        dlg.setFixedSize(720, 520)
         outer = QVBoxLayout(dlg)
         body = QHBoxLayout()
         outer.addLayout(body, stretch=1)
