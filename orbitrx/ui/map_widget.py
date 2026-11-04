@@ -6,6 +6,7 @@ from typing import Any
 from PIL import Image
 
 from orbitrx.map_renderer import MapLayers, MapRenderer, MapScene
+from orbitrx.ui.theme import FONT_CAPTION
 
 try:
     from PySide6.QtCore import Qt, QRectF, Signal
@@ -71,7 +72,7 @@ class PropagationMapWidget(QWidget):
         self._pan_anchor = None
         self.view.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
-        self.view.setBackgroundBrush(QBrush(QColor("#101820")))
+        self.view.setBackgroundBrush(QBrush(QColor("#0B1118")))
         layout.addWidget(self.view, stretch=1)
 
         self.scene = QGraphicsScene()
@@ -108,12 +109,8 @@ class PropagationMapWidget(QWidget):
         self._base_item.setPos(0, 0)
         w, h = base_rgba.width, base_rgba.height
         self.scene.setSceneRect(0, 0, w, h)
-        if not self._view_fitted:
-            self.view.fitInView(
-                QRectF(0, 0, w, h),
-                Qt.AspectRatioMode.KeepAspectRatio,
-            )
-            self._view_fitted = True
+        self.view.fitInView(QRectF(0, 0, w, h), Qt.AspectRatioMode.KeepAspectRatio)
+        self._view_fitted = True
 
     def _overlay_refresh_key(self, scene: MapScene, state: Any) -> tuple:
         return (
@@ -160,8 +157,8 @@ class PropagationMapWidget(QWidget):
         now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=offset)
         extra = f"  (+{offset:.1f}h)" if offset else ""
         self.hud.setText(
-            f"Greyline @ {now.strftime('%Y-%m-%d %H:%M UTC')}{extra}  |  "
-            f"Scroll=zoom  Right-drag=pan  Double-click=reset  Click purple=tune"
+            f"Greyline @ {now.strftime('%Y-%m-%d %H:%M UTC')}{extra} · "
+            "Scroll to zoom · Right-drag to pan · Double-click to reset · Click a spot to tune"
         )
 
     def _clear_vectors(self) -> None:
@@ -176,7 +173,7 @@ class PropagationMapWidget(QWidget):
         self._clear_vectors()
         self._click_targets.clear()
 
-        sun_font = QFont("Segoe UI", 9)
+        sun_font = QFont("Segoe UI", FONT_CAPTION)
         for ann in scene.annotations:
             if ann.kind == "sun":
                 x, y = ann.data["x"], ann.data["y"]
@@ -231,7 +228,7 @@ class PropagationMapWidget(QWidget):
                 age = d.get("age", 0)
                 label = QGraphicsTextItem(f"{d.get('to')} {freq} MHz ({age}s)")
                 label.setDefaultTextColor(QColor("#FFF59D"))
-                label.setFont(QFont("Segoe UI", 8))
+                label.setFont(QFont("Segoe UI", FONT_CAPTION))
                 label.setPos(tx + 8, ty - 16)
                 self._add_to_vectors(label)
 
@@ -272,6 +269,10 @@ class PropagationMapWidget(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
+        self._fit_map_view()
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
         self._fit_map_view()
 
     def _fit_map_view(self) -> None:

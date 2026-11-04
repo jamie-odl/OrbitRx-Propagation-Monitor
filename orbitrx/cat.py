@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -39,6 +40,11 @@ RIG_PROFILES = {
 }
 
 
+def default_port_fallback() -> str:
+    """Platform-appropriate placeholder when no serial ports are detected."""
+    return "COM3" if sys.platform.startswith("win") else "/dev/ttyUSB0"
+
+
 class CatController:
     def __init__(self, cfg: AppConfig) -> None:
         self.cfg = cfg
@@ -58,13 +64,22 @@ class CatController:
         return msg
 
     def list_ports(self) -> list[str]:
+        return [device for device, _ in self.list_ports_detailed()]
+
+    def list_ports_detailed(self) -> list[tuple[str, str]]:
+        """(device, description) pairs, e.g. ("COM3", "USB Serial Port"). Never surfaces
+        a non-Windows device path when running on Windows (pyserial only reports real
+        COM ports there, but this guards the fallback/display path too)."""
         if not CAT_AVAILABLE:
             return []
         try:
             from serial.tools import list_ports
-            return [p.device for p in list_ports.comports()]
+            ports = [(p.device, p.description or p.device) for p in list_ports.comports()]
         except Exception:
             return []
+        if sys.platform.startswith("win"):
+            ports = [(d, desc) for d, desc in ports if d.upper().startswith("COM")]
+        return ports
 
     def _log(self, msg: str) -> None:
         with open(CAT_LOG, "a", encoding="utf-8") as f:

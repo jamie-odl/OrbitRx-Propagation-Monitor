@@ -145,7 +145,7 @@ if WEBENGINE_AVAILABLE:
             self._layers = MapLayers()
             layout = QVBoxLayout(self)
             layout.setContentsMargins(0, 0, 0, 0)
-            self.hud = QLabel("Interactive map, OpenStreetMap tiles")
+            self.hud = QLabel("Scroll to zoom · Click a spot to tune")
             self.hud.setObjectName("muted")
             layout.addWidget(self.hud)
             self.web = QWebEngineView()
@@ -246,8 +246,8 @@ if WEBENGINE_AVAILABLE:
             now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=offset)
             extra = f"  (+{offset:.1f}h)" if offset else ""
             self.hud.setText(
-                f"Leaflet @ {now.strftime('%Y-%m-%d %H:%M UTC')}{extra}  |  "
-                f"Scroll=zoom  Click spot=tune"
+                f"Leaflet @ {now.strftime('%Y-%m-%d %H:%M UTC')}{extra} · "
+                "Scroll to zoom · Click a spot to tune"
             )
 
 else:

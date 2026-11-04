@@ -115,7 +115,7 @@ def verify_qrz_api(api_key: str, callsign: str = "W1AW") -> tuple[bool, str, tup
         url = f"https://xmldata.qrz.com/xml/current/?KEY={api_key};CALLSIGN={callsign}"
         data = urllib.request.urlopen(url, timeout=10).read().decode("utf-8", errors="ignore")
         if "Session" in data and "Expired" in data:
-            return False, "QRZ session expired — check API key", None
+            return False, "QRZ session expired, check API key", None
         err = re.search(r"<Error>([^<]+)</Error>", data, re.I)
         if err:
             return False, err.group(1).strip(), None

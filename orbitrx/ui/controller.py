@@ -20,6 +20,7 @@ from orbitrx.hamqsl import fetch_solar_xml, hamqsl_path_muf
 from orbitrx.propagation import band_chip, band_grid, bands_summary, estimate_muf, flux_trend_arrow
 from orbitrx.state import AppState
 from orbitrx.storage import DataStore
+from orbitrx.ui.formatting import decimal_hours_to_hhmm, format_iso_utc, format_source_label, format_value
 from orbitrx.utils import estimate_location, local_time_at_lon, sun_times
 from orbitrx.weather import fetch_space_weather_data
 from orbitrx.alerts import show_toast
@@ -265,10 +266,10 @@ class OrbitRxController:
         w = self.state.last_weather_update
         d = self.state.last_dx_update
         if w:
-            parts.append(f"Weather {w.strftime('%H:%M:%S')} UTC")
+            parts.append(f"Weather updated {w.strftime('%H:%M')} UTC")
         if d:
-            parts.append(f"DX {d.strftime('%H:%M:%S')} UTC")
-        return "Last updated: " + (" · ".join(parts) if parts else "never")
+            parts.append(f"DX updated {d.strftime('%H:%M')} UTC")
+        return " · ".join(parts) if parts else "Last updated: never"
 
     def coord_source_summary(self, callsign: str) -> str:
         src = self.state.dx_coord_source.get(callsign, "")
@@ -300,12 +301,12 @@ class OrbitRxController:
         s = self.state
         ss = s.sunspot_observed or s.sunspot_predicted
         grid = " ".join(f"{band_chip(v)}{k}" for k, v in s.band_grid.items())
-        loc = f"You: {s.user_lat:.3f}, {s.user_lon:.3f}" if s.user_lat else "You: --"
-        sr_txt = ss_txt = "--"
+        loc = f"You: {s.user_lat:.3f}, {s.user_lon:.3f}" if s.user_lat else "You: n/a"
+        sr_txt = ss_txt = "n/a"
         if s.user_lat and s.user_lon:
             sr, ssun = sun_times(s.user_lat, s.user_lon, datetime.datetime.now(datetime.timezone.utc))
             if sr:
-                sr_txt, ss_txt = f"{sr:.2f}", f"{ssun:.2f}"
+                sr_txt, ss_txt = decimal_hours_to_hhmm(sr), decimal_hours_to_hhmm(ssun)
         with s.dx_lock:
             vis = list(s.latest_dx_spots[:2])
         dx_parts = []
@@ -315,29 +316,29 @@ class OrbitRxController:
             src = self.coord_source_summary(to_cs)
             src_tag = f" [{src}]" if src else ""
             dx_parts.append(f"{tag}{x['from']}→{to_cs}{src_tag} {x['freq']} MHz")
-        dx = " | ".join(dx_parts) or "--"
+        dx = " | ".join(dx_parts) or "n/a"
         nc = get_next_contest()
-        a_src = getattr(s, "a_index_source", None) or ""
-        a_txt = f"{s.a_index}" if s.a_index is not None else "--"
+        a_src = format_source_label(getattr(s, "a_index_source", None))
+        a_txt = format_value(s.a_index, fmt="{:g}")
         if a_src:
             a_txt = f"{a_txt} ({a_src})"
-        path_muf_txt = f"Path MUF: {s.path_muf if s.path_muf is not None else '--'} MHz"
+        path_muf_txt = f"Path MUF: {format_value(s.path_muf)} MHz"
         if s.path_muf_label:
             path_muf_txt += f" → {s.path_muf_label}"
         return {
             "kp": f"Kp: {s.kp_index:.2f}",
             "kp_forecast": f"Kp Forecast: {s.kp_forecast}",
-            "solar": f"Solar Flux: {s.flux if s.flux is not None else '--'} {s.flux_trend}",
-            "sunspot": f"Sunspot: {ss:.1f}" if ss else "Sunspot: --",
+            "solar": f"Solar Flux: {format_value(s.flux)} {s.flux_trend}",
+            "sunspot": f"Sunspot: {ss:.1f}" if ss else "Sunspot: n/a",
             "a_index": f"A-index: {a_txt}",
-            "solar_wind": f"Wind: {s.solar_wind_speed if s.solar_wind_speed is not None else '--'} km/s  "
-                            f"Bz: {s.bz if s.bz is not None else '--'} nT",
-            "time": f"NOAA: {s.time_utc} UTC",
+            "solar_wind": f"Wind: {format_value(s.solar_wind_speed, unit=' km/s')}  "
+                            f"Bz: {format_value(s.bz, unit=' nT')}",
+            "time": f"NOAA data: {format_iso_utc(s.time_utc)}",
             "bands": f"Bands: {s.bands_summary}",
             "band_grid": f"Per-band: {grid}",
-            "muf": f"MUF: {s.muf if s.muf is not None else '--'} / LUF: {s.luf if s.luf is not None else '--'} MHz",
+            "muf": f"MUF: {format_value(s.muf)} / LUF: {format_value(s.luf)} MHz",
             "path_muf": path_muf_txt,
-            "hamqsl": f"HamQSL: {s.hamqsl_band_hint or '--'}",
+            "hamqsl": f"HamQSL: {s.hamqsl_band_hint or 'n/a'}",
             "sunrise": f"Sunrise UTC: {sr_txt}",
             "sunset": f"Sunset UTC: {ss_txt}",
             "alerts": "Alerts:\n" + ("\n".join(s.alerts[:3]) or "none"),
@@ -345,7 +346,6 @@ class OrbitRxController:
             "solar_forecast": f"27-Day: {s.solar_forecast}",
             "contest": f"Next: {nc['name']}" if nc else "Next: none",
             "dx": f"DX: {dx}",
-            "cluster": f"Cluster: {s.cluster_status}",
         }
 
     def map_click_latlon(self, x: float, y: float, renderer) -> str:

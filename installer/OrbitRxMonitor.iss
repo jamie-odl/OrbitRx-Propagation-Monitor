@@ -8,9 +8,13 @@ AppName=OrbitRx Propagation Monitor
 #endif
 AppVersion={#AppVer}
 AppVerName=OrbitRx Propagation Monitor {#AppVer}
-AppPublisher=Jamie Sibley
+AppPublisher=Obsidian Dynamics (Jamie Sibley)
+VersionInfoVersion={#AppVer}.0
+VersionInfoCompany=Obsidian Dynamics
+VersionInfoProductName=OrbitRx Propagation Monitor
 LicenseFile=..\LICENSE
 OutputDir=..\dist
+SetupIconFile=..\assets\orbitrx.ico
 UninstallDisplayIcon={app}\OrbitRxMonitor.exe
 AppSupportURL=https://github.com/jamie-odl/OrbitRx-Propagation-Monitor
 AppUpdatesURL=https://github.com/jamie-odl/OrbitRx-Propagation-Monitor/releases
@@ -24,6 +28,7 @@ PrivilegesRequired=lowest
 [Files]
 Source: "..\dist\OrbitRxMonitor.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\world_map.jpg"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\assets\orbitrx.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\PRIVACY.md"; DestDir: "{app}"; Flags: ignoreversion

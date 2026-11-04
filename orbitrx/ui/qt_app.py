@@ -14,6 +14,7 @@ from orbitrx.ui.band_panel import BandPanelWidget
 from orbitrx.ui.controller import OrbitRxController
 from orbitrx.ui.map_widget import PropagationMapWidget, QT_AVAILABLE
 from orbitrx.spots.settings import clamp_poll_seconds
+from orbitrx.ui.formatting import pad_datetime_range
 from orbitrx.ui.rig_wizard import RigWizardDialog
 from orbitrx.ui.theme import ERR, MUTED, OK, apply_theme
 from orbitrx.update_checker import check_github_release
@@ -27,12 +28,13 @@ except ImportError:
 if not QT_AVAILABLE:
     raise ImportError("PySide6 is required for the Qt UI")
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QDate, QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
-    QScrollArea, QSlider, QTabWidget, QVBoxLayout, QWidget, QFileDialog,
+    QApplication, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QDoubleSpinBox,
+    QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
+    QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QScrollArea, QSlider,
+    QSpinBox, QStackedWidget, QTabWidget, QVBoxLayout, QWidget, QFileDialog,
     QSystemTrayIcon, QMenu,
 )
 
@@ -41,6 +43,7 @@ try:
     import matplotlib
     matplotlib.use("QtAgg")
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
+    from matplotlib.dates import AutoDateLocator, ConciseDateFormatter
     from matplotlib.figure import Figure
     PLOT_QT = True
 except ImportError:
@@ -67,7 +70,7 @@ class QtOrbitRxApplication(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         apply_theme()
-        self.setWindowTitle(f"OrbitRx Propagation Monitor v{__version__}")
+        self.setWindowTitle(f"OrbitRx Propagation Monitor {__version__}")
         self.renderer = MapRenderer(width=900, height=720)
         self._labels: dict[str, QLabel] = {}
         self._layer_checks: dict[str, QCheckBox] = {}
@@ -106,6 +109,11 @@ class QtOrbitRxApplication(QMainWindow):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._auto_refresh)
         self._timer.start(int(self.ctrl.cfg.get("refresh_interval_seconds", 60)) * 1000)
+
+        self._cluster_pulse_phase = False
+        self._cluster_pulse_timer = QTimer(self)
+        self._cluster_pulse_timer.timeout.connect(self._tick_cluster_pulse)
+        self._cluster_pulse_timer.start(700)
 
     def _leaflet_available(self) -> bool:
         return bool(WEBENGINE_AVAILABLE and LeafletMapWidget)
@@ -149,25 +157,33 @@ class QtOrbitRxApplication(QMainWindow):
         layer_row = QHBoxLayout()
         for key, label in [("greyline", "Greyline"), ("night", "Night"), ("dx_arcs", "DX"),
                            ("aurora", "Aurora"), ("grid", "Grid"),
-                           ("spot_arcs", "Live Spots"), ("spot_heatmap", "Heatmap")]:
+                           ("spot_arcs", "Live spots"), ("spot_heatmap", "Heatmap")]:
             cb = QCheckBox(label)
             cb.setChecked(self.ctrl.cfg.get("map_layers", {}).get(key, key != "grid"))
             cb.stateChanged.connect(self._layers_changed)
             if key.startswith("spot_") and self._map_backend != "leaflet":
                 cb.setEnabled(False)
-                cb.setToolTip("Live Spots need the interactive map. Switch Map backend in Settings.")
+                cb.setToolTip("Live spots need the interactive map. Switch in Settings > Map.")
             self._layer_checks[key] = cb
             layer_row.addWidget(cb)
+        if self._map_backend != "leaflet":
+            switch_lbl = QLabel('<a href="#">Switch map</a>')
+            switch_lbl.setObjectName("muted")
+            switch_lbl.setToolTip("Live spots need the interactive map. Switch in Settings > Map.")
+            switch_lbl.linkActivated.connect(lambda _: self._settings(initial_page="Map"))
+            layer_row.addWidget(switch_lbl)
         left.addLayout(layer_row)
 
         slider_row = QHBoxLayout()
-        slider_row.addWidget(QLabel("Time travel (+hrs):"))
+        slider_row.addWidget(QLabel("Time offset (hours):"))
         self.time_slider = QSlider(Qt.Orientation.Horizontal)
         self.time_slider.setRange(0, 48)
         self.time_slider.setValue(0)
         self.time_slider.valueChanged.connect(self._slider_moved)
         slider_row.addWidget(self.time_slider)
         self.lbl_slider = QLabel("+0.0h")
+        self.lbl_slider.setFixedWidth(56)
+        self.lbl_slider.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         slider_row.addWidget(self.lbl_slider)
         left.addLayout(slider_row)
 
@@ -180,6 +196,8 @@ class QtOrbitRxApplication(QMainWindow):
         self.replay_slider.valueChanged.connect(self._replay_moved)
         replay_row.addWidget(self.replay_slider)
         self.lbl_replay = QLabel("Live")
+        self.lbl_replay.setFixedWidth(56)
+        self.lbl_replay.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         replay_row.addWidget(self.lbl_replay)
         left.addLayout(replay_row)
         root.addLayout(left, stretch=3)
@@ -199,24 +217,42 @@ class QtOrbitRxApplication(QMainWindow):
 
         self.tabs = QTabWidget()
         stats_tab = QWidget()
-        stats_layout = QVBoxLayout(stats_tab)
+        stats_outer = QVBoxLayout(stats_tab)
+
+        stats_scroll = QScrollArea()
+        stats_scroll.setWidgetResizable(True)
+        stats_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        stats_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        stats_form_widget = QWidget()
+        stats_form = QFormLayout(stats_form_widget)
+        stats_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        stats_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         for key in [
             "kp", "kp_forecast", "solar", "sunspot", "a_index", "solar_wind", "time",
-            "bands", "band_grid", "muf", "path_muf", "hamqsl", "sunrise", "sunset", "alerts",
+            "bands", "band_grid", "muf", "path_muf", "hamqsl", "sunrise", "sunset",
             "location", "cluster", "solar_forecast", "contest", "dx",
         ]:
             lbl = QLabel(f"{key}: --")
             lbl.setWordWrap(True)
             lbl.setStyleSheet("padding: 2px;")
             self._labels[key] = lbl
-            stats_layout.addWidget(lbl)
-        stats_layout.addStretch()
+            stats_form.addRow(lbl)
+        stats_scroll.setWidget(stats_form_widget)
+        stats_outer.addWidget(stats_scroll, stretch=1)
+
+        stats_outer.addWidget(QLabel("Alerts"))
+        self.alerts_list = QListWidget()
+        self.alerts_list.setMaximumHeight(90)
+        stats_outer.addWidget(self.alerts_list)
         self.tabs.addTab(stats_tab, "Stats")
 
         plot_tab = QWidget()
         plot_layout = QVBoxLayout(plot_tab)
         hist_row = QHBoxLayout()
-        self.hist_date = QLineEdit(datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"))
+        self.hist_date = QDateEdit()
+        self.hist_date.setCalendarPopup(True)
+        self.hist_date.setDisplayFormat("yyyy-MM-dd")
+        self.hist_date.setDate(QDate.currentDate())
         hist_row.addWidget(self.hist_date)
         hist_row.addWidget(QPushButton("Refresh", clicked=self._refresh_plot_tab))
         plot_layout.addLayout(hist_row)
@@ -291,10 +327,8 @@ class QtOrbitRxApplication(QMainWindow):
         self._map_label = "Map: loading..."
         try:
             if self._map_backend == "leaflet":
-                self._map_label = "Interactive map (OpenStreetMap tiles, needs internet)"
-                self.banner.setText(
-                    f"{self._map_label}  |  Click a spot to tune"
-                )
+                self._map_label = "Interactive map · OpenStreetMap · Click a spot to tune"
+                self.banner.setText(self._map_label)
                 return
             map_path = ensure_map_image()
             if not map_path.is_file():
@@ -303,10 +337,8 @@ class QtOrbitRxApplication(QMainWindow):
             img.load()
             self.renderer.set_base_map(img)
             self.map_widget.set_base_map(self.renderer.base_rgba_image())
-            self._map_label = f"Map loaded: {map_path.name} ({img.width}×{img.height})"
-            self.banner.setText(
-                f"{self._map_label}  |  Scroll to zoom, right-drag to pan, click a spot to tune"
-            )
+            self._map_label = f"Static map · {map_path.name} ({img.width}×{img.height})"
+            self.banner.setText(self._map_label)
         except Exception as e:
             self.renderer.set_base_map(None)
             if hasattr(self.map_widget, "set_base_map"):
@@ -367,6 +399,12 @@ class QtOrbitRxApplication(QMainWindow):
         for k, v in labels.items():
             if k in self._labels:
                 self._labels[k].setText(v)
+        self.alerts_list.clear()
+        for alert in self.ctrl.state.alerts[:5] or ["No active alerts"]:
+            item = QListWidgetItem(alert)
+            item.setToolTip(alert)
+            self.alerts_list.addItem(item)
+        self._render_cluster_label()
         self.band_panel.update_grid(self.ctrl.state.band_grid)
         self.last_updated_lbl.setText(self.ctrl.last_updated_text())
         self._refresh_map()
@@ -396,7 +434,20 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _set_cluster(self, status: str) -> None:
         self.ctrl.state.cluster_status = status
-        self._labels["cluster"].setText(f"Cluster: {status}")
+        self._render_cluster_label()
+
+    def _tick_cluster_pulse(self) -> None:
+        self._cluster_pulse_phase = not self._cluster_pulse_phase
+        if self.ctrl.state.cluster_status == "connected":
+            self._render_cluster_label()
+
+    def _render_cluster_label(self) -> None:
+        status = self.ctrl.state.cluster_status
+        if status == "connected":
+            dot_color = "#81C784" if self._cluster_pulse_phase else "#2E7D32"
+            self._labels["cluster"].setText(f'<span style="color:{dot_color}">●</span> Cluster: connected')
+        else:
+            self._labels["cluster"].setText(f"Cluster: {status}")
 
     def _spot_beep(self, spot: dict) -> None:
         self.ctrl.spot_beep(spot)
@@ -447,7 +498,7 @@ class QtOrbitRxApplication(QMainWindow):
         if not PLOT_QT:
             self.plot_placeholder.setText("matplotlib Qt backend required")
             return
-        q = self.hist_date.text().strip()
+        q = self.hist_date.date().toString("yyyy-MM-dd")
         try:
             rows = self.ctrl.store.query_propagation(q)
         except ValueError as e:
@@ -460,26 +511,44 @@ class QtOrbitRxApplication(QMainWindow):
             item = self.plot_container.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        times, kp, flux, muf, luf = [], [], [], [], []
+        times, kp, flux = [], [], []
         for r in rows:
             times.append(datetime.datetime.fromisoformat(r["ts"]))
             kp.append(float(r.get("kp") or 0))
             flux.append(float(r.get("flux") or 0))
-            muf.append(float(r.get("muf") or 0))
-            luf.append(float(r.get("luf") or 0))
+
         fig = Figure(figsize=(5, 3.5), facecolor="#0B1220")
         ax = fig.add_subplot(111)
         ax.set_facecolor("#0B1220")
         ax.tick_params(colors="#CDDDFE")
         for spine in ax.spines.values():
             spine.set_color("#37474F")
-        ax.plot(times, kp, label="Kp", marker="o", color="#64B5F6")
-        ax.plot(times, flux, label="Flux", marker="o", color="#FFD54F")
+
+        locator = AutoDateLocator(maxticks=7)
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(ConciseDateFormatter(locator))
+        lo, hi = pad_datetime_range(min(times), max(times))
+        ax.set_xlim(lo, hi)
+
+        kp_line, = ax.plot(times, kp, label="Kp", marker="o", color="#64B5F6")
+        ax.set_ylabel("Kp", color="#64B5F6")
+        ax.set_ylim(0, 9)
+        ax.yaxis.set_ticks(range(0, 10))
+
         ax2 = ax.twinx()
-        ax2.plot(times, muf, label="MUF", color="#81C784", marker="x")
-        ax2.plot(times, luf, label="LUF", color="#F48FB1", marker="x")
-        ax.legend(loc="upper left", fontsize=8)
-        ax2.legend(loc="upper right", fontsize=8)
+        sfi_line, = ax2.plot(times, flux, label="SFI", marker="o", color="#FFD54F")
+        ax2.set_ylabel("SFI", color="#FFD54F")
+        ax2.set_ylim(50, 300)
+        for spine in ax2.spines.values():
+            spine.set_color("#37474F")
+        ax2.tick_params(colors="#CDDDFE")
+
+        legend = ax.legend(
+            [kp_line, sfi_line], ["Kp", "SFI"],
+            loc="upper left", fontsize=8, facecolor="#16212C", edgecolor="#37474F",
+        )
+        for text in legend.get_texts():
+            text.set_color("#E3EAF2")
         fig.tight_layout()
         canvas = FigureCanvas(fig)
         self.plot_container.addWidget(canvas)
@@ -492,124 +561,276 @@ class QtOrbitRxApplication(QMainWindow):
             fig.savefig(path, dpi=150, facecolor="#0B1220")
             QMessageBox.information(self, "Saved", path)
 
-    def _settings(self) -> None:
+    def _eye_icon(self, crossed: bool, size: int = 16) -> QIcon:
+        """Small drawn eye glyph for the QRZ key show/hide action (no icon asset needed)."""
+        from PySide6.QtGui import QColor, QPainter
+
+        pix = QPixmap(size, size)
+        pix.fill(Qt.GlobalColor.transparent)
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QColor(MUTED)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        r = size * 0.72
+        top = (size - r) / 2
+        p.drawEllipse(int((size - r) / 2), int(top), int(r), int(r * 0.6))
+        pupil = max(1, int(r * 0.18))
+        p.setBrush(pen)
+        p.drawEllipse(int(size / 2 - pupil / 2), int(size / 2 - pupil / 2), pupil, pupil)
+        if crossed:
+            p.drawLine(2, 2, size - 2, size - 2)
+        p.end()
+        return QIcon(pix)
+
+    def _add_form_page(self, pages_list: QListWidget, stack: QStackedWidget, title: str) -> QFormLayout:
+        page = QWidget()
+        form = QFormLayout(page)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        stack.addWidget(page)
+        pages_list.addItem(title)
+        return form
+
+    def _build_settings_dialog(self, initial_page: str | None = None) -> QDialog:
+        from orbitrx.cat import RIG_PROFILES
+
         dlg = QDialog(self)
         dlg.setWindowTitle("Settings")
-        dlg.resize(480, 520)
+        dlg.resize(700, 520)
         outer = QVBoxLayout(dlg)
-        form = QFormLayout()
-        fields: dict[str, QLineEdit] = {}
-        for key, label in [
-            ("cat_port", "CAT serial port"), ("cat_baud", "CAT baud rate"),
-            ("cat_rig_profile", "Rig profile"), ("dx_cluster_callsign", "Cluster callsign"),
-            ("qrz_api_key", "QRZ API key"), ("target_dx_callsign", "Target DX callsign"),
-            ("target_dx_lat", "Target latitude"), ("target_dx_lon", "Target longitude"),
-            ("refresh_interval_seconds", "Space weather refresh (seconds)"),
-            ("home_lat", "Home latitude"), ("home_lon", "Home longitude"),
-            ("spots_callsign", "Live Spots: my callsign (optional)"), ("spots_mode", "Live Spots: mode (FT8, FT4, WSPR)"),
-            ("pskreporter_poll_seconds", "Live Spots: poll interval (300 s minimum)"),
-        ]:
-            e = QLineEdit(str(self.ctrl.cfg.get(key, "") or ""))
-            form.addRow(label, e)
-            fields[key] = e
+        body = QHBoxLayout()
+        outer.addLayout(body, stretch=1)
 
-        map_backend = QComboBox()
-        map_backend.addItem("Static world map (works offline)", "static")
-        if self._leaflet_available():
-            map_backend.addItem("Interactive map with Live Spots (needs internet)", "leaflet")
-        idx = map_backend.findData(self.ctrl.cfg.get("map_backend", "static"))
-        if idx >= 0:
-            map_backend.setCurrentIndex(idx)
-        form.addRow("Map backend", map_backend)
+        page_list = QListWidget()
+        page_list.setFixedWidth(180)
+        stack = QStackedWidget()
+        dlg.page_list = page_list
+        dlg.stack = stack
+        body.addWidget(page_list)
+        body.addWidget(stack, stretch=1)
+        page_list.currentRowChanged.connect(stack.setCurrentIndex)
 
+        cfg = self.ctrl.cfg
+        fields: dict[str, QWidget] = {}
+
+        # --- Station ---
+        station = self._add_form_page(page_list, stack, "Station")
+        fields["spots_callsign"] = QLineEdit(str(cfg.get("spots_callsign", "") or ""))
+        station.addRow("My callsign", fields["spots_callsign"])
+        fields["home_lat"] = QDoubleSpinBox()
+        fields["home_lat"].setRange(-90.0, 90.0)
+        fields["home_lat"].setDecimals(4)
+        fields["home_lat"].setSpecialValueText("n/a")
+        fields["home_lat"].setValue(float(cfg.get("home_lat") or -90.0) if cfg.get("home_lat") is not None else -90.0)
+        station.addRow("Home latitude", fields["home_lat"])
+        fields["home_lon"] = QDoubleSpinBox()
+        fields["home_lon"].setRange(-180.0, 180.0)
+        fields["home_lon"].setDecimals(4)
+        fields["home_lon"].setSpecialValueText("n/a")
+        fields["home_lon"].setValue(float(cfg.get("home_lon") or -180.0) if cfg.get("home_lon") is not None else -180.0)
+        station.addRow("Home longitude", fields["home_lon"])
+        fields["ip_geolocation_enabled"] = QCheckBox("Look up my approximate location from my IP address (sends your IP to ipinfo.io)")
+        fields["ip_geolocation_enabled"].setChecked(bool(cfg.get("ip_geolocation_enabled", False)))
+        station.addRow("Location", fields["ip_geolocation_enabled"])
+
+        # --- Rig ---
+        rig = self._add_form_page(page_list, stack, "Rig")
+        fields["cat_port"] = QLineEdit(str(cfg.get("cat_port", "") or ""))
+        rig.addRow("Serial port", fields["cat_port"])
+        rig_profile = QComboBox()
+        rig_profile.addItems(sorted(RIG_PROFILES.keys()))
+        pidx = rig_profile.findText(str(cfg.get("cat_rig_profile", "kenwood")))
+        if pidx >= 0:
+            rig_profile.setCurrentIndex(pidx)
+        fields["cat_rig_profile"] = rig_profile
+        rig.addRow("Rig profile", rig_profile)
+        baud = QComboBox()
+        baud.addItems(["4800", "9600", "19200", "38400", "115200"])
+        bidx = baud.findText(str(cfg.get("cat_baud", 9600)))
+        if bidx >= 0:
+            baud.setCurrentIndex(bidx)
+        fields["cat_baud"] = baud
+        rig.addRow("Baud rate", baud)
         rig_control = QComboBox()
         rig_control.addItem("Serial CAT (pyserial)", "serial")
         rig_control.addItem("OmniRig (Windows)", "omnirig")
         ridx = rig_control.findData(self.ctrl.cat.backend())
         if ridx >= 0:
             rig_control.setCurrentIndex(ridx)
-        form.addRow("Rig control", rig_control)
+        fields["rig_control"] = rig_control
+        rig.addRow("Rig control", rig_control)
+        test_cat_row = QHBoxLayout()
+        test_cat_btn = QPushButton("Test CAT")
+        test_cat_result = QLabel("")
+        test_cat_result.setWordWrap(True)
 
-        ip_geo = QCheckBox("Look up my approximate location from my IP address (sends your IP to ipinfo.io)")
-        ip_geo.setChecked(bool(self.ctrl.cfg.get("ip_geolocation_enabled", False)))
-        form.addRow("Location", ip_geo)
+        def do_test_cat() -> None:
+            cfg.data["cat_port"] = fields["cat_port"].text().strip()
+            cfg.data["cat_baud"] = int(fields["cat_baud"].currentText())
+            cfg.data["cat_rig_profile"] = fields["cat_rig_profile"].currentText()
+            result = self.ctrl.cat.tune(14.200, confirm=None)
+            test_cat_result.setText(result)
+            test_cat_result.setStyleSheet(f"color: {OK if 'Sent CAT' in result else ERR};")
+
+        test_cat_btn.clicked.connect(do_test_cat)
+        test_cat_row.addWidget(test_cat_btn)
+        test_cat_row.addWidget(test_cat_result, stretch=1)
+        rig.addRow("", test_cat_row)
+
+        # --- DX cluster ---
+        dxc = self._add_form_page(page_list, stack, "DX cluster")
+        fields["dx_cluster_callsign"] = QLineEdit(str(cfg.get("dx_cluster_callsign", "") or ""))
+        dxc.addRow("Cluster callsign", fields["dx_cluster_callsign"])
+        fields["target_dx_callsign"] = QLineEdit(str(cfg.get("target_dx_callsign", "") or ""))
+        dxc.addRow("Target DX callsign", fields["target_dx_callsign"])
+        fields["target_dx_lat"] = QDoubleSpinBox()
+        fields["target_dx_lat"].setRange(-90.0, 90.0)
+        fields["target_dx_lat"].setDecimals(4)
+        fields["target_dx_lat"].setSpecialValueText("n/a")
+        fields["target_dx_lat"].setValue(float(cfg.get("target_dx_lat") or -90.0) if cfg.get("target_dx_lat") is not None else -90.0)
+        dxc.addRow("Target latitude", fields["target_dx_lat"])
+        fields["target_dx_lon"] = QDoubleSpinBox()
+        fields["target_dx_lon"].setRange(-180.0, 180.0)
+        fields["target_dx_lon"].setDecimals(4)
+        fields["target_dx_lon"].setSpecialValueText("n/a")
+        fields["target_dx_lon"].setValue(float(cfg.get("target_dx_lon") or -180.0) if cfg.get("target_dx_lon") is not None else -180.0)
+        dxc.addRow("Target longitude", fields["target_dx_lon"])
 
         band_box = QGroupBox("DX band filters (empty = all)")
         band_layout = QVBoxLayout(band_box)
         band_checks: dict[float, QCheckBox] = {}
-        current_bands = set(self.ctrl.cfg.get("dx_filter_bands_mhz") or [])
+        current_bands = set(cfg.get("dx_filter_bands_mhz") or [])
         for name, meta in HF_BANDS.items():
             cb = QCheckBox(f"{name} ({meta['freq']} MHz)")
             cb.setChecked(meta["freq"] in current_bands)
             band_checks[meta["freq"]] = cb
             band_layout.addWidget(cb)
-        outer.addLayout(form)
-        outer.addWidget(band_box)
+        dxc.addRow(band_box)
 
         cont_box = QGroupBox("DX continent filters (empty = all)")
         cont_layout = QHBoxLayout(cont_box)
         cont_checks: dict[str, QCheckBox] = {}
-        current_cont = set(self.ctrl.cfg.get("dx_filter_continents") or [])
+        current_cont = set(cfg.get("dx_filter_continents") or [])
         for code, label in CONTINENT_OPTS:
             cb = QCheckBox(code)
             cb.setToolTip(label)
             cb.setChecked(code in current_cont)
             cont_checks[code] = cb
             cont_layout.addWidget(cb)
-        outer.addWidget(cont_box)
+        dxc.addRow(cont_box)
 
+        # --- Live spots ---
+        spots = self._add_form_page(page_list, stack, "Live spots")
+        spots_mode = QComboBox()
+        spots_mode.addItems(["FT8", "FT4", "WSPR"])
+        midx = spots_mode.findText(str(cfg.get("spots_mode", "FT8")))
+        if midx >= 0:
+            spots_mode.setCurrentIndex(midx)
+        fields["spots_mode"] = spots_mode
+        spots.addRow("Mode", spots_mode)
+        poll = QSpinBox()
+        poll.setRange(300, 3600)
+        poll.setSuffix(" s")
+        poll.setSingleStep(60)
+        poll.setValue(clamp_poll_seconds(cfg.get("pskreporter_poll_seconds", 300)))
+        fields["pskreporter_poll_seconds"] = poll
+        spots.addRow("Poll interval", poll)
+
+        # --- Map ---
+        map_page = self._add_form_page(page_list, stack, "Map")
+        map_backend = QComboBox()
+        map_backend.addItem("Static world map (works offline)", "static")
+        if self._leaflet_available():
+            map_backend.addItem("Interactive map with Live Spots (needs internet)", "leaflet")
+        idx = map_backend.findData(cfg.get("map_backend", "static"))
+        if idx >= 0:
+            map_backend.setCurrentIndex(idx)
+        fields["map_backend"] = map_backend
+        map_page.addRow("Map backend", map_backend)
+
+        # --- Services ---
+        services = self._add_form_page(page_list, stack, "Services")
+        qrz_key = QLineEdit(str(cfg.get("qrz_api_key", "") or ""))
+        qrz_key.setEchoMode(QLineEdit.EchoMode.Password)
+        show_action = QAction(self._eye_icon(crossed=True), "Show key", qrz_key)
+        show_action.setCheckable(True)
+
+        def toggle_qrz_echo(checked: bool) -> None:
+            qrz_key.setEchoMode(QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password)
+            show_action.setIcon(self._eye_icon(crossed=not checked))
+
+        show_action.toggled.connect(toggle_qrz_echo)
+        qrz_key.addAction(show_action, QLineEdit.ActionPosition.TrailingPosition)
+        fields["qrz_api_key"] = qrz_key
         qrz_row = QHBoxLayout()
+        qrz_row.addWidget(qrz_key, stretch=1)
         qrz_btn = QPushButton("Test QRZ")
+        qrz_row.addWidget(qrz_btn)
+        services.addRow("QRZ API key", qrz_row)
         qrz_result = QLabel("")
         qrz_result.setWordWrap(True)
 
         def do_qrz_test() -> None:
-            ok, msg, _ = verify_qrz_api(fields["qrz_api_key"].text().strip())
+            ok, msg, _ = verify_qrz_api(qrz_key.text().strip())
             qrz_result.setText(msg)
             qrz_result.setStyleSheet(f"color: {OK if ok else ERR};")
 
         qrz_btn.clicked.connect(do_qrz_test)
-        qrz_row.addWidget(qrz_btn)
-        qrz_row.addWidget(qrz_result, stretch=1)
-        outer.addLayout(qrz_row)
+        services.addRow("", qrz_result)
+        refresh_secs = QSpinBox()
+        refresh_secs.setRange(10, 3600)
+        refresh_secs.setSuffix(" s")
+        refresh_secs.setValue(int(cfg.get("refresh_interval_seconds", 60)))
+        fields["refresh_interval_seconds"] = refresh_secs
+        services.addRow("Space weather refresh", refresh_secs)
+
+        dlg.fields = fields
+        dlg.band_checks = band_checks
+        dlg.cont_checks = cont_checks
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
         outer.addWidget(buttons)
 
+        page_names = ["Station", "Rig", "DX cluster", "Live spots", "Map", "Services"]
+        start_row = page_names.index(initial_page) if initial_page in page_names else 0
+        page_list.setCurrentRow(start_row)
+        return dlg
+
+    def _apply_settings_dialog(self, dlg: QDialog) -> None:
+        fields = dlg.fields
+        cfg = self.ctrl.cfg
+        cfg.set("spots_callsign", fields["spots_callsign"].text().strip())
+        cfg.set("home_lat", None if fields["home_lat"].value() == -90.0 else fields["home_lat"].value())
+        cfg.set("home_lon", None if fields["home_lon"].value() == -180.0 else fields["home_lon"].value())
+        cfg.set("ip_geolocation_enabled", fields["ip_geolocation_enabled"].isChecked())
+        cfg.set("cat_port", fields["cat_port"].text().strip())
+        cfg.set("cat_baud", int(fields["cat_baud"].currentText()))
+        cfg.set("cat_rig_profile", fields["cat_rig_profile"].currentText())
+        cfg.set("rig_control", fields["rig_control"].currentData())
+        cfg.set("dx_cluster_callsign", fields["dx_cluster_callsign"].text().strip())
+        cfg.set("target_dx_callsign", fields["target_dx_callsign"].text().strip())
+        cfg.set("target_dx_lat", None if fields["target_dx_lat"].value() == -90.0 else fields["target_dx_lat"].value())
+        cfg.set("target_dx_lon", None if fields["target_dx_lon"].value() == -180.0 else fields["target_dx_lon"].value())
+        cfg.set("dx_filter_bands_mhz", [f for f, cb in dlg.band_checks.items() if cb.isChecked()])
+        cfg.set("dx_filter_continents", [c for c, cb in dlg.cont_checks.items() if cb.isChecked()])
+        cfg.set("spots_mode", fields["spots_mode"].currentText())
+        cfg.set("pskreporter_poll_seconds", clamp_poll_seconds(fields["pskreporter_poll_seconds"].value()))
+        cfg.set("qrz_api_key", fields["qrz_api_key"].text().strip())
+        cfg.set("refresh_interval_seconds", fields["refresh_interval_seconds"].value())
+        new_backend = fields["map_backend"].currentData()
+        if new_backend != self._map_backend:
+            cfg.set("map_backend", new_backend)
+            QMessageBox.information(self, "Map backend", "Map backend changed. Restart OrbitRx to apply.")
+        self._timer.setInterval(int(cfg.get("refresh_interval_seconds", 60)) * 1000)
+        self._populate_cluster_combo()
+
+    def _settings(self, *, initial_page: str | None = None) -> None:
+        dlg = self._build_settings_dialog(initial_page=initial_page)
         if dlg.exec() == QDialog.DialogCode.Accepted:
-            for key, e in fields.items():
-                val = e.text().strip()
-                try:
-                    if key in ("cat_baud", "refresh_interval_seconds"):
-                        self.ctrl.cfg.set(key, int(val) if val else self.ctrl.cfg.get(key))
-                    elif key == "pskreporter_poll_seconds":
-                        self.ctrl.cfg.set(key, clamp_poll_seconds(val or 300))
-                    elif key in ("target_dx_lat", "target_dx_lon", "home_lat", "home_lon"):
-                        self.ctrl.cfg.set(key, float(val) if val else None)
-                    else:
-                        self.ctrl.cfg.set(key, val)
-                except ValueError:
-                    QMessageBox.warning(self, "Settings", f"Ignored invalid value for {key}: {val!r}")
-            bands = [f for f, cb in band_checks.items() if cb.isChecked()]
-            conts = [c for c, cb in cont_checks.items() if cb.isChecked()]
-            self.ctrl.cfg.set("dx_filter_bands_mhz", bands)
-            self.ctrl.cfg.set("dx_filter_continents", conts)
-            self.ctrl.cfg.set("rig_control", rig_control.currentData())
-            self.ctrl.cfg.set("ip_geolocation_enabled", ip_geo.isChecked())
-            new_backend = map_backend.currentData()
-            if new_backend != self._map_backend:
-                self.ctrl.cfg.set("map_backend", new_backend)
-                QMessageBox.information(
-                    self, "Map backend",
-                    "Map backend changed. Restart OrbitRx to apply.",
-                )
-            ports = self.ctrl.cat.list_ports()
-            if ports:
-                QMessageBox.information(self, "COM ports", "\n".join(ports))
-            self._timer.setInterval(int(self.ctrl.cfg.get("refresh_interval_seconds", 60)) * 1000)
-            self._populate_cluster_combo()
+            self._apply_settings_dialog(dlg)
 
     def _setup_tray(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -684,11 +905,26 @@ class QtOrbitRxApplication(QMainWindow):
         self.show()
 
 
+def _app_icon() -> QIcon:
+    from orbitrx.paths import bundled_root, project_root
+
+    bundle = bundled_root()
+    search = ([bundle / "assets" / "orbitrx.ico"] if bundle else []) + [
+        project_root() / "assets" / "orbitrx.ico"
+    ]
+    for path in search:
+        if path.is_file():
+            return QIcon(str(path))
+    return QIcon()
+
+
 def run_qt_app() -> None:
     import sys
     app = QApplication(sys.argv)
     apply_theme(app)
+    app.setWindowIcon(_app_icon())
     app.setQuitOnLastWindowClosed(False)
     win = QtOrbitRxApplication()
+    win.setWindowIcon(_app_icon())
     win.run()
     sys.exit(app.exec())

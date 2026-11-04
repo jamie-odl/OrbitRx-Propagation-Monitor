@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QGridLayout, QLabel, QWidget
 
 from orbitrx.propagation import HF_BANDS, band_chip, suggested_dial_freq
+from orbitrx.ui.theme import CHECK_BORDER, FONT_BODY
 
 
 class BandPanelWidget(QWidget):
@@ -19,8 +20,8 @@ class BandPanelWidget(QWidget):
             card = QLabel()
             card.setAlignment(Qt.AlignmentFlag.AlignCenter)
             card.setStyleSheet(
-                "background: #1A2332; border: 1px solid #37474F; border-radius: 6px; "
-                "padding: 6px; color: #E3F2FD; font-size: 11px;"
+                f"background: #1A2332; border: 1px solid {CHECK_BORDER}; border-radius: 6px; "
+                f"padding: 6px; color: #E3F2FD; font-size: {FONT_BODY}px;"
             )
             card.setMinimumWidth(72)
             self._cards[band] = card
