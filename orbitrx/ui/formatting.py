@@ -103,3 +103,17 @@ def pad_datetime_range(
     span = hi - lo
     pad = span * frac
     return lo - pad, hi + pad
+
+
+_ISO_STAMP = __import__("re").compile(r"\b(\d{4})-(\d{2})-(\d{2})([ T])(\d{2}:\d{2})")
+
+
+def humanize_iso_dates(text: str) -> str:
+    """Rewrite "2026-11-04 19:04" style stamps inside free text as "04 Nov 19:04"."""
+    def _sub(m):
+        try:
+            dt = datetime.datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return m.group(0)
+        return dt.strftime("%d %b ") + m.group(5)
+    return _ISO_STAMP.sub(_sub, text)

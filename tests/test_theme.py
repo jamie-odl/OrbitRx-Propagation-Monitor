@@ -120,3 +120,11 @@ def test_dialog_buttons_render_without_icons(): # N-new-9
         box.ensurePolished()
         for btn in box.buttons():
             assert btn.icon().isNull(), btn.text()
+
+
+def test_spinbox_inner_line_edit_has_no_own_border_and_arrows_never_vanish():  # M3
+    from orbitrx.ui import theme
+    qss = theme.QSS
+    assert "QAbstractSpinBox QLineEdit" in qss and "border: none" in qss
+    assert "spin-up-dim.svg" in qss and "spin-down-dim.svg" in qss
+    assert "image: none" not in qss

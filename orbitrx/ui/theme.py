@@ -42,6 +42,8 @@ def _assets_dir() -> Path:
 ASSETS_DIR = _assets_dir()
 _SPIN_UP_ICON = (ASSETS_DIR / "spin-up.svg").as_posix()
 _SPIN_DOWN_ICON = (ASSETS_DIR / "spin-down.svg").as_posix()
+_SPIN_UP_DIM = (ASSETS_DIR / "spin-up-dim.svg").as_posix()
+_SPIN_DOWN_DIM = (ASSETS_DIR / "spin-down-dim.svg").as_posix()
 
 QSS = f"""
 QWidget {{ background: {BG}; color: {TEXT}; font-size: {FONT_BODY}px; }}
@@ -59,8 +61,9 @@ QAbstractSpinBox::down-button {{ subcontrol-position: bottom right; border-botto
 QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{ background: {BORDER}; }}
 QAbstractSpinBox::up-arrow {{ image: url({_SPIN_UP_ICON}); width: 8px; height: 8px; }}
 QAbstractSpinBox::down-arrow {{ image: url({_SPIN_DOWN_ICON}); width: 8px; height: 8px; }}
-QAbstractSpinBox::up-arrow:disabled, QAbstractSpinBox::up-arrow:off {{ image: none; }}
-QAbstractSpinBox::down-arrow:disabled, QAbstractSpinBox::down-arrow:off {{ image: none; }}
+QAbstractSpinBox QLineEdit {{ border: none; background: transparent; padding: 0; margin: 0; }}
+QAbstractSpinBox::up-arrow:disabled, QAbstractSpinBox::up-arrow:off {{ image: url({_SPIN_UP_DIM}); }}
+QAbstractSpinBox::down-arrow:disabled, QAbstractSpinBox::down-arrow:off {{ image: url({_SPIN_DOWN_DIM}); }}
 QPushButton {{ background: {SURFACE}; border: 1px solid {CONTROL_BORDER}; border-radius: 4px; padding: 6px 12px; }}
 QPushButton:hover {{ border-color: {ACCENT}; }}
 QPushButton:pressed {{ background: {BORDER}; }}

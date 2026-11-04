@@ -121,3 +121,10 @@ def test_format_map_hud_datetime_has_no_iso_date(): # S1
     text = format_map_hud_datetime(dt)
     assert text == "04 Nov 2026 23:01 UTC"
     assert "2026-11-04" not in text
+
+
+def test_humanize_iso_dates_in_alert_text():  # S1
+    from orbitrx.ui.formatting import humanize_iso_dates
+    out = humanize_iso_dates("2026-11-04 19:04 UTC  WATCH: Geomagnetic Storm")
+    assert out.startswith("04 Nov 19:04 UTC")
+    assert "2026-11-04" not in out

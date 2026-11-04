@@ -179,9 +179,16 @@ class PropagationMapWidget(QWidget):
         self._click_targets.clear()
 
         sun_font = QFont("Segoe UI", FONT_CAPTION)
+        sun_drawn = False
+        img_w = float(getattr(scene, "width", 0) or getattr(self.renderer, "width", 0) or 0)
         for ann in scene.annotations:
             if ann.kind == "sun":
+                if sun_drawn:
+                    continue  # S4: wrapped copies fall outside the scene; clamp the first instead
+                sun_drawn = True
                 x, y = ann.data["x"], ann.data["y"]
+                if img_w > 32:
+                    x = min(max(x, 16.0), img_w - 16.0)
                 glow = QGraphicsEllipseItem(x - 16, y - 16, 32, 32)
                 glow.setBrush(QBrush(QColor(255, 235, 80, 80)))
                 glow.setPen(QPen(Qt.PenStyle.NoPen))

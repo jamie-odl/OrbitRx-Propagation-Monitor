@@ -15,6 +15,7 @@ from orbitrx.ui.controller import OrbitRxController
 from orbitrx.ui.map_widget import PropagationMapWidget, QT_AVAILABLE
 from orbitrx.spots.settings import clamp_poll_seconds
 from orbitrx.ui.formatting import (
+    humanize_iso_dates,
     format_hour_offset, format_replay_offset, history_plot_date_format, pad_datetime_range,
 )
 from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
@@ -449,8 +450,8 @@ class QtOrbitRxApplication(QMainWindow):
                 self._labels[k].setText(v)
         self.alerts_list.clear()
         for alert in self.ctrl.state.alerts[:5] or ["No active alerts"]:
-            item = QListWidgetItem(alert)
-            item.setToolTip(alert)
+            item = QListWidgetItem(humanize_iso_dates(alert))
+            item.setToolTip(humanize_iso_dates(alert))
             self.alerts_list.addItem(item)
         self._render_cluster_label()
         self.band_panel.update_grid(self.ctrl.state.band_grid)
@@ -577,7 +578,10 @@ class QtOrbitRxApplication(QMainWindow):
             spine.set_color("#37474F")
 
         lo, hi = pad_datetime_range(min(times), max(times))
-        locator = AutoDateLocator(maxticks=7)
+        locator = AutoDateLocator(minticks=3, maxticks=7)
+        # Never show duplicate HH:mm ticks on very short ranges: tick at least a minute apart.
+        locator.intervald[5] = [1, 2, 5, 10, 15, 30]  # MINUTELY
+        locator.intervald[6] = []  # SECONDLY disabled
         ax.xaxis.set_major_locator(locator)
         # M4: every tick shows HH:mm (never minutes alone); "dd MMM HH:mm" once the
         # range spans more than a day, so the day is still unambiguous.
