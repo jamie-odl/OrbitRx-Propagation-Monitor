@@ -75,6 +75,21 @@ def main() -> int:
     frame_pixmap.save(str(frame_path))
     print(f"Saved {frame_path} ({frame_pixmap.width()}x{frame_pixmap.height()})")
 
+    # Second capture with the port dropdown open, so the enumerated list is visible.
+    dlg.port_combo.showPopup()
+    deadline = time.time() + 1.0
+    while time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.05)
+    rect = dlg.frameGeometry()
+    popup = dlg.port_combo.view().window()
+    if popup is not None and popup.isVisible():
+        rect = rect.united(popup.frameGeometry())
+    open_path = out_dir / "rig-wizard-dropdown.png"
+    screen.grabWindow(0, rect.x(), rect.y(), rect.width(), rect.height()).save(str(open_path))
+    print(f"Saved {open_path}")
+    dlg.port_combo.hidePopup()
+
     fallback_pixmap = dlg.grab()
     fallback_pixmap.save(str(fallback_path))
     print(f"Saved {fallback_path} ({fallback_pixmap.width()}x{fallback_pixmap.height()})")

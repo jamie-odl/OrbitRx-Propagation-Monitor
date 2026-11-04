@@ -135,3 +135,46 @@ def test_default_port_fallback_is_platform_appropriate(monkeypatch):
     assert catmod.default_port_fallback() == "COM3"
     monkeypatch.setattr(catmod.sys, "platform", "linux")
     assert catmod.default_port_fallback() != "COM3"
+
+
+def _editable_combo():
+    from PySide6.QtWidgets import QComboBox
+    combo = QComboBox()
+    combo.setEditable(True)
+    return combo
+
+
+def test_missing_saved_port_selects_first_enumerated_port(app, cfg, monkeypatch):
+    from orbitrx.cat import CatController
+    from orbitrx.ui.rig_wizard import populate_port_combo
+
+    cat = CatController(cfg)
+    monkeypatch.setattr(cat, "list_ports_detailed", lambda: [("COM2", "Communications Port (COM2)"), ("COM7", "USB Serial")])
+    combo = _editable_combo()
+    populate_port_combo(combo, cat, "COM3")  # saved port no longer exists
+    assert combo.currentIndex() == 0
+    assert combo.currentData() == "COM2"
+    assert combo.currentText().startswith("COM2")
+    assert "COM3" not in combo.currentText()
+
+
+def test_present_saved_port_is_kept(app, cfg, monkeypatch):
+    from orbitrx.cat import CatController
+    from orbitrx.ui.rig_wizard import populate_port_combo
+
+    cat = CatController(cfg)
+    monkeypatch.setattr(cat, "list_ports_detailed", lambda: [("COM2", "A"), ("COM7", "B")])
+    combo = _editable_combo()
+    populate_port_combo(combo, cat, "COM7")
+    assert combo.currentData() == "COM7"
+
+
+def test_rig_wizard_selects_first_real_port_when_saved_port_missing(app, cfg, monkeypatch):
+    from orbitrx.cat import CatController
+    from orbitrx.ui.rig_wizard import RigWizardDialog
+
+    cfg.set("cat_port", "COM3") if hasattr(cfg, "set") else cfg.__setitem__("cat_port", "COM3")
+    cat = CatController(cfg)
+    monkeypatch.setattr(cat, "list_ports_detailed", lambda: [("COM2", "Communications Port (COM2)")])
+    dlg = RigWizardDialog(cfg, cat)
+    assert dlg.port_combo.currentData() == "COM2"

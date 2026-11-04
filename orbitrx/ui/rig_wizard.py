@@ -25,6 +25,9 @@ def populate_port_combo(combo: QComboBox, cat: CatController, current_port: str)
     idx = combo.findData(current_port)
     if idx >= 0:
         combo.setCurrentIndex(idx)
+    elif ports:
+        # Saved port is not present on this machine: pick the first real port.
+        combo.setCurrentIndex(0)
     elif current_port:
         combo.setEditText(current_port)
 

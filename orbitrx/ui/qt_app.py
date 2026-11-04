@@ -33,6 +33,7 @@ if not QT_AVAILABLE:
 from PySide6.QtCore import QDate, QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QSizePolicy,
     QGridLayout,
     QApplication, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
@@ -217,9 +218,17 @@ class QtOrbitRxApplication(QMainWindow):
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
 
+        right_panel.setMinimumWidth(0)
+        header_row = QHBoxLayout()
         self.last_updated_lbl = QLabel("Last updated: never")
         self.last_updated_lbl.setObjectName("muted")
-        right_layout.addWidget(self.last_updated_lbl)
+        header_row.addWidget(self.last_updated_lbl, stretch=1)
+        # N2: live cluster indicator, always visible at the top of the panel.
+        self.cluster_live_lbl = QLabel("Cluster: connecting")
+        self.cluster_live_lbl.setObjectName("muted")
+        self.cluster_live_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        header_row.addWidget(self.cluster_live_lbl)
+        right_layout.addLayout(header_row)
 
         self.band_panel = BandPanelWidget()
         right_layout.addWidget(self.band_panel)
@@ -282,6 +291,8 @@ class QtOrbitRxApplication(QMainWindow):
 
         self.status_lbl = QLabel("Ready")
         self.status_lbl.setObjectName("muted")
+        self.status_lbl.setWordWrap(True)
+        self.status_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         right_layout.addWidget(self.status_lbl)
 
         self.click_lbl = QLabel("")
@@ -300,22 +311,26 @@ class QtOrbitRxApplication(QMainWindow):
             ("Export DX CSV", self._export_dx),
             ("About", self._about),
         ]
-        columns = 4
-        for idx, (text, slot) in enumerate(action_buttons):
-            btn = QPushButton(text, clicked=slot)
-            btn.setMinimumWidth(0)
-            btn_row.addWidget(btn, idx // columns, idx % columns)
-        # Fill the trailing cells with a spacer so the grid reads as 2 tidy rows,
-        # not a ragged one with a hole (N-new-5).
-        remainder = len(action_buttons) % columns
-        if remainder:
-            last_row = (len(action_buttons) - 1) // columns
-            for col in range(remainder, columns):
-                btn_row.addWidget(QWidget(), last_row, col)
-        right_layout.addLayout(btn_row)
+        # Two evenly filled rows (4 + 3), each button stretched to the row width,
+        # so there is no hole and labels are never clipped (N-new-5).
+        rows = [action_buttons[:4], action_buttons[4:]]
+        for r, row_items in enumerate(rows):
+            for c, (text, slot) in enumerate(row_items):
+                btn = QPushButton(text, clicked=slot)
+                btn.setMinimumWidth(btn.fontMetrics().horizontalAdvance(text) + 24)
+                btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+                btn_row.addWidget(btn, r, c * 12 // len(row_items), 1, 12 // len(row_items))
         right_layout.addStretch()
         right_scroll.setWidget(right_panel)
-        root.addWidget(right_scroll, stretch=1)
+        # Action buttons sit below the scroll area so they are always visible.
+        right_column = QWidget()
+        right_column.setMinimumWidth(400)
+        right_column.setMaximumWidth(420)
+        right_col_layout = QVBoxLayout(right_column)
+        right_col_layout.setContentsMargins(0, 0, 0, 0)
+        right_col_layout.addWidget(right_scroll, stretch=1)
+        right_col_layout.addLayout(btn_row)
+        root.addWidget(right_column, stretch=1)
 
     def _populate_cluster_combo(self) -> None:
         self.cluster_combo.blockSignals(True)
@@ -471,9 +486,13 @@ class QtOrbitRxApplication(QMainWindow):
         status = self.ctrl.state.cluster_status
         if status == "connected":
             dot_color = "#81C784" if self._cluster_pulse_phase else "#2E7D32"
+            text = f'<span style="color:{dot_color}">●</span> Cluster: live'
             self._labels["cluster"].setText(f'<span style="color:{dot_color}">●</span> Cluster: connected')
         else:
-            self._labels["cluster"].setText(f"Cluster: {status}")
+            text = f"Cluster: {status}"
+            self._labels["cluster"].setText(text)
+        if hasattr(self, "cluster_live_lbl"):
+            self.cluster_live_lbl.setText(text)
 
     def _spot_beep(self, spot: dict) -> None:
         self.ctrl.spot_beep(spot)

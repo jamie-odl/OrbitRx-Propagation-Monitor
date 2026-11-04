@@ -174,3 +174,24 @@ def test_settings_dialog_saves_values_into_config(window):
     assert window.ctrl.cfg.get("home_lat") == 51.5
     assert window.ctrl.cfg.get("home_lon") == -0.12
     assert window.ctrl.cfg.get("qrz_api_key") == "secretkey"
+
+
+def test_settings_serial_port_selects_first_real_port_when_saved_missing(window, monkeypatch):
+    from PySide6.QtWidgets import QComboBox
+    window.ctrl.cfg.data["cat_port"] = "COM3"
+    monkeypatch.setattr(window.ctrl.cat, "list_ports_detailed",
+                        lambda: [("COM2", "Communications Port (COM2)"), ("COM7", "USB Serial")])
+    dlg = window._build_settings_dialog()
+    port_combos = [c for c in dlg.findChildren(QComboBox) if c.findData("COM2") >= 0]
+    assert len(port_combos) == 1
+    assert port_combos[0].currentData() == "COM2"
+
+
+def test_cluster_live_indicator_in_panel_header(window):
+    window.ctrl.state.cluster_status = "connected"
+    window._render_cluster_label()
+    assert "Cluster: live" in window.cluster_live_lbl.text()
+    assert "●" in window.cluster_live_lbl.text()
+    window.ctrl.state.cluster_status = "disconnected"
+    window._render_cluster_label()
+    assert window.cluster_live_lbl.text() == "Cluster: disconnected"
