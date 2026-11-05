@@ -57,13 +57,18 @@ def test_capture_hook_writes_fit_evidence(tmp_path, monkeypatch):
 
     line = fit_txt.read_text(encoding="utf-8").strip()
     parts = dict(p.split("=", 1) for p in line.split())
-    assert set(parts) == {"avail", "settings", "save_visible", "settings_frame_on_screen", "main", "main_frame_on_screen", "main_hscroll", "about_frame_on_screen", "wizard_frame_on_screen"}
+    assert set(parts) == {
+        "avail", "settings", "save_visible", "settings_frame_on_screen", "main",
+        "main_frame_on_screen", "main_hscroll", "controls_reachable",
+        "about_frame_on_screen", "wizard_frame_on_screen",
+    }
     for key in ("avail", "settings", "main"):
         w, h = parts[key].split("x")
         assert int(w) > 0 and int(h) > 0
     assert parts["save_visible"] == "True"
     assert parts["settings_frame_on_screen"] in ("True", "False")
     assert parts["main_frame_on_screen"] in ("True", "False")
+    assert parts["controls_reachable"] == "True"  # M1: Settings/Rig/About always reachable
 
 
 def test_capture_hook_port_list_never_contains_simulated_rig(tmp_path, monkeypatch):

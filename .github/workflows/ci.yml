@@ -185,6 +185,19 @@ jobs:
             if ($v.CompanyName -ne 'Jamie Sibley') { throw "Unexpected CompanyName in $f" }
           }
           Write-Host "PUBLISHER-CHECK: PASS"
+      - name: PE check (security directory 0/0, publisher strings)
+        shell: pwsh
+        run: |
+          python tools/pe_check.py release-shots\installer-publisher.txt dist\OrbitRxMonitor.exe dist\OrbitRxMonitor-Setup.exe
+      - name: Units check (no "n/a <unit>" in rendered Stats text)
+        shell: pwsh
+        run: |
+          foreach ($d in 'release-shots\100', 'release-shots\150') {
+            $t = Get-Content (Join-Path $d 'stats.txt') -Raw
+            if ([string]::IsNullOrWhiteSpace($t)) { throw "stats.txt is empty in $d" }
+            if ($t -match 'n/a\s+(MHz|UTC|km/h|nT|km|deg)') { throw "Found 'n/a' followed by a unit in $d stats text" }
+          }
+          Write-Host "UNITS-CHECK: PASS (no 'n/a' followed by a unit)"
       - name: Scan the bundled PYZ for the simulated-rig gate
         shell: pwsh
         run: |

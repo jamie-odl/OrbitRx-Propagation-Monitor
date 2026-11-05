@@ -40,7 +40,33 @@ def test_load_failure_shows_the_unavailable_overlay(leaflet_widget):
     assert leaflet_widget._unavailable_overlay.isVisible() is False
     leaflet_widget._on_ready(False)
     assert leaflet_widget._unavailable_overlay.isVisible() is True
-    assert leaflet_widget._unavailable_overlay.text() == "Map unavailable (offline?) · Switch to static map"
+    assert leaflet_widget._unavailable_message.text() == "Map tiles unavailable (offline?)"
+
+
+def test_unavailable_overlay_has_retry_and_switch_buttons(leaflet_widget): # M3
+    assert leaflet_widget.retry_btn.text() == "Retry"
+    assert leaflet_widget.switch_static_btn.text() == "Switch to static map"
+
+
+def test_retry_reloads_and_hides_the_overlay(leaflet_widget): # M3
+    from unittest.mock import MagicMock
+
+    leaflet_widget._on_ready(False)
+    assert leaflet_widget._unavailable_overlay.isVisible() is True
+    leaflet_widget.web.reload = MagicMock()
+    leaflet_widget._retry()
+    assert leaflet_widget._unavailable_overlay.isVisible() is False
+    leaflet_widget.web.reload.assert_called_once()
+    leaflet_widget._on_ready(True)
+    leaflet_widget._on_tiles_loaded()
+    assert leaflet_widget._unavailable_overlay.isVisible() is False
+
+
+def test_switch_to_static_requested_signal_fires_on_button_click(leaflet_widget): # M3
+    received = []
+    leaflet_widget.switch_to_static_requested.connect(lambda: received.append(True))
+    leaflet_widget.switch_static_btn.click()
+    assert received == [True]
 
 
 def test_tile_error_shows_the_unavailable_overlay(leaflet_widget):

@@ -20,7 +20,7 @@ from orbitrx.hamqsl import fetch_solar_xml, hamqsl_path_muf
 from orbitrx.propagation import band_grid, bands_summary, estimate_muf, flux_trend_arrow
 from orbitrx.state import AppState
 from orbitrx.storage import DataStore
-from orbitrx.ui.formatting import decimal_hours_to_hhmm, format_iso_utc, format_source_label, format_value
+from orbitrx.ui.formatting import decimal_hours_to_hhmm, fmt, format_iso_utc, format_source_label, format_value
 from orbitrx.utils import estimate_location, local_time_at_lon, sun_times
 from orbitrx.weather import fetch_space_weather_data
 from orbitrx.alerts import show_toast
@@ -319,7 +319,9 @@ class OrbitRxController:
         a_txt = format_value(s.a_index, fmt="{:g}")
         if a_src:
             a_txt = f"{a_txt} ({a_src})"
-        path_muf_txt = f"Path MUF: {format_value(s.path_muf, unit=' MHz' if s.path_muf is not None else '')}"
+        # M5: one formatter everywhere a unit follows a value, so a missing reading
+        # is always a bare "n/a" and never glued to a stray unit like "n/a MHz".
+        path_muf_txt = f"Path MUF: {fmt(s.path_muf, 'MHz')}"
         if s.path_muf_label:
             path_muf_txt += f" → {s.path_muf_label}"
         # S7: a trend word is shown whenever a flux value exists, "steady" when there is
@@ -331,11 +333,10 @@ class OrbitRxController:
             "solar": f"Solar Flux: {format_value(s.flux)} {flux_trend}".rstrip(),
             "sunspot": f"Sunspot: {ss:.1f}" if ss else "Sunspot: n/a",
             "a_index": f"A-index: {a_txt}",
-            "solar_wind": f"Wind: {format_value(s.solar_wind_speed, unit=' km/s')}  "
-                            f"Bz: {format_value(s.bz, unit=' nT')}",
+            "solar_wind": f"Wind: {fmt(s.solar_wind_speed, 'km/s')}  Bz: {fmt(s.bz, 'nT')}",
             "time": f"NOAA data: {format_iso_utc(s.time_utc)}",
             "bands": f"Bands: {s.bands_summary}",
-            "muf": f"MUF: {format_value(s.muf)} / LUF: {format_value(s.luf)} MHz",
+            "muf": f"MUF: {fmt(s.muf, 'MHz')} / LUF: {fmt(s.luf, 'MHz')}",
             "path_muf": path_muf_txt,
             "hamqsl": f"HamQSL: {s.hamqsl_band_hint or 'n/a'}",
             "sunrise": f"Sunrise UTC: {sr_txt}",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 from typing import Any
 
 try:
@@ -10,7 +11,9 @@ try:
     from PySide6.QtWebChannel import QWebChannel
     from PySide6.QtWebEngineCore import QWebEngineSettings
     from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
+    from PySide6.QtWidgets import (
+        QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget,
+    )
     WEBENGINE_AVAILABLE = True
 except ImportError:
     WEBENGINE_AVAILABLE = False
@@ -21,16 +24,19 @@ from pathlib import Path
 from orbitrx.map_renderer import MapLayers, MapRenderer
 from orbitrx.paths import bundled_root
 from orbitrx.ui.formatting import format_hour_offset, format_map_hud_datetime
-from orbitrx.ui.theme import BG, EMPTY_OVERLAY_STYLE, TEXT
+from orbitrx.ui.theme import BG, CARD_STYLE, CARD_TEXT, EMPTY_OVERLAY_STYLE, MUTED
 
-# M5: shown over the map when the page fails to load, or loads but the tiles
+log = logging.getLogger("orbitrx")
+
+# M3: shown over the map when the page fails to load, or loads but the tiles
 # never do (offline, or an unreachable tile server) -- never a blank white page.
-MAP_UNAVAILABLE_TEXT = "Map unavailable (offline?) · Switch to static map"
-MAP_UNAVAILABLE_STYLE = f"color: {TEXT}; background-color: {BG}; font-size: 14px; padding: 24px;"
+MAP_UNAVAILABLE_TEXT = "Map tiles unavailable (offline?)"
+MAP_UNAVAILABLE_STYLE = f"{CARD_STYLE} color: {CARD_TEXT}; font-size: 14px; padding: 16px;"
+MAP_UNAVAILABLE_HINT_STYLE = f"color: {MUTED}; font-size: 12px;"
 
-# How long to wait for Leaflet's tile layer to report its first successful tile
-# load before treating the map as unavailable (M5).
-TILE_LOAD_TIMEOUT_MS = 15_000
+# M3: how long to wait for Leaflet's tile layer to report its first successful
+# tile load before treating the map as unavailable.
+TILE_LOAD_TIMEOUT_MS = 8_000
 
 
 def _assets_dir() -> Path:
@@ -49,7 +55,9 @@ _LEAFLET_HTML = """<!DOCTYPE html>
 <script>__LEAFLET_JS__</script>
 <script>__QWEBCHANNEL_JS__</script>
 <style>html,body,#map{margin:0;height:100%;background:#101820}
-.orbitrx-dark-tiles{filter:invert(100%) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.6)}</style>
+.orbitrx-dark-tiles{filter:invert(100%) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.6)}
+.leaflet-control-attribution{background:rgba(15,23,32,0.8);color:#8FA3B8}
+.leaflet-control-attribution a{color:#8FA3B8}</style>
 </head><body>
 <div id="map"></div>
 <script>
@@ -103,14 +111,18 @@ let liveArcs=L.layerGroup().addTo(map), liveHeat=L.layerGroup().addTo(map);
 function setLiveSpots(p) {
   liveArcs.clearLayers(); liveHeat.clearLayers();
   if (p.heatmap) {
+    // P4: radius shrinks with zoom so the heatmap never swamps the spot lines
+    // underneath it at a closer-in view.
+    const zoomScale = Math.pow(0.72, Math.max(0, map.getZoom() - 2));
     (p.heat||[]).forEach(c => {
-      L.circle([c[0], c[1]], {radius: 280000, stroke:false, fillColor:'#FF5252', fillOpacity: 0.12 + 0.5*c[2]}).addTo(liveHeat);
+      L.circle([c[0], c[1]], {radius: 280000 * zoomScale, stroke:false, fillColor:'#FF5252', fillOpacity: 0.35}).addTo(liveHeat);
     });
   }
   if (p.arcs) {
     (p.spots||[]).forEach(s => {
-      L.polyline([s.tx, s.rx], {color:s.color, weight:2, opacity:0.8}).bindTooltip(s.label).addTo(liveArcs);
-      L.circleMarker(s.tx, {radius:3, color:s.color, fillOpacity:1}).addTo(liveArcs);
+      const opacity = (typeof s.opacity === 'number') ? s.opacity : 0.9;
+      L.polyline([s.tx, s.rx], {color:s.color, weight:1.5, opacity: opacity}).bindTooltip(s.label).addTo(liveArcs);
+      L.circleMarker(s.tx, {radius:3, color:s.color, fillOpacity:1, opacity: opacity}).addTo(liveArcs);
     });
   }
 }
@@ -162,6 +174,9 @@ if WEBENGINE_AVAILABLE:
     class LeafletMapWidget(QWidget):
         spot_clicked = Signal(float)
         map_clicked = Signal(float, float)
+        # M3: lets the main window route this to the same action as the
+        # "Switch map" link on the static map (Settings > Map & spots).
+        switch_to_static_requested = Signal()
 
         def __init__(self, renderer: MapRenderer, parent=None) -> None:
             super().__init__(parent)
@@ -177,13 +192,16 @@ if WEBENGINE_AVAILABLE:
             self.hud.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             layout.addWidget(self.hud)
             self.web = QWebEngineView()
+            # M3: 1.0 so device-pixel-ratio scaling (e.g. a 150% display) never
+            # doubles up with Qt's own scale factor and renders a blank page.
+            self.web.setZoomFactor(1.0)
             # OSM tile policy asks apps to identify themselves.
             from orbitrx import __version__
             self.web.page().profile().setHttpUserAgent(
                 f"OrbitRx/{__version__} (+https://github.com/jamie-odl/OrbitRx-Propagation-Monitor)"
             )
             self.web.settings().setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
-            # M5: a dark page background instead of Qt's default white, so a slow or
+            # M3: a dark page background instead of Qt's default white, so a slow or
             # failed load never flashes blank white at any zoom/scale factor.
             self.web.page().setBackgroundColor(QColor(BG))
             layout.addWidget(self.web, stretch=1)
@@ -200,7 +218,7 @@ if WEBENGINE_AVAILABLE:
             self._ready = False
             self.web.loadFinished.connect(self._on_ready)
 
-            # M5: once the page itself loads, wait up to TILE_LOAD_TIMEOUT_MS for the
+            # M3: once the page itself loads, wait up to TILE_LOAD_TIMEOUT_MS for the
             # first tile to actually come in before deciding the map is unavailable
             # (e.g. offline, or the tile server is unreachable).
             self._tile_timeout_timer = QTimer(self)
@@ -217,18 +235,55 @@ if WEBENGINE_AVAILABLE:
             self._empty_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             self._empty_overlay.hide()
 
-            # M5: dark fallback overlay covering the whole map, shown instead of a
-            # blank/white page when the page fails to load or its tiles never arrive.
-            self._unavailable_overlay = QLabel(MAP_UNAVAILABLE_TEXT, self)
-            self._unavailable_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._unavailable_overlay.setWordWrap(True)
+            self._build_unavailable_overlay()
+
+        def _build_unavailable_overlay(self) -> None:
+            """M3: a dark-card fallback (same 8px-radius card look as the band tiles)
+            covering the whole map, shown instead of a blank/white page when the page
+            fails to load or its tiles never arrive. Retry reloads the page; "Switch to
+            static map" hands off to the same action as the static map's own link."""
+            self._unavailable_overlay = QWidget(self)
             self._unavailable_overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-            self._unavailable_overlay.setStyleSheet(MAP_UNAVAILABLE_STYLE)
+            outer = QVBoxLayout(self._unavailable_overlay)
+            outer.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            card = QWidget()
+            card.setStyleSheet(MAP_UNAVAILABLE_STYLE)
+            card_layout = QVBoxLayout(card)
+
+            icon = QLabel("⚠")
+            icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            icon.setStyleSheet("font-size: 28px; background: transparent;")
+            card_layout.addWidget(icon)
+
+            self._unavailable_message = QLabel(MAP_UNAVAILABLE_TEXT)
+            self._unavailable_message.setWordWrap(True)
+            self._unavailable_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._unavailable_message.setStyleSheet("background: transparent;")
+            card_layout.addWidget(self._unavailable_message)
+
+            btn_row = QHBoxLayout()
+            self.retry_btn = QPushButton("Retry")
+            self.switch_static_btn = QPushButton("Switch to static map")
+            self.retry_btn.clicked.connect(self._retry)
+            self.switch_static_btn.clicked.connect(self.switch_to_static_requested.emit)
+            btn_row.addWidget(self.retry_btn)
+            btn_row.addWidget(self.switch_static_btn)
+            card_layout.addLayout(btn_row)
+
+            outer.addWidget(card)
             self._unavailable_overlay.hide()
+
+        def _retry(self) -> None:
+            log.info("Leaflet map retry requested; reloading")
+            self._hide_unavailable_overlay()
+            self._ready = False
+            self.web.reload()
 
         def _on_ready(self, ok: bool) -> None:
             self._ready = ok
             if not ok:
+                log.warning("Leaflet map page failed to load")
                 self._show_unavailable_overlay()
             else:
                 self._tile_timeout_timer.start(TILE_LOAD_TIMEOUT_MS)
@@ -238,10 +293,12 @@ if WEBENGINE_AVAILABLE:
             self._hide_unavailable_overlay()
 
         def _on_tile_error(self) -> None:
+            log.warning("Leaflet tile load error")
             self._tile_timeout_timer.stop()
             self._show_unavailable_overlay()
 
         def _on_tile_timeout(self) -> None:
+            log.warning("Leaflet tiles did not load within %sms", TILE_LOAD_TIMEOUT_MS)
             self._show_unavailable_overlay()
 
         def _show_unavailable_overlay(self) -> None:

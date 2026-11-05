@@ -145,3 +145,12 @@ def test_publisher_is_jamie_sibley_everywhere_and_never_obsidian_dynamics():
         assert "Obsidian Dynamics" not in text, rel
         for needle in needles:
             assert needle in text, (rel, needle)
+
+
+def test_about_has_verify_download_link_to_sha256sums():  # M6 (BRIEF-TO-9)
+    from orbitrx.ui import about
+    html = about._about_html()
+    assert "Verify download" in html
+    assert about.RELEASES_URL in html
+    assert "SHA256SUMS.txt" in html
+    assert "unsigned" in html

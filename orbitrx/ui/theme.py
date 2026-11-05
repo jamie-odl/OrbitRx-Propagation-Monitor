@@ -22,6 +22,17 @@ OK = "#81C784"
 WARN = "#FFB74D"
 ERR = "#E57373"
 
+# P1/P4: a second, slightly cooler muted tone for secondary hint text and map
+# attribution, distinct from the general-purpose MUTED above.
+MUTED_SECONDARY = "#8FA3B8"
+
+# M3/M1: the card look shared by band tiles and the leaflet "tiles unavailable"
+# overlay -- same background, border and 8px radius wherever a floating card
+# sits over the map.
+CARD_BG = "#1A2332"
+CARD_TEXT = "#E3F2FD"
+CARD_STYLE = f"background: {CARD_BG}; border: 1px solid {CHECK_BORDER}; border-radius: 8px;"
+
 # S2: the "No spots in this window" map overlay, legible at arm's length on top of
 # either map backend (>= 7:1 contrast between the text and its own pill background).
 EMPTY_OVERLAY_STYLE = (

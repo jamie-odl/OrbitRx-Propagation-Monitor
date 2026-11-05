@@ -6,6 +6,7 @@ Kept dependency-free (no Qt imports) so they are cheap to unit test.
 from __future__ import annotations
 
 import datetime
+import statistics
 
 NONE_TEXT = "n/a"
 
@@ -36,6 +37,18 @@ def format_value(value, unit: str = "", none_text: str = NONE_TEXT, fmt: str = "
     except (ValueError, TypeError):
         text = str(value)
     return f"{text}{unit}" if unit else text
+
+
+def fmt(value, unit: str) -> str:
+    """The one value+unit formatter for every stat row (M5): "n/a" for a missing or
+    non-numeric value (never "n/a <unit>"), else one decimal place plus its unit.
+    """
+    if value is None or isinstance(value, bool):
+        return NONE_TEXT
+    try:
+        return f"{float(value):.1f} {unit}"
+    except (TypeError, ValueError):
+        return NONE_TEXT
 
 
 def decimal_hours_to_hhmm(hours: float | None) -> str:
@@ -147,15 +160,20 @@ def insert_gap_breaks(
     min_gap_s: float = MIN_GAP_BREAK_S,
 ) -> tuple[list[datetime.datetime], list[float]]:
     """Insert a NaN point at the midpoint of any gap between consecutive `times` that
-    exceeds max(3 * poll_interval_s, min_gap_s), so a matplotlib line plotted through
-    the result breaks only across a real outage, not across ordinary poll jitter (M4).
+    exceeds max(3 * median_dt, 3 * poll_interval_s, min_gap_s), so a matplotlib line
+    plotted through the result breaks only across a real outage, not across ordinary
+    poll jitter (M2/M4). The median term means a feed that normally polls faster (or
+    slower) than `poll_interval_s` still gets a threshold scaled to its own typical
+    spacing, not just the configured interval.
 
     With fewer than 4 samples there isn't enough history to tell a real outage from
     jitter, so everything is connected.
     """
     if len(times) < 4:
         return list(times), list(values)
-    threshold = max(3 * poll_interval_s, min_gap_s)
+    deltas = [(times[i] - times[i - 1]).total_seconds() for i in range(1, len(times))]
+    median_dt = statistics.median(deltas)
+    threshold = max(3 * median_dt, 3 * poll_interval_s, min_gap_s)
     out_times = [times[0]]
     out_values = [values[0]]
     for i in range(1, len(times)):

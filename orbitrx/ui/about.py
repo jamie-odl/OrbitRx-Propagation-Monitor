@@ -13,6 +13,8 @@ from orbitrx.ui.window_fit import fit_to_screen
 
 # TODO(jamie): replace with the real Buy Me a Coffee page before release.
 BUY_ME_A_COFFEE_URL = "https://www.buymeacoffee.com/TODO-placeholder"
+# M6: releases are unsigned; SHA256SUMS.txt is published next to each release.
+RELEASES_URL = "https://github.com/jamie-odl/OrbitRx-Propagation-Monitor/releases"
 
 
 def _build_commit() -> str | None:
@@ -46,6 +48,8 @@ def _about_html() -> str:
 <p style="margin-bottom:12px">Copyright &copy; 2026 Jamie Sibley. Released under the MIT License.</p>
 <p style="margin-bottom:12px"><b>Data sources:</b> NOAA SWPC, HamQSL (N0NBH), PSKReporter (Philip Gladstone),
 DX cluster nodes, OpenStreetMap map tiles, Leaflet. See <a href="{_notice_url()}">NOTICE</a> for full credits.</p>
+<p style="margin-bottom:12px">This build is unsigned. <a href="{RELEASES_URL}">Verify download</a>
+(compare the file's SHA256 with SHA256SUMS.txt on the release page).</p>
 <p style="margin-bottom:12px">OrbitRx is free. If it helps you make contacts, you can
 <a href="{BUY_ME_A_COFFEE_URL}">buy me a coffee</a>.</p>
 """

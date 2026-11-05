@@ -17,16 +17,39 @@ def coords_to_pixels(lat: float, lon: float, canvas_width: int, canvas_height: i
     return x, y
 
 
+SPOT_FRESH_OPACITY = 0.9
+# P4: spots older than this fade to SPOT_STALE_OPACITY, so the live layer
+# visually distinguishes a fresh catch from one that's aging out of relevance.
+SPOT_STALE_AGE_MINUTES = 15
+SPOT_STALE_OPACITY = 0.7
+
+
+def _spot_age_minutes(observed_at_utc: str, now: datetime) -> float | None:
+    if not observed_at_utc:
+        return None
+    try:
+        observed = datetime.fromisoformat(observed_at_utc)
+    except ValueError:
+        return None
+    if observed.tzinfo is None:
+        observed = observed.replace(tzinfo=timezone.utc)
+    return (now - observed).total_seconds() / 60.0
+
+
 def arcs_payload(spots: Iterable[Spot], limit: int = MAX_RENDERED_ARCS) -> list[dict]:
+    now = datetime.now(timezone.utc)
     out: list[dict] = []
     for spot in sorted(spots, key=lambda s: s.snr_db, reverse=True)[:limit]:
         band, color = band_info(spot.frequency_hz)
+        age_min = _spot_age_minutes(spot.observed_at_utc, now)
+        opacity = SPOT_STALE_OPACITY if age_min is not None and age_min > SPOT_STALE_AGE_MINUTES else SPOT_FRESH_OPACITY
         out.append({
             "tx": [spot.tx_lat, spot.tx_lon],
             "rx": [spot.rx_lat, spot.rx_lon],
             "band": band,
             "color": color,
             "label": f"{spot.sender} > {spot.receiver} {band} {spot.snr_db:+.0f} dB",
+            "opacity": opacity,
         })
     return out
 

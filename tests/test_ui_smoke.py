@@ -59,7 +59,14 @@ def test_static_map_fills_most_of_viewport_width(tmp_path, monkeypatch): # S3
     p1 = view.mapFromScene(scene_rect.topLeft())
     p2 = view.mapFromScene(scene_rect.bottomRight())
     visible_width = min(p2.x(), vp_width) - max(p1.x(), 0)
-    assert visible_width / vp_width >= 0.90
+    vp_height = view.viewport().height()
+    visible_height = min(p2.y(), vp_height) - max(p1.y(), 0)
+    # P2 (BRIEF-TO-9): the map keeps its 2:1 aspect and letterboxes, so it must
+    # fill at least 90% of whichever viewport dimension is the limiting one.
+    assert max(visible_width / vp_width, visible_height / vp_height) >= 0.90
+    # No stretching: the on-screen aspect matches the rendered image's aspect.
+    img_aspect = scene_rect.width() / scene_rect.height()
+    assert abs((p2.x() - p1.x()) / (p2.y() - p1.y()) - img_aspect) < 0.05
 
     win.ctrl.stop()
     win.deleteLater()
@@ -137,7 +144,7 @@ def test_right_column_has_only_one_vertical_scrollbar(tmp_path, monkeypatch): # 
 
 def test_action_button_grid_has_no_ragged_hole(tmp_path, monkeypatch): # N-new-5
     monkeypatch.chdir(tmp_path)
-    from PySide6.QtWidgets import QApplication, QPushButton
+    from PySide6.QtWidgets import QApplication, QPushButton, QToolBar
 
     import orbitrx.spots.service as svc
     monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
@@ -150,7 +157,10 @@ def test_action_button_grid_has_no_ragged_hole(tmp_path, monkeypatch): # N-new-5
     app = QApplication.instance() or QApplication([])
     from orbitrx.ui.qt_app import QtOrbitRxApplication
     win = QtOrbitRxApplication()
+    # M1 (BRIEF-TO-9): the action buttons moved into the top toolbar.
     labels = [b.text() for b in win.findChildren(QPushButton) if b.text() in ("Export snapshot", "Export DX CSV")]
+    for tb in win.findChildren(QToolBar):
+        labels += [a.text() for a in tb.actions() if a.text() in ("Export snapshot", "Export DX CSV")]
     assert sorted(labels) == ["Export DX CSV", "Export snapshot"]
     win.ctrl.stop()
     win.deleteLater()

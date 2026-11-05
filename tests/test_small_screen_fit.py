@@ -185,7 +185,7 @@ def test_main_window_content_scrolls_instead_of_overflowing(window):
 
 
 @pytest.mark.parametrize("width,height,expect_compact", [(1008, 681, False), (667, 441, True)])
-def test_main_window_reflows_at_small_sizes(window, width, height, expect_compact): # M3
+def test_main_window_reflows_at_small_sizes(window, width, height, expect_compact): # M1
     from orbitrx.ui.qt_app import QtOrbitRxApplication
 
     win = QtOrbitRxApplication()
@@ -195,23 +195,21 @@ def test_main_window_reflows_at_small_sizes(window, width, height, expect_compac
 
     assert win._compact is expect_compact
     assert _visible_horizontal_scrollbars(win) == []
+    assert win.hscroll_visible() is False
 
     map_controls = [win.time_slider, win.replay_slider, *win._layer_checks.values()]
     if win._compact:
-        win._compact_tabs.setCurrentWidget(win._map_scroll)
+        win._compact_tabs.setCurrentWidget(win._map_tab)
         window.processEvents()
     for control in map_controls:
         assert control.width() > 0
         assert _not_clipped_horizontally(control, win)
 
-    buttons_by_text = {b.text(): b for b in win._action_buttons_grid._widgets}
-    side_controls = [buttons_by_text["Settings"], buttons_by_text["Rig"], buttons_by_text["About"]]
-    if win._compact:
-        win._compact_tabs.setCurrentWidget(win._side_pane)
-        window.processEvents()
-    for control in side_controls:
-        assert control.width() > 0
-        assert _not_clipped_horizontally(control, win)
+    # M1: Settings/Rig/About live in the top toolbar now, reachable directly or
+    # via the overflow chevron regardless of compact/split mode.
+    reachable = win.controls_reachable()
+    for name in ("Settings", "Rig", "About"):
+        assert reachable[name] is True
 
     win.ctrl.stop()
     win.deleteLater()

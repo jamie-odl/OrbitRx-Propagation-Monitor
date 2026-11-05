@@ -37,6 +37,10 @@ class MapScene:
     sun_lon_deg: float
     hour_utc: float
     annotations: list[MapAnnotation]
+    # P3: the greyline terminator as a point list (not baked into overlay_rgba), so
+    # the Qt widget can stroke it with a cosmetic pen that stays a constant logical
+    # width at every zoom level instead of scaling with the raster.
+    terminator: list[tuple[float, float]] = field(default_factory=list)
 
 
 class MapRenderer:
@@ -113,6 +117,17 @@ class MapRenderer:
         tan_lat = -math.cos(lon_rad - sun_lon_rad) / tan_dec
         return math.degrees(math.atan(tan_lat))
 
+    def _terminator_points(self, decl_rad: float, sun_lon_rad: float, step: int = 2) -> list[tuple[float, float]]:
+        w, h = self.width, self.height
+        points: list[tuple[float, float]] = []
+        for x in range(0, w + 1, step):
+            lon_deg = (x / w) * 360 - 180
+            lat_deg = self._terminator_lat(lon_deg, decl_rad, sun_lon_rad)
+            y = h / 2 - (lat_deg / 90) * (h / 2)
+            y = max(0.0, min(float(h - 1), y))
+            points.append((float(x), y))
+        return points
+
     def _build_overlay(
         self,
         offset_hours: float,
@@ -154,21 +169,11 @@ class MapRenderer:
                 x = int((lon + 180) / 360 * w)
                 od.line([(x, 0), (x, h)], fill=grid_color, width=1)
 
-        term_points: list[tuple[int, int]] = []
-        step = 2
-        for x in range(0, w + 1, step):
-            lon_deg = (x / w) * 360 - 180
-            lat_deg = self._terminator_lat(lon_deg, decl_rad, sun_lon_rad)
-            y = int(h / 2 - (lat_deg / 90) * (h / 2))
-            y = max(0, min(h - 1, y))
-            term_points.append((x, y))
-
         if layers.night:
             overlay.alpha_composite(self._night_mask(w, h, decl_rad, sun_lon_rad))
 
-        if layers.greyline and len(term_points) > 1:
-            od.line(term_points, fill=(255, 100, 30, 255), width=4)
-            od.line(term_points, fill=(255, 200, 80, 180), width=2)
+        # P3: the greyline itself is drawn as a vector by the Qt widget (cosmetic
+        # pen, constant logical width at every zoom), not baked into this raster.
 
         if layers.aurora and kp >= 4:
             oval_lat = aurora_oval_lat(kp)
@@ -197,6 +202,9 @@ class MapRenderer:
         overlay, decl_deg, sun_lon_deg, hour_utc = self._build_overlay(
             state.slider_offset_hours, layers, float(state.kp_index)
         )
+        terminator: list[tuple[float, float]] = []
+        if layers.greyline:
+            terminator = self._terminator_points(math.radians(decl_deg), math.radians(sun_lon_deg))
 
         annotations: list[MapAnnotation] = []
         sun_lon_wrapped = (sun_lon_deg + 180) % 360 - 180
@@ -235,6 +243,7 @@ class MapRenderer:
             sun_lon_deg=sun_lon_deg,
             hour_utc=hour_utc,
             annotations=annotations,
+            terminator=terminator,
         )
 
     def _gc_map_paths(

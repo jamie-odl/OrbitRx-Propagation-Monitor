@@ -7,12 +7,12 @@ from PIL import Image
 
 from orbitrx.map_renderer import MapLayers, MapRenderer, MapScene
 from orbitrx.ui.formatting import format_hour_offset, format_map_hud_datetime
-from orbitrx.ui.theme import EMPTY_OVERLAY_STYLE, FONT_CAPTION, MUTED
+from orbitrx.ui.theme import BG, EMPTY_OVERLAY_STYLE, FONT_CAPTION, MUTED
 
 try:
     from PySide6.QtCore import Qt, QRectF, Signal
     from PySide6.QtGui import (
-        QBrush, QColor, QFont, QImage, QPainter, QPainterPath, QPen, QPixmap,
+        QBrush, QColor, QFont, QFontMetrics, QImage, QPainter, QPainterPath, QPen, QPixmap,
     )
     from PySide6.QtWidgets import (
         QGraphicsEllipseItem, QGraphicsPathItem, QGraphicsPixmapItem,
@@ -81,7 +81,9 @@ class PropagationMapWidget(QWidget):
         self._pan_anchor = None
         self.view.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
-        self.view.setBackgroundBrush(QBrush(QColor("#0B1118")))
+        # P2: letterbox fill, so a pane that isn't exactly 2:1 shows dark bars
+        # (never a crop) above/below or left/right of the map.
+        self.view.setBackgroundBrush(QBrush(QColor(BG)))
         layout.addWidget(self.view, stretch=1)
 
         self.scene = QGraphicsScene()
@@ -144,9 +146,9 @@ class PropagationMapWidget(QWidget):
         self._base_item.setPos(0, 0)
         w, h = base_rgba.width, base_rgba.height
         self.scene.setSceneRect(0, 0, w, h)
-        # Expanding (not KeepAspectRatio) so the map fills the viewport width (S3)
-        # instead of letterboxing; any vertical overflow is reachable via right-drag pan.
-        self.view.fitInView(QRectF(0, 0, w, h), Qt.AspectRatioMode.KeepAspectRatioByExpanding)
+        # P2: KeepAspectRatio letterboxes (dark bars, #0F1720) instead of cropping,
+        # so the poles are never clipped asymmetrically and the map is centred.
+        self.view.fitInView(QRectF(0, 0, w, h), Qt.AspectRatioMode.KeepAspectRatio)
         self._view_fitted = True
 
     def _overlay_refresh_key(self, scene: MapScene, state: Any) -> tuple:
@@ -210,6 +212,19 @@ class PropagationMapWidget(QWidget):
         self._clear_vectors()
         self._click_targets.clear()
 
+        if scene.terminator and len(scene.terminator) > 1:
+            path = QPainterPath()
+            path.moveTo(*scene.terminator[0])
+            for px, py in scene.terminator[1:]:
+                path.lineTo(px, py)
+            greyline = QGraphicsPathItem(path)
+            # P3: cosmetic so the stroke stays 2 logical px at every zoom level,
+            # instead of scaling with the map like a baked-in raster line would.
+            pen = QPen(QColor(255, 150, 60, 230), 2)
+            pen.setCosmetic(True)
+            greyline.setPen(pen)
+            self._add_to_vectors(greyline)
+
         sun_font = QFont("Segoe UI", FONT_CAPTION)
         sun_drawn = False
         img_w = float(getattr(scene, "width", 0) or getattr(self.renderer, "width", 0) or 0)
@@ -236,11 +251,18 @@ class PropagationMapWidget(QWidget):
                 dot.setBrush(QBrush(QColor("#00E676")))
                 dot.setPen(QPen(QColor("white"), 2))
                 self._add_to_vectors(dot)
-                lbl = QGraphicsTextItem("You")
-                lbl.setDefaultTextColor(QColor("white"))
-                lbl.setFont(sun_font)
-                lbl.setPos(x + 10, y - 14)
-                self._add_to_vectors(lbl)
+                # P3: a 1px dark halo around "You" so it stays readable over light
+                # land, not just dark ocean -- a plain QGraphicsTextItem has no
+                # way to stroke its glyphs, so this builds the label as a path.
+                label_path = QPainterPath()
+                fm = QFontMetrics(sun_font)
+                label_path.addText(x + 10, y - 14 + fm.ascent(), sun_font, "You")
+                halo = QGraphicsPathItem(label_path)
+                halo_pen = QPen(QColor(15, 23, 32, 180), 3)
+                halo_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+                halo.setPen(halo_pen)
+                halo.setBrush(QBrush(QColor("white")))
+                self._add_to_vectors(halo)
 
             elif ann.kind == "dx_spot":
                 d = ann.data
@@ -324,4 +346,4 @@ class PropagationMapWidget(QWidget):
         if self._base_item.pixmap() and not self._base_item.pixmap().isNull():
             r = self._base_item.boundingRect()
             if r.width() > 0 and r.height() > 0:
-                self.view.fitInView(r, Qt.AspectRatioMode.KeepAspectRatioByExpanding)
+                self.view.fitInView(r, Qt.AspectRatioMode.KeepAspectRatio)

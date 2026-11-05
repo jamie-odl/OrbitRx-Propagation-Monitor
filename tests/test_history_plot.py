@@ -57,6 +57,8 @@ def test_plot_builds_dual_axes_for_kp_and_sfi(window, monkeypatch):
         for i in range(5)
     ]
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     assert window.plot_container.count() == 2
@@ -75,6 +77,8 @@ def test_plot_legend_uses_dark_theme_colors(window, monkeypatch):
         for i in range(3)
     ]
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
@@ -90,6 +94,8 @@ def test_plot_x_axis_ticks_show_hours_and_minutes(window, monkeypatch): # M4
         {"ts": "2026-11-04T23:00:00+00:00", "kp": 2.5, "flux": 115},
     ]
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
@@ -103,6 +109,8 @@ def test_plot_x_axis_ticks_include_day_for_multi_day_range(window, monkeypatch):
         {"ts": "2026-11-04T23:00:00+00:00", "kp": 2.5, "flux": 115},
     ]
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
@@ -111,6 +119,8 @@ def test_plot_x_axis_ticks_include_day_for_multi_day_range(window, monkeypatch):
 
 
 def test_no_data_shows_placeholder_not_crash(window):
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window.hist_date.setDate(window.hist_date.date().addYears(-5))
     window._refresh_plot_tab()
@@ -124,6 +134,8 @@ def test_48h_sample_fixture_uses_day_level_tick_format(window, monkeypatch): # M
     rows = data["rows"]
     assert len(rows) > 24
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
@@ -140,6 +152,8 @@ def test_48h_sample_fixture_breaks_the_line_across_its_gap(window, monkeypatch):
 
     data = json.loads(HISTORY_SAMPLE_48H.read_text())
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: data["rows"])
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
@@ -156,6 +170,8 @@ def test_medium_range_keeps_day_and_time_tick_format(window, monkeypatch): # S3
         {"ts": "2026-11-04T06:00:00+00:00", "kp": 2.5, "flux": 115},
     ]
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
@@ -166,6 +182,8 @@ def test_medium_range_keeps_day_and_time_tick_format(window, monkeypatch): # S3
 def test_hist_ending_label_visible_in_empty_and_data_states(window, monkeypatch): # S1
     # isVisible() also depends on the top-level window actually being shown.
     window.show()
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
 
     # Empty state: before Refresh is ever clicked, the label is a field label
@@ -198,6 +216,8 @@ def test_hist_ending_label_visible_in_empty_and_data_states(window, monkeypatch)
 def test_single_point_shows_not_enough_data_text_in_plot(window, monkeypatch): # S2
     rows = [{"ts": "2026-11-04T21:00:00+00:00", "kp": 2.0, "flux": 110}]
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     assert window.plot_container.count() == 1
@@ -213,6 +233,8 @@ def test_lines_connect_the_data_points(window, monkeypatch): # S2
         {"ts": "2026-11-04T21:01:10+00:00", "kp": 2.5, "flux": 115},
     ]
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
@@ -228,6 +250,8 @@ def test_tight_cluster_widens_to_a_minimum_one_hour_span_centred_on_data(window,
         {"ts": "2026-11-04T21:01:10+00:00", "kp": 2.5, "flux": 115},
     ]
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
@@ -248,6 +272,8 @@ def test_wide_range_pads_ten_percent_so_data_fills_most_of_the_width(window, mon
         {"ts": "2026-11-04T10:00:00+00:00", "kp": 2.5, "flux": 115},
     ]
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
@@ -291,6 +317,8 @@ def test_short_range_ticks_are_unique_hh_mm():  # M4
 def test_48h_sample_tick_labels_do_not_overlap(window, monkeypatch):  # M4
     data = json.loads(HISTORY_SAMPLE_48H.read_text())
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: data["rows"])
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
@@ -314,6 +342,8 @@ def test_irregular_real_like_fixture_connects_jitter_and_breaks_only_the_outage(
     rows = data["rows"]
     assert len(rows) > 4
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
@@ -331,6 +361,8 @@ def test_irregular_real_like_fixture_connects_jitter_and_breaks_only_the_outage(
 def test_history_plot_markers_are_visible_for_isolated_points(window, monkeypatch): # M4
     data = json.loads(HISTORY_IRREGULAR.read_text())
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: data["rows"])
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
@@ -345,6 +377,8 @@ def test_two_readings_seconds_apart_show_not_enough_data(window, monkeypatch):  
         {"ts": "2026-11-05T00:33:20+00:00", "kp": 1.3, "flux": 111},
     ]
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
