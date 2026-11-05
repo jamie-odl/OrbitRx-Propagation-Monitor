@@ -20,7 +20,7 @@ from orbitrx.ui.formatting import (
     widen_to_min_span,
     humanize_iso_dates,
     format_hour_offset, format_no_spots_message, format_replay_offset,
-    history_plot_date_format, insert_gap_breaks, pad_datetime_range,
+    history_plot_date_format, insert_gap_breaks, pad_datetime_range, EXPECTED_POLL_S,
 )
 from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
 from orbitrx.ui.theme import ERR, MUTED, OK, apply_theme
@@ -45,7 +45,7 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QScrollArea, QSlider,
-    QSpinBox, QStackedWidget, QTabWidget, QVBoxLayout, QWidget, QFileDialog,
+    QSpinBox, QSplitter, QStackedWidget, QTabWidget, QVBoxLayout, QWidget, QFileDialog,
     QSystemTrayIcon, QMenu,
 )
 
@@ -67,6 +67,16 @@ CONTINENT_OPTS = [("NA", "North America"), ("SA", "South America"), ("EU", "Euro
 # same x regardless of which page's labels happen to be widest (N-new-3).
 SETTINGS_LABEL_WIDTH = 170
 
+# S1: fields keep at least this width instead of being squeezed unreadably thin;
+# below it the row wraps (the label moves above the field) rather than clipping.
+SETTINGS_FIELD_MIN_WIDTH = 160
+
+# S1: below this page width (dialog width minus the nav list), every form row
+# wraps (label above field) instead of just the long ones.
+SETTINGS_NARROW_PAGE_WIDTH = 560
+SETTINGS_NAV_WIDTH_WIDE = 180
+SETTINGS_NAV_WIDTH_NARROW = 150
+
 # S4: a one-line description at the top of every Settings page, so a page with only
 # one or two controls still reads as a deliberate, populated screen.
 SETTINGS_PAGE_DESCRIPTIONS = {
@@ -76,6 +86,46 @@ SETTINGS_PAGE_DESCRIPTIONS = {
     "Map & spots": "Choose the map backend and how often live spots refresh from PSKReporter.",
     "Services": "Optional QRZ lookups and how often space weather data refreshes.",
 }
+
+# M3: below this main-window width, the map and side panel move from a side-by-side
+# splitter into a "Map" / "Conditions" tab pair; above the (higher) exit width, they
+# move back. The gap between the two is hysteresis, so a resize that lands right on
+# the boundary doesn't flip back and forth.
+COMPACT_WIDTH_BELOW = 760
+COMPACT_WIDTH_ABOVE = 820
+
+
+class _ReflowGrid(QWidget):
+    """A row of widgets (layer toggles, action buttons) that reflows into fewer
+    columns as it narrows, so it is always reachable by vertical scroll alone and
+    never needs a horizontal scrollbar (M3)."""
+
+    def __init__(self, widgets: list[QWidget], min_item_width: int, parent=None) -> None:
+        super().__init__(parent)
+        self._widgets = widgets
+        self._min_item_width = max(1, min_item_width)
+        self._grid = QGridLayout(self)
+        self._grid.setSpacing(6)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._cols = 0
+        self._relayout(len(widgets) or 1)
+
+    def _columns_for_width(self, width: int) -> int:
+        return max(1, min(len(self._widgets) or 1, width // self._min_item_width))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        cols = self._columns_for_width(self.width())
+        if cols != self._cols:
+            self._relayout(cols)
+
+    def _relayout(self, cols: int) -> None:
+        self._cols = cols
+        while self._grid.count():
+            self._grid.takeAt(0)
+        for i, w in enumerate(self._widgets):
+            row, col = divmod(i, cols)
+            self._grid.addWidget(w, row, col)
 
 
 class _UiInvoker(QObject):
@@ -158,23 +208,16 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _build_ui(self) -> None:
         central = QWidget()
-        # M3 (V7): on a small or scaled-up screen the window is clamped to the
-        # available geometry; if the content's minimum is still larger, the whole
-        # content scrolls instead of running off the screen edge.
-        central_scroll = QScrollArea()
-        central_scroll.setObjectName("centralScroll")
-        central_scroll.setWidgetResizable(True)
-        central_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        central_scroll.setWidget(central)
-        self._central_scroll = central_scroll
-        self.setCentralWidget(central_scroll)
-        root = QHBoxLayout(central)
+        self.setCentralWidget(central)
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
 
-        left = QVBoxLayout()
+        map_pane = QWidget()
+        map_layout = QVBoxLayout(map_pane)
         self.banner = QLabel("Loading map...")
         self.banner.setObjectName("banner")
         self.banner.setWordWrap(True)
-        left.addWidget(self.banner)
+        map_layout.addWidget(self.banner)
 
         cluster_row = QHBoxLayout()
         cluster_row.addWidget(QLabel("Cluster:"))
@@ -182,14 +225,14 @@ class QtOrbitRxApplication(QMainWindow):
         self._populate_cluster_combo()
         self.cluster_combo.currentIndexChanged.connect(self._cluster_node_changed)
         cluster_row.addWidget(self.cluster_combo, stretch=1)
-        left.addLayout(cluster_row)
+        map_layout.addLayout(cluster_row)
 
         self.map_widget = self._create_map_widget()
         self.map_widget.spot_clicked.connect(self._tune_from_map)
         self.map_widget.map_clicked.connect(self._on_map_click)
-        left.addWidget(self.map_widget, stretch=1)
+        map_layout.addWidget(self.map_widget, stretch=1)
 
-        layer_row = QHBoxLayout()
+        layer_widgets = []
         for key, label in [("greyline", "Greyline"), ("night", "Night"), ("dx_arcs", "DX"),
                            ("aurora", "Aurora"), ("grid", "Grid"),
                            ("spot_arcs", "Live spots"), ("spot_heatmap", "Heatmap")]:
@@ -200,14 +243,17 @@ class QtOrbitRxApplication(QMainWindow):
                 cb.setEnabled(False)
                 cb.setToolTip("Live spots need the interactive map. Switch in Settings > Map & spots.")
             self._layer_checks[key] = cb
-            layer_row.addWidget(cb)
+            layer_widgets.append(cb)
         if self._map_backend != "leaflet":
             switch_lbl = QLabel('<a href="#">Switch map</a>')
             switch_lbl.setObjectName("muted")
             switch_lbl.setToolTip("Live spots need the interactive map. Switch in Settings > Map & spots.")
             switch_lbl.linkActivated.connect(lambda _: self._settings(initial_page="Map & spots"))
-            layer_row.addWidget(switch_lbl)
-        left.addLayout(layer_row)
+            layer_widgets.append(switch_lbl)
+        # M3: reflows into fewer columns as the map pane narrows, instead of ever
+        # needing a horizontal scrollbar.
+        self._layer_grid = _ReflowGrid(layer_widgets, min_item_width=108)
+        map_layout.addWidget(self._layer_grid)
 
         slider_row = QHBoxLayout()
         slider_row.addWidget(QLabel("Time offset (hours):"))
@@ -220,7 +266,7 @@ class QtOrbitRxApplication(QMainWindow):
         self.lbl_slider.setFixedWidth(56)
         self.lbl_slider.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         slider_row.addWidget(self.lbl_slider)
-        left.addLayout(slider_row)
+        map_layout.addLayout(slider_row)
 
         replay_row = QHBoxLayout()
         replay_row.addWidget(QLabel("Spot replay (hours ago):"))
@@ -234,13 +280,22 @@ class QtOrbitRxApplication(QMainWindow):
         self.lbl_replay.setFixedWidth(56)
         self.lbl_replay.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         replay_row.addWidget(self.lbl_replay)
-        left.addLayout(replay_row)
-        root.addLayout(left, stretch=3)
+        map_layout.addLayout(replay_row)
+
+        # M3: the map pane scrolls vertically only (never horizontally), so the
+        # layer toggles and sliders below the map stay reachable even when the
+        # window is too short to show everything at once.
+        map_scroll = QScrollArea()
+        map_scroll.setObjectName("mapScroll")
+        map_scroll.setWidgetResizable(True)
+        map_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        map_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        map_scroll.setWidget(map_pane)
+        self._map_scroll = map_scroll
+        self._map_pane = map_pane
 
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
-        right_scroll.setMinimumWidth(320)
-        right_scroll.setMaximumWidth(420)
         right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # S3: the Stats tab below has its own scroll area; only one vertical scrollbar
         # should ever be visible in the right column, so this outer one stays off.
@@ -337,9 +392,9 @@ class QtOrbitRxApplication(QMainWindow):
         self.click_lbl.setWordWrap(True)
         self.click_lbl.setObjectName("muted")
         right_layout.addWidget(self.click_lbl)
+        right_layout.addStretch()
+        right_scroll.setWidget(right_panel)
 
-        btn_row = QGridLayout()
-        btn_row.setSpacing(6)
         action_buttons = [
             ("Location", self.ctrl.refresh_location),
             ("Weather", self.ctrl.fetch_weather),
@@ -349,26 +404,57 @@ class QtOrbitRxApplication(QMainWindow):
             ("Export DX CSV", self._export_dx),
             ("About", self._about),
         ]
-        # Two evenly filled rows (4 + 3), each button stretched to the row width,
-        # so there is no hole and labels are never clipped (N-new-5).
-        rows = [action_buttons[:4], action_buttons[4:]]
-        for r, row_items in enumerate(rows):
-            for c, (text, slot) in enumerate(row_items):
-                btn = QPushButton(text, clicked=slot)
-                btn.setMinimumWidth(btn.fontMetrics().horizontalAdvance(text) + 24)
-                btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-                btn_row.addWidget(btn, r, c * 12 // len(row_items), 1, 12 // len(row_items))
-        right_layout.addStretch()
-        right_scroll.setWidget(right_panel)
-        # Action buttons sit below the scroll area so they are always visible.
-        right_column = QWidget()
-        right_column.setMinimumWidth(400)
-        right_column.setMaximumWidth(420)
-        right_col_layout = QVBoxLayout(right_column)
-        right_col_layout.setContentsMargins(0, 0, 0, 0)
-        right_col_layout.addWidget(right_scroll, stretch=1)
-        right_col_layout.addLayout(btn_row)
-        root.addWidget(right_column, stretch=1)
+        btn_widgets = []
+        for text, slot in action_buttons:
+            btn = QPushButton(text, clicked=slot)
+            btn.setMinimumWidth(btn.fontMetrics().horizontalAdvance(text) + 24)
+            btn.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            btn_widgets.append(btn)
+        # M3: reflows into fewer columns as the side panel narrows (e.g. the
+        # Conditions tab in compact mode), instead of ever clipping a button.
+        btn_min_item_width = max(b.minimumWidth() for b in btn_widgets) + 8
+        self._action_buttons_grid = _ReflowGrid(btn_widgets, min_item_width=btn_min_item_width)
+
+        # M3: the side panel scrolls vertically only (never horizontally), so the
+        # action buttons below the band tiles/tabs stay reachable even when the
+        # window is too short to show everything at once.
+        side_scroll = QScrollArea()
+        side_scroll.setObjectName("sidePaneScroll")
+        side_scroll.setWidgetResizable(True)
+        side_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        side_scroll_body = QWidget()
+        side_scroll_body_layout = QVBoxLayout(side_scroll_body)
+        side_scroll_body_layout.setContentsMargins(0, 0, 0, 0)
+        side_scroll_body_layout.addWidget(right_scroll, stretch=1)
+        side_scroll_body_layout.addWidget(self._action_buttons_grid)
+        side_scroll.setWidget(side_scroll_body)
+        self._side_scroll = side_scroll
+
+        side_pane = QWidget()
+        side_pane.setMinimumWidth(240)
+        side_pane_layout = QVBoxLayout(side_pane)
+        side_pane_layout.setContentsMargins(0, 0, 0, 0)
+        side_pane_layout.addWidget(side_scroll)
+        self._side_pane = side_pane
+
+        # M3: side-by-side by default (map:side = 3:1); below COMPACT_WIDTH_BELOW
+        # logical px, _update_compact_mode() swaps to the Map/Conditions tabs
+        # instead (see resizeEvent).
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.addWidget(map_scroll)
+        self._splitter.addWidget(side_pane)
+        self._splitter.setStretchFactor(0, 3)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setSizes([900, 300])
+
+        self._compact_tabs = QTabWidget()
+        self._compact_tabs.setObjectName("compactTabs")
+        self._compact_tabs.hide()
+
+        outer.addWidget(self._splitter)
+        self._compact = False
+        self._update_compact_mode()
 
     def _populate_cluster_combo(self) -> None:
         self.cluster_combo.blockSignals(True)
@@ -640,18 +726,25 @@ class QtOrbitRxApplication(QMainWindow):
         ax.xaxis.set_major_formatter(DateFormatter(history_plot_date_format(lo, hi)))
         ax.set_xlim(lo, hi)
 
-        # S3: break the line (insert a NaN) across any gap more than 3x the median
-        # sampling interval, instead of drawing a straight jump across missing data.
-        kp_times, kp_gapped = insert_gap_breaks(times, kp)
-        flux_times, flux_gapped = insert_gap_breaks(times, flux)
+        # M4: break the line (insert a NaN) only across a gap bigger than a real
+        # outage would allow -- max(3x the app's expected poll interval, 30 min) --
+        # instead of the old median-relative rule, which broke real, jittery data
+        # into isolated points. Isolated points still show via a size-7 marker.
+        poll_interval_s = float(self.ctrl.cfg.get("refresh_interval_seconds", EXPECTED_POLL_S))
+        kp_times, kp_gapped = insert_gap_breaks(times, kp, poll_interval_s)
+        flux_times, flux_gapped = insert_gap_breaks(times, flux, poll_interval_s)
 
-        kp_line, = ax.plot(kp_times, kp_gapped, label="Kp", marker="o", linestyle="-", color="#64B5F6")
+        kp_line, = ax.plot(
+            kp_times, kp_gapped, label="Kp", marker="o", markersize=7, linestyle="-", color="#64B5F6"
+        )
         ax.set_ylabel("Kp", color="#64B5F6")
         ax.set_ylim(0, 9)
         ax.yaxis.set_ticks(range(0, 10))
 
         ax2 = ax.twinx()
-        sfi_line, = ax2.plot(flux_times, flux_gapped, label="SFI", marker="o", linestyle="-", color="#FFD54F")
+        sfi_line, = ax2.plot(
+            flux_times, flux_gapped, label="SFI", marker="o", markersize=7, linestyle="-", color="#FFD54F"
+        )
         ax2.set_ylabel("SFI", color="#FFD54F")
         ax2.set_ylim(50, 300)
         for spine in ax2.spines.values():
@@ -703,6 +796,9 @@ class QtOrbitRxApplication(QMainWindow):
         form = QFormLayout(page)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        # S1: long rows always wrap (label above field); _update_settings_wrap_policy
+        # switches every row to wrap once the page itself gets narrow.
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapLongRows)
         description = QLabel(SETTINGS_PAGE_DESCRIPTIONS.get(title, ""))
         description.setObjectName("muted")
         description.setWordWrap(True)
@@ -715,6 +811,10 @@ class QtOrbitRxApplication(QMainWindow):
         """addRow with a fixed-width label so every Settings page lines up (N-new-3)."""
         label = QLabel(text)
         label.setMinimumWidth(SETTINGS_LABEL_WIDTH)
+        if hasattr(field, "setMinimumWidth"):
+            # S1: fields never shrink below a legible width, so a narrow dialog
+            # wraps the row instead of squeezing the field unreadably thin.
+            field.setMinimumWidth(SETTINGS_FIELD_MIN_WIDTH)
         form.addRow(label, field)
         return label
 
@@ -728,16 +828,20 @@ class QtOrbitRxApplication(QMainWindow):
 
         # The list+pages area scrolls independently so a small/scaled-up screen can
         # shrink the dialog without ever hiding the Save/Cancel buttons below it.
+        # S1: horizontal scrolling is never offered, even when it "would" fit by a
+        # sub-pixel margin (R2) -- rows wrap instead (see _update_settings_wrap_policy).
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll_body = QWidget()
         body = QHBoxLayout(scroll_body)
         scroll.setWidget(scroll_body)
         outer.addWidget(scroll, stretch=1)
+        dlg.scroll = scroll
 
         page_list = QListWidget()
-        page_list.setFixedWidth(180)
+        page_list.setFixedWidth(SETTINGS_NAV_WIDTH_WIDE)
         stack = QStackedWidget()
         dlg.page_list = page_list
         dlg.stack = stack
@@ -956,6 +1060,13 @@ class QtOrbitRxApplication(QMainWindow):
         # stay reachable on a small or scaled-up display.
         dlg.resize(720, 520)
         fit_to_screen(dlg, 520, 380)
+
+        # S1: re-check the wrap policy and nav width on every resize, not just once,
+        # so dragging the dialog narrower (or a small/scaled-up screen) keeps every
+        # field and helper label fully readable without horizontal scrolling.
+        dlg._settings_wrap_filter = _SettingsWrapFilter()
+        dlg.installEventFilter(dlg._settings_wrap_filter)
+        _update_settings_wrap_policy(dlg)
         return dlg
 
     def _apply_settings_dialog(self, dlg: QDialog) -> None:
@@ -1029,6 +1140,46 @@ class QtOrbitRxApplication(QMainWindow):
         self.ctrl.stop()
         QApplication.quit()
 
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._update_compact_mode()
+
+    def _update_compact_mode(self) -> None:
+        """M3: below COMPACT_WIDTH_BELOW logical px, swap the map/side splitter for
+        a Map/Conditions tab pair (and back above COMPACT_WIDTH_ABOVE) so neither
+        pane is ever squeezed to the point of needing horizontal scrolling."""
+        if not hasattr(self, "_splitter"):
+            return
+        width = self.width()
+        if not self._compact and width < COMPACT_WIDTH_BELOW:
+            self._enter_compact_mode()
+        elif self._compact and width > COMPACT_WIDTH_ABOVE:
+            self._exit_compact_mode()
+
+    def _enter_compact_mode(self) -> None:
+        self._compact = True
+        central_layout = self.centralWidget().layout()
+        central_layout.removeWidget(self._splitter)
+        self._splitter.hide()
+        self._compact_tabs.addTab(self._map_scroll, "Map")
+        self._compact_tabs.addTab(self._side_pane, "Conditions")
+        central_layout.addWidget(self._compact_tabs)
+        self._compact_tabs.show()
+
+    def _exit_compact_mode(self) -> None:
+        self._compact = False
+        central_layout = self.centralWidget().layout()
+        central_layout.removeWidget(self._compact_tabs)
+        self._compact_tabs.hide()
+        self._compact_tabs.removeTab(self._compact_tabs.indexOf(self._side_pane))
+        self._compact_tabs.removeTab(self._compact_tabs.indexOf(self._map_scroll))
+        self._splitter.insertWidget(0, self._map_scroll)
+        self._splitter.insertWidget(1, self._side_pane)
+        self._splitter.setStretchFactor(0, 3)
+        self._splitter.setStretchFactor(1, 1)
+        central_layout.addWidget(self._splitter)
+        self._splitter.show()
+
     def changeEvent(self, event) -> None:
         super().changeEvent(event)
         if (
@@ -1064,6 +1215,33 @@ class QtOrbitRxApplication(QMainWindow):
         self.show()
 
 
+def _update_settings_wrap_policy(dlg: QDialog) -> None:
+    """S1: wrap every row (not just long ones) once the page itself drops under
+    SETTINGS_NARROW_PAGE_WIDTH, and shrink the nav list at the same point to leave
+    more room for the fields.
+
+    The decision is a fixed function of the dialog's own width alone (assuming the
+    narrow nav width, the smaller of the two), never of the nav list's *current*
+    width -- a child's width is itself an effect of this function, and feeding an
+    effect back into its own cause would just toggle forever as child geometry
+    settles across layout passes.
+    """
+    narrow = dlg.width() < (SETTINGS_NARROW_PAGE_WIDTH + SETTINGS_NAV_WIDTH_NARROW)
+    policy = QFormLayout.RowWrapPolicy.WrapAllRows if narrow else QFormLayout.RowWrapPolicy.WrapLongRows
+    for form in dlg.findChildren(QFormLayout):
+        form.setRowWrapPolicy(policy)
+    dlg.page_list.setFixedWidth(SETTINGS_NAV_WIDTH_NARROW if narrow else SETTINGS_NAV_WIDTH_WIDE)
+
+
+class _SettingsWrapFilter(QObject):
+    """Re-applies the Settings dialog's row-wrap policy on every resize (S1)."""
+
+    def eventFilter(self, obj, event) -> bool:  # noqa: N802 (Qt API)
+        if event.type() == QEvent.Type.Resize:
+            _update_settings_wrap_policy(obj)
+        return False
+
+
 def _app_icon() -> QIcon:
     from orbitrx.paths import bundled_root, project_root
 
@@ -1094,6 +1272,13 @@ def _save_button_fully_visible(dlg: QDialog) -> bool:
     return True
 
 
+def _main_window_hscroll_visible(win) -> bool:
+    """Whether any scroll area inside the main window shows a horizontal scrollbar."""
+    return any(
+        sa.horizontalScrollBar().isVisible() for sa in win.findChildren(QScrollArea) if sa.window() is win
+    )
+
+
 def run_release_capture_hook(out_dir: str | Path) -> int:
     """Release-exe self-capture (M3 evidence): grab the rig wizard's port dropdown and
     the DX cluster settings page into `out_dir`, then return. Runs against whatever
@@ -1122,9 +1307,20 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
 
     wait(0.3)
 
-    wizard = RigWizardDialog(win.ctrl.cfg, win.ctrl.cat, win)
+    cat = win.ctrl.cat
+    if os.environ.get("ORBITRX_TEST_SIMULATED_RIG") == "1":
+        # CI negative control only: with the test switch on, the gate check must see
+        # the simulated rig. Without it (the default) the real CatController is used.
+        from orbitrx.ui.rig_wizard import SimulatedCatController
+        cat = SimulatedCatController()
+    wizard = RigWizardDialog(win.ctrl.cfg, cat, win)
     wizard.show()
-    wait(0.2)
+    wait(0.4)
+    wfg = wizard.frameGeometry()
+    (wizard.screen() or app.primaryScreen()).grabWindow(0, wfg.x(), wfg.y(), wfg.width(), wfg.height()).save(
+        str(out_dir / "rig-wizard.png")
+    )
+    wizard_on_screen = (wizard.screen() or app.primaryScreen()).availableGeometry().contains(wfg)
     wizard.port_combo.showPopup()
     wait(0.3)
     rect = wizard.frameGeometry()
@@ -1160,6 +1356,17 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
     settings_size = (settings_dlg.width(), settings_dlg.height())
     settings_dlg.reject()
 
+    from orbitrx.ui.about import _build_about_dialog
+    about = _build_about_dialog(win)
+    about.show()
+    wait(0.4)
+    afg = about.frameGeometry()
+    (about.screen() or app.primaryScreen()).grabWindow(0, afg.x(), afg.y(), afg.width(), afg.height()).save(
+        str(out_dir / "about.png")
+    )
+    about_on_screen = (about.screen() or app.primaryScreen()).availableGeometry().contains(afg)
+    about.reject()
+
     win_screen = win.screen() or app.primaryScreen()
     avail = win_screen.availableGeometry()
     wait(0.2)
@@ -1174,7 +1381,10 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
         f"save_visible={save_visible} "
         f"settings_frame_on_screen={settings_on_screen} "
         f"main={win.width()}x{win.height()} "
-        f"main_frame_on_screen={avail.contains(main_fg)}\n",
+        f"main_frame_on_screen={avail.contains(main_fg)} "
+        f"main_hscroll={_main_window_hscroll_visible(win)} "
+        f"about_frame_on_screen={about_on_screen} "
+        f"wizard_frame_on_screen={wizard_on_screen}\n",
         encoding="utf-8",
     )
 

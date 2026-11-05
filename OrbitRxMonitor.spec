@@ -59,7 +59,7 @@ exe = EXE(
     # I4: UPX-compressing the onefile exe was the likely source of the malformed PE
     # security directory the installer review flagged (UPX doesn't relocate/clear that
     # directory correctly in some bootloader builds). Disabled until that's confirmed fixed
-    # upstream; signtool will need a clean, uncompressed PE to attach a real signature anyway.
+    # upstream. Releases ship unsigned; users verify downloads with SHA256SUMS.txt.
     upx=False,
     upx_exclude=[],
     runtime_tmpdir=None,

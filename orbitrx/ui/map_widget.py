@@ -16,7 +16,8 @@ try:
     )
     from PySide6.QtWidgets import (
         QGraphicsEllipseItem, QGraphicsPathItem, QGraphicsPixmapItem,
-        QGraphicsScene, QGraphicsTextItem, QGraphicsView, QLabel, QVBoxLayout, QWidget,
+        QGraphicsScene, QGraphicsTextItem, QGraphicsView, QLabel, QSizePolicy,
+        QVBoxLayout, QWidget,
     )
     QT_AVAILABLE = True
 
@@ -62,6 +63,11 @@ class PropagationMapWidget(QWidget):
 
         self.hud = QLabel("")
         self.hud.setStyleSheet("color: #B3E5FC; padding: 4px; background: #0B1220;")
+        # M3: its text grows with the current layer/time state, so it must wrap
+        # (and never force the pane wider) on a narrow window instead of pushing
+        # a hard minimum width.
+        self.hud.setWordWrap(True)
+        self.hud.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout.addWidget(self.hud)
 
         self.view = SmoothGraphicsView()

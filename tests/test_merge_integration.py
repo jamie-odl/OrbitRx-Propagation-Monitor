@@ -211,3 +211,17 @@ def test_solar_flux_trend_word_shown_whenever_a_value_exists(tmp_path, monkeypat
     ctrl.state.flux = None
     ctrl.state.flux_trend = ""
     assert ctrl.weather_labels()["solar"] == "Solar Flux: n/a"
+
+
+def test_path_muf_label_has_no_unit_when_missing(tmp_path, monkeypatch): # S2
+    monkeypatch.chdir(tmp_path)
+    from orbitrx.ui.controller import OrbitRxController
+    ctrl = OrbitRxController()
+
+    ctrl.state.path_muf = None
+    ctrl.state.path_muf_label = None
+    assert ctrl.weather_labels()["path_muf"] == "Path MUF: n/a"
+
+    ctrl.state.path_muf = 21.4
+    ctrl.state.path_muf_label = None
+    assert ctrl.weather_labels()["path_muf"] == "Path MUF: 21.4 MHz"

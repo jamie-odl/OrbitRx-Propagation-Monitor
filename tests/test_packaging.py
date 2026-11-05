@@ -30,9 +30,9 @@ def test_pyinstaller_spec_references_icon_and_excludes_unused_qt_modules():
 
 def test_inno_setup_has_publisher_version_and_icon():
     text = (ROOT / "installer" / "OrbitRxMonitor.iss").read_text(encoding="utf-8")
-    assert "AppPublisher=Obsidian Dynamics (Jamie Sibley)" in text
+    assert "AppPublisher=Jamie Sibley" in text
     assert "VersionInfoVersion=" in text
-    assert "VersionInfoCompany=Obsidian Dynamics" in text
+    assert "VersionInfoCompany=Jamie Sibley" in text
     assert "VersionInfoProductName=OrbitRx Propagation Monitor" in text
     assert "SetupIconFile=..\\assets\\orbitrx.ico" in text
     assert "SignTool" not in text  # M12: no signing
@@ -74,7 +74,7 @@ def test_build_version_info_text_has_expected_fields_and_parses():
     text = build_version_info_text("5.1.0")
     tree = ast.parse(text, mode="exec")
     assert len(tree.body) == 1 and isinstance(tree.body[0], ast.Expr)
-    assert "u'CompanyName', u'Obsidian Dynamics (Jamie Sibley)'" in text
+    assert "u'CompanyName', u'Jamie Sibley'" in text
     assert "u'ProductName', u'OrbitRx Propagation Monitor'" in text
     assert "u'LegalCopyright', u'Copyright (C) 2026 Jamie Sibley'" in text
     assert "u'FileVersion', u'5.1.0.0'" in text
@@ -125,3 +125,23 @@ def test_write_version_info_reads_version_file(tmp_path):
     out = write_version_info(version_file, tmp_path / "file_version_info.txt")
     assert out.is_file()
     assert "filevers=(9, 2, 1, 0)" in out.read_text(encoding="utf-8")
+
+
+def test_publisher_is_jamie_sibley_everywhere_and_never_obsidian_dynamics():
+    """Jamie's decision (05 Nov 2026): the publisher is Jamie Sibley personally."""
+    root = Path(__file__).resolve().parents[1]
+    sources = {
+        "installer/OrbitRxMonitor.iss": ("AppPublisher=Jamie Sibley", "VersionInfoCompany=Jamie Sibley",
+                                         "AppCopyright=Copyright (C) 2026 Jamie Sibley"),
+        "tools/make_version_info.py": ('COMPANY_NAME = "Jamie Sibley"',
+                                       'LEGAL_COPYRIGHT = "Copyright (C) 2026 Jamie Sibley"'),
+        "orbitrx/ui/about.py": ("Copyright &copy; 2026 Jamie Sibley",),
+        "LICENSE": ("Copyright (C) 2026 Jamie Sibley",),
+        "NOTICE": ("Copyright (C) 2026 Jamie Sibley",),
+        "README.md": ("Copyright (C) 2026 Jamie Sibley", "unsigned", "SHA256SUMS"),
+    }
+    for rel, needles in sources.items():
+        text = (root / rel).read_text(encoding="utf-8")
+        assert "Obsidian Dynamics" not in text, rel
+        for needle in needles:
+            assert needle in text, (rel, needle)

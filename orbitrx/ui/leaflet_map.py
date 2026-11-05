@@ -5,11 +5,12 @@ import json
 from typing import Any
 
 try:
-    from PySide6.QtCore import QObject, Qt, QUrl, Signal, Slot
+    from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal, Slot
+    from PySide6.QtGui import QColor
     from PySide6.QtWebChannel import QWebChannel
     from PySide6.QtWebEngineCore import QWebEngineSettings
     from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+    from PySide6.QtWidgets import QLabel, QSizePolicy, QVBoxLayout, QWidget
     WEBENGINE_AVAILABLE = True
 except ImportError:
     WEBENGINE_AVAILABLE = False
@@ -20,7 +21,16 @@ from pathlib import Path
 from orbitrx.map_renderer import MapLayers, MapRenderer
 from orbitrx.paths import bundled_root
 from orbitrx.ui.formatting import format_hour_offset, format_map_hud_datetime
-from orbitrx.ui.theme import EMPTY_OVERLAY_STYLE
+from orbitrx.ui.theme import BG, EMPTY_OVERLAY_STYLE, TEXT
+
+# M5: shown over the map when the page fails to load, or loads but the tiles
+# never do (offline, or an unreachable tile server) -- never a blank white page.
+MAP_UNAVAILABLE_TEXT = "Map unavailable (offline?) · Switch to static map"
+MAP_UNAVAILABLE_STYLE = f"color: {TEXT}; background-color: {BG}; font-size: 14px; padding: 24px;"
+
+# How long to wait for Leaflet's tile layer to report its first successful tile
+# load before treating the map as unavailable (M5).
+TILE_LOAD_TIMEOUT_MS = 15_000
 
 
 def _assets_dir() -> Path:
@@ -46,10 +56,12 @@ _LEAFLET_HTML = """<!DOCTYPE html>
 let spotBridge = null;
 new QWebChannel(qt.webChannelTransport, ch => { spotBridge = ch.objects.spotBridge; });
 const map = L.map('map', {worldCopyJump: true, zoomControl: true}).setView([20, 0], 2);
-L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+const tileLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   maxZoom: 12, className: 'orbitrx-dark-tiles'
 }).addTo(map);
+tileLayer.on('load', () => { if (spotBridge) spotBridge.tilesLoaded(); });
+tileLayer.on('tileerror', () => { if (spotBridge) spotBridge.tileError(); });
 let userM=null, sunM=null, dxLayer=L.layerGroup().addTo(map), termLine=null, nightPane=[];
 function setPayload(p) {
   dxLayer.clearLayers();
@@ -128,6 +140,8 @@ if WEBENGINE_AVAILABLE:
     class _SpotBridge(QObject):
         spot_clicked = Signal(float)
         map_clicked = Signal(float, float)
+        tiles_loaded = Signal()
+        tile_error = Signal()
 
         @Slot(float)
         def spotClicked(self, freq: float) -> None:
@@ -136,6 +150,14 @@ if WEBENGINE_AVAILABLE:
         @Slot(float, float)
         def mapClicked(self, lat: float, lon: float) -> None:
             self.map_clicked.emit(float(lat), float(lon))
+
+        @Slot()
+        def tilesLoaded(self) -> None:
+            self.tiles_loaded.emit()
+
+        @Slot()
+        def tileError(self) -> None:
+            self.tile_error.emit()
 
     class LeafletMapWidget(QWidget):
         spot_clicked = Signal(float)
@@ -149,6 +171,10 @@ if WEBENGINE_AVAILABLE:
             layout.setContentsMargins(0, 0, 0, 0)
             self.hud = QLabel("Scroll to zoom · Click a spot to tune")
             self.hud.setObjectName("muted")
+            # M3: its text grows with the current time/offset state, so it must wrap
+            # (and never force the pane wider) on a narrow window.
+            self.hud.setWordWrap(True)
+            self.hud.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
             layout.addWidget(self.hud)
             self.web = QWebEngineView()
             # OSM tile policy asks apps to identify themselves.
@@ -157,10 +183,15 @@ if WEBENGINE_AVAILABLE:
                 f"OrbitRx/{__version__} (+https://github.com/jamie-odl/OrbitRx-Propagation-Monitor)"
             )
             self.web.settings().setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+            # M5: a dark page background instead of Qt's default white, so a slow or
+            # failed load never flashes blank white at any zoom/scale factor.
+            self.web.page().setBackgroundColor(QColor(BG))
             layout.addWidget(self.web, stretch=1)
             self._bridge = _SpotBridge()
             self._bridge.spot_clicked.connect(self.spot_clicked)
             self._bridge.map_clicked.connect(self._emit_map_click)
+            self._bridge.tiles_loaded.connect(self._on_tiles_loaded)
+            self._bridge.tile_error.connect(self._on_tile_error)
             channel = QWebChannel(self.web.page())
             channel.registerObject("spotBridge", self._bridge)
             self.web.page().setWebChannel(channel)
@@ -168,6 +199,13 @@ if WEBENGINE_AVAILABLE:
             self.web.setHtml(_leaflet_html(), QUrl.fromLocalFile(str(ASSETS_DIR) + "/"))
             self._ready = False
             self.web.loadFinished.connect(self._on_ready)
+
+            # M5: once the page itself loads, wait up to TILE_LOAD_TIMEOUT_MS for the
+            # first tile to actually come in before deciding the map is unavailable
+            # (e.g. offline, or the tile server is unreachable).
+            self._tile_timeout_timer = QTimer(self)
+            self._tile_timeout_timer.setSingleShot(True)
+            self._tile_timeout_timer.timeout.connect(self._on_tile_timeout)
 
             # S1: centred label shown over the map when live spots are on but the
             # current replay window has nothing to plot.
@@ -179,8 +217,40 @@ if WEBENGINE_AVAILABLE:
             self._empty_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
             self._empty_overlay.hide()
 
+            # M5: dark fallback overlay covering the whole map, shown instead of a
+            # blank/white page when the page fails to load or its tiles never arrive.
+            self._unavailable_overlay = QLabel(MAP_UNAVAILABLE_TEXT, self)
+            self._unavailable_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._unavailable_overlay.setWordWrap(True)
+            self._unavailable_overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            self._unavailable_overlay.setStyleSheet(MAP_UNAVAILABLE_STYLE)
+            self._unavailable_overlay.hide()
+
         def _on_ready(self, ok: bool) -> None:
             self._ready = ok
+            if not ok:
+                self._show_unavailable_overlay()
+            else:
+                self._tile_timeout_timer.start(TILE_LOAD_TIMEOUT_MS)
+
+        def _on_tiles_loaded(self) -> None:
+            self._tile_timeout_timer.stop()
+            self._hide_unavailable_overlay()
+
+        def _on_tile_error(self) -> None:
+            self._tile_timeout_timer.stop()
+            self._show_unavailable_overlay()
+
+        def _on_tile_timeout(self) -> None:
+            self._show_unavailable_overlay()
+
+        def _show_unavailable_overlay(self) -> None:
+            self._unavailable_overlay.setGeometry(0, 0, self.width(), self.height())
+            self._unavailable_overlay.show()
+            self._unavailable_overlay.raise_()
+
+        def _hide_unavailable_overlay(self) -> None:
+            self._unavailable_overlay.hide()
 
         def set_empty_overlay(self, text: str) -> None:
             self._empty_overlay.setText(text)
@@ -201,6 +271,8 @@ if WEBENGINE_AVAILABLE:
         def resizeEvent(self, event) -> None:
             super().resizeEvent(event)
             self._reposition_empty_overlay()
+            if self._unavailable_overlay.isVisible():
+                self._unavailable_overlay.setGeometry(0, 0, self.width(), self.height())
 
         def _emit_map_click(self, lat: float, lon: float) -> None:
             x, y = self.renderer.world_to_map(lat, lon)

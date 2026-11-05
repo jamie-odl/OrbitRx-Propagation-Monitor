@@ -150,23 +150,25 @@ def test_humanize_iso_dates_in_alert_text():  # S1
     assert "2026-11-04" not in out
 
 
-def _hourly(start: datetime.datetime, n: int) -> list[datetime.datetime]:
-    return [start + datetime.timedelta(hours=i) for i in range(n)]
+def _every(start: datetime.datetime, n: int, minutes: int) -> list[datetime.datetime]:
+    return [start + datetime.timedelta(minutes=minutes * i) for i in range(n)]
 
 
-def test_insert_gap_breaks_is_a_no_op_for_evenly_spaced_data(): # S3
-    times = _hourly(datetime.datetime(2026, 11, 4, 0, 0, tzinfo=datetime.timezone.utc), 5)
+def test_insert_gap_breaks_is_a_no_op_for_evenly_spaced_data(): # S3, M4
+    # 15 min cadence sits well under the default poll-based threshold (45 min,
+    # floored to 30 min), so evenly spaced real-world polling never breaks.
+    times = _every(datetime.datetime(2026, 11, 4, 0, 0, tzinfo=datetime.timezone.utc), 5, 15)
     values = [1.0, 2.0, 3.0, 4.0, 5.0]
     out_times, out_values = insert_gap_breaks(times, values)
     assert out_times == times
     assert out_values == values
 
 
-def test_insert_gap_breaks_inserts_nan_at_a_large_gap(): # S3
+def test_insert_gap_breaks_inserts_nan_at_a_large_gap(): # S3, M4
     import math
 
     start = datetime.datetime(2026, 11, 4, 0, 0, tzinfo=datetime.timezone.utc)
-    times = _hourly(start, 5) + [start + datetime.timedelta(hours=11)]  # one 6h gap
+    times = _every(start, 5, 15) + [start + datetime.timedelta(hours=3)]  # one ~2h15m gap
     values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
     out_times, out_values = insert_gap_breaks(times, values)
     assert len(out_times) == len(times) + 1
@@ -176,9 +178,37 @@ def test_insert_gap_breaks_inserts_nan_at_a_large_gap(): # S3
     assert times[4] < out_times[i] < times[5]
 
 
-def test_insert_gap_breaks_leaves_short_series_untouched(): # S3
+def test_insert_gap_breaks_leaves_short_series_untouched(): # S3, M4
     out_times, out_values = insert_gap_breaks([], [])
     assert out_times == [] and out_values == []
     t = [datetime.datetime(2026, 11, 4, 0, 0, tzinfo=datetime.timezone.utc)]
     out_times, out_values = insert_gap_breaks(t, [1.0])
     assert out_times == t and out_values == [1.0]
+
+
+def test_insert_gap_breaks_connects_everything_below_four_samples(): # M4
+    # Fewer than 4 samples: even a large gap must not break, there's not enough
+    # history yet to tell a real outage from ordinary poll jitter.
+    start = datetime.datetime(2026, 11, 4, 0, 0, tzinfo=datetime.timezone.utc)
+    times = [start, start + datetime.timedelta(hours=5)]
+    values = [1.0, 2.0]
+    out_times, out_values = insert_gap_breaks(times, values)
+    assert out_times == times
+    assert out_values == values
+
+
+def test_insert_gap_breaks_floors_at_thirty_minutes_for_a_tiny_poll_interval(): # M4
+    import math
+
+    start = datetime.datetime(2026, 11, 4, 0, 0, tzinfo=datetime.timezone.utc)
+    # poll_interval_s=60 -> 3x is only 3 min, so the 30 min floor applies: a 20 min
+    # gap stays connected, a 40 min gap breaks.
+    times = [start, start + datetime.timedelta(minutes=5), start + datetime.timedelta(minutes=10),
+             start + datetime.timedelta(minutes=15), start + datetime.timedelta(minutes=35),
+             start + datetime.timedelta(minutes=75)]
+    values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    out_times, out_values = insert_gap_breaks(times, values, poll_interval_s=60)
+    nan_idx = [i for i, v in enumerate(out_values) if math.isnan(v)]
+    assert len(nan_idx) == 1  # only the 40 min gap (minute 35 -> 75) breaks
+    i = nan_idx[0]
+    assert times[4] < out_times[i] < times[5]

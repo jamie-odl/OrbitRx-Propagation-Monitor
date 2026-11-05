@@ -57,7 +57,7 @@ def test_capture_hook_writes_fit_evidence(tmp_path, monkeypatch):
 
     line = fit_txt.read_text(encoding="utf-8").strip()
     parts = dict(p.split("=", 1) for p in line.split())
-    assert set(parts) == {"avail", "settings", "save_visible", "settings_frame_on_screen", "main", "main_frame_on_screen"}
+    assert set(parts) == {"avail", "settings", "save_visible", "settings_frame_on_screen", "main", "main_frame_on_screen", "main_hscroll", "about_frame_on_screen", "wizard_frame_on_screen"}
     for key in ("avail", "settings", "main"):
         w, h = parts[key].split("x")
         assert int(w) > 0 and int(h) > 0
@@ -74,3 +74,27 @@ def test_capture_hook_port_list_never_contains_simulated_rig(tmp_path, monkeypat
     run_release_capture_hook(out_dir)
     ports_text = (out_dir / "rig-wizard-release-ports.txt").read_text(encoding="utf-8")
     assert "Simulated" not in ports_text
+
+
+def test_capture_hook_default_has_no_simulated_rig_and_writes_about_and_wizard(tmp_path, monkeypatch):
+    monkeypatch.delenv("ORBITRX_TEST_SIMULATED_RIG", raising=False)
+    from orbitrx.ui.qt_app import run_release_capture_hook
+
+    out_dir = tmp_path / "shots"
+    assert run_release_capture_hook(out_dir) == 0
+    assert "Simulated" not in (out_dir / "rig-wizard-release-ports.txt").read_text(encoding="utf-8")
+    assert (out_dir / "about.png").is_file()
+    assert (out_dir / "rig-wizard.png").is_file()
+
+
+def test_capture_hook_negative_control_lists_simulated_rig(tmp_path, monkeypatch):
+    """S3: with the test-only switch on, the same hook must list the simulated rig,
+    which proves the CI gate (grep for 'Simulated') can actually fail."""
+    monkeypatch.setenv("ORBITRX_TEST_SIMULATED_RIG", "1")
+    from orbitrx.ui.qt_app import run_release_capture_hook
+
+    out_dir = tmp_path / "neg"
+    assert run_release_capture_hook(out_dir) == 0
+    ports = (out_dir / "rig-wizard-release-ports.txt").read_text(encoding="utf-8")
+    assert ports.strip()
+    assert "Simulated" in ports

@@ -68,7 +68,10 @@ def test_live_spots_layer_off_hides_overlay_even_when_empty(window):
     assert window.map_widget._empty_overlay.isVisible() is False
 
 
-def test_replay_offset_appends_hours_ago_to_overlay(window):
+def test_replay_offset_appends_hours_ago_to_overlay(window, monkeypatch):
+    # Isolate from the shared on-disk spots database: an empty replay window is the
+    # state under test, so real spots captured earlier must not leak in.
+    monkeypatch.setattr(window.ctrl.spots, "replay", lambda hours_back, window_minutes=30: [])
     window._layer_checks["spot_arcs"].setChecked(True)
     window.replay_slider.setValue(6)
     window._refresh_live_spots()

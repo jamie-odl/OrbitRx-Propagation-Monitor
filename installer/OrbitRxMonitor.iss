@@ -8,10 +8,10 @@ AppName=OrbitRx Propagation Monitor
 #endif
 AppVersion={#AppVer}
 AppVerName=OrbitRx Propagation Monitor {#AppVer}
-AppPublisher=Obsidian Dynamics (Jamie Sibley)
+AppPublisher=Jamie Sibley
 AppCopyright=Copyright (C) 2026 Jamie Sibley
 VersionInfoVersion={#AppVer}.0
-VersionInfoCompany=Obsidian Dynamics
+VersionInfoCompany=Jamie Sibley
 VersionInfoProductName=OrbitRx Propagation Monitor
 LicenseFile=..\LICENSE
 OutputDir=..\dist

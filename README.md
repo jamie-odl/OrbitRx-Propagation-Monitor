@@ -35,8 +35,10 @@ reports on one map, so you can see what is open and who is hearing whom.
 ## Install
 
 **Windows:** download `OrbitRxMonitor.exe` (or the installer) from the project's Releases
-page once 5.1.0 is published. The build is not yet code-signed, so Windows SmartScreen
-may warn on first run; choose "More info" then "Run anyway".
+page once 5.1.0 is published. Releases are unsigned: verify each download against
+`SHA256SUMS.txt` (for example `Get-FileHash OrbitRxMonitor.exe -Algorithm SHA256` in
+PowerShell) before running it. Windows SmartScreen may warn on first run; choose
+"More info" then "Run anyway".
 
 **From source (any OS, Python 3.11 or newer):**
 
@@ -112,4 +114,4 @@ https://www.buymeacoffee.com/TODO-placeholder (placeholder link, not live yet).
 
 ## Licence
 
-MIT, copyright (c) 2026 Jamie Sibley. See [LICENSE](LICENSE).
+MIT, Copyright (C) 2026 Jamie Sibley. See [LICENSE](LICENSE).

@@ -319,7 +319,7 @@ class OrbitRxController:
         a_txt = format_value(s.a_index, fmt="{:g}")
         if a_src:
             a_txt = f"{a_txt} ({a_src})"
-        path_muf_txt = f"Path MUF: {format_value(s.path_muf)} MHz"
+        path_muf_txt = f"Path MUF: {format_value(s.path_muf, unit=' MHz' if s.path_muf is not None else '')}"
         if s.path_muf_label:
             path_muf_txt += f" → {s.path_muf_label}"
         # S7: a trend word is shown whenever a flux value exists, "steady" when there is

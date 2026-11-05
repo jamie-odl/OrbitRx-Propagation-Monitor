@@ -14,6 +14,24 @@ pytest.importorskip("PySide6.QtWidgets")
 SMALL_AVAIL = (0, 0, 683, 485)
 
 
+def _visible_horizontal_scrollbars(widget) -> list[str]:
+    """Names of any QScrollArea under `widget` currently showing a horizontal
+    scrollbar (M3: none ever should, at window level)."""
+    from PySide6.QtWidgets import QScrollArea
+
+    offenders = []
+    for area in widget.findChildren(QScrollArea):
+        bar = area.horizontalScrollBar()
+        if bar is not None and bar.isVisible():
+            offenders.append(area.objectName() or area.__class__.__name__)
+    return offenders
+
+
+def _not_clipped_horizontally(control, window) -> bool:
+    top_left = control.mapTo(window, control.rect().topLeft())
+    return 0 <= top_left.x() and top_left.x() + control.width() <= window.width()
+
+
 @pytest.fixture
 def small_avail(monkeypatch):
     from PySide6.QtCore import QRect
@@ -96,16 +114,105 @@ def test_about_dialog_fits_small_available_geometry(window, small_avail):
     assert dlg.height() <= small_avail.height()
 
 
+@pytest.fixture
+def avail_667x441(monkeypatch):
+    from PySide6.QtCore import QRect
+    import orbitrx.ui.window_fit as window_fit
+
+    rect = QRect(0, 0, 667, 441)
+    monkeypatch.setattr(window_fit, "_available_geometry", lambda widget: rect)
+    return rect
+
+
+def test_settings_dialog_no_horizontal_scrollbar_at_667x441(window, avail_667x441): # S1
+    from PySide6.QtCore import Qt
+    from orbitrx.ui.qt_app import QtOrbitRxApplication
+
+    win = QtOrbitRxApplication()
+    dlg = win._build_settings_dialog()
+    assert dlg.scroll.horizontalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+
+    win.ctrl.stop()
+    win.deleteLater()
+    window.processEvents()
+
+
+def test_settings_helper_labels_word_wrap_at_667x441(window, avail_667x441): # S1
+    from PySide6.QtWidgets import QLabel
+    from orbitrx.ui.qt_app import QtOrbitRxApplication
+
+    win = QtOrbitRxApplication()
+    dlg = win._build_settings_dialog()
+    helper_labels = [
+        lbl for lbl in dlg.findChildren(QLabel)
+        if lbl.objectName() == "muted" and lbl.text().strip()
+    ]
+    assert helper_labels
+    assert all(lbl.wordWrap() for lbl in helper_labels)
+
+    win.ctrl.stop()
+    win.deleteLater()
+    window.processEvents()
+
+
+def test_settings_save_visible_at_667x441(window, avail_667x441): # S1
+    from orbitrx.ui.qt_app import QtOrbitRxApplication, _save_button_fully_visible
+
+    win = QtOrbitRxApplication()
+    dlg = win._build_settings_dialog()
+    assert _save_button_fully_visible(dlg)
+
+    win.ctrl.stop()
+    win.deleteLater()
+    window.processEvents()
+
+
 def test_main_window_content_scrolls_instead_of_overflowing(window):
-    """M3 (V7): the main window's content sits in a scroll area, so a content
-    minimum larger than a small screen scrolls rather than running off-screen."""
+    """M3: the outer window-level scroll area is gone. The map and side panel
+    each reflow and scroll vertically on their own instead, so there is never a
+    horizontal scrollbar anywhere in the main window."""
     from PySide6.QtWidgets import QScrollArea
     from orbitrx.ui.qt_app import QtOrbitRxApplication
 
     win = QtOrbitRxApplication()
-    central = win.centralWidget()
-    assert isinstance(central, QScrollArea)
-    assert central.objectName() == "centralScroll"
-    assert central.widgetResizable()
+    win.show()
+    window.processEvents()
+    assert not isinstance(win.centralWidget(), QScrollArea)
+    assert win.findChild(QScrollArea, "centralScroll") is None
+    assert _visible_horizontal_scrollbars(win) == []
     win.ctrl.stop()
     win.close()
+
+
+@pytest.mark.parametrize("width,height,expect_compact", [(1008, 681, False), (667, 441, True)])
+def test_main_window_reflows_at_small_sizes(window, width, height, expect_compact): # M3
+    from orbitrx.ui.qt_app import QtOrbitRxApplication
+
+    win = QtOrbitRxApplication()
+    win.show()
+    win.resize(width, height)
+    window.processEvents()
+
+    assert win._compact is expect_compact
+    assert _visible_horizontal_scrollbars(win) == []
+
+    map_controls = [win.time_slider, win.replay_slider, *win._layer_checks.values()]
+    if win._compact:
+        win._compact_tabs.setCurrentWidget(win._map_scroll)
+        window.processEvents()
+    for control in map_controls:
+        assert control.width() > 0
+        assert _not_clipped_horizontally(control, win)
+
+    buttons_by_text = {b.text(): b for b in win._action_buttons_grid._widgets}
+    side_controls = [buttons_by_text["Settings"], buttons_by_text["Rig"], buttons_by_text["About"]]
+    if win._compact:
+        win._compact_tabs.setCurrentWidget(win._side_pane)
+        window.processEvents()
+    for control in side_controls:
+        assert control.width() > 0
+        assert _not_clipped_horizontally(control, win)
+
+    win.ctrl.stop()
+    win.deleteLater()
+    window.processEvents()

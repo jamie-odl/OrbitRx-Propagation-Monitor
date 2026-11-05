@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 HISTORY_SAMPLE_48H = Path(__file__).resolve().parent / "data" / "history_sample_48h.json"
+HISTORY_IRREGULAR = Path(__file__).resolve().parent / "data" / "history_irregular_real_like.json"
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
@@ -302,6 +303,40 @@ def test_48h_sample_tick_labels_do_not_overlap(window, monkeypatch):  # M4
     assert len(boxes) >= 2
     for a, b in zip(boxes, boxes[1:]):
         assert a.x1 <= b.x0, f"x tick labels overlap: {[(t.get_text()) for t in ax.get_xticklabels()]} {[(round(x.x0),round(x.x1)) for x in boxes]} fig={canvas.figure.get_size_inches()} dpi={canvas.figure.dpi}"
+
+
+def test_irregular_real_like_fixture_connects_jitter_and_breaks_only_the_outage(window, monkeypatch): # M4
+    """R1 regression: real, jittered polling (13-17 min, two single missed polls)
+    must render as connected lines, breaking only across the one real 2h outage."""
+    import math
+
+    data = json.loads(HISTORY_IRREGULAR.read_text())
+    rows = data["rows"]
+    assert len(rows) > 4
+    monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    window.tabs.setCurrentIndex(1)
+    window._refresh_plot_tab()
+    canvas = window.plot_container.itemAt(0).widget()
+    kp_ax, sfi_ax = canvas.figure.get_axes()
+    kp_line = kp_ax.get_lines()[0]
+    ydata = list(kp_line.get_ydata())
+    nan_idx = [i for i, v in enumerate(ydata) if math.isnan(v)]
+    assert len(nan_idx) == 1, "only the 2h outage should break the line, not ordinary poll jitter"
+    # Every real sample is still drawn (as a point, even where isolated by the break).
+    finite = [v for v in ydata if not math.isnan(v)]
+    assert len(finite) == len(rows)
+    assert kp_line.get_linestyle() == "-"
+
+
+def test_history_plot_markers_are_visible_for_isolated_points(window, monkeypatch): # M4
+    data = json.loads(HISTORY_IRREGULAR.read_text())
+    monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: data["rows"])
+    window.tabs.setCurrentIndex(1)
+    window._refresh_plot_tab()
+    canvas = window.plot_container.itemAt(0).widget()
+    kp_ax, sfi_ax = canvas.figure.get_axes()
+    assert kp_ax.get_lines()[0].get_markersize() == 7
+    assert sfi_ax.get_lines()[0].get_markersize() == 7
 
 
 def test_two_readings_seconds_apart_show_not_enough_data(window, monkeypatch):  # S2

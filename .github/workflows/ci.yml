@@ -133,10 +133,26 @@ jobs:
 
           Invoke-ReleaseCapture "release-shots\100" $null
           Invoke-ReleaseCapture "release-shots\150" "1.5"
+          # Negative control: the same release exe WITH the test-only switch must list the
+          # simulated rig, proving the gate below can actually see one.
+          New-Item -ItemType Directory -Force -Path release-shots\negative-control | Out-Null
+          $env:ORBITRX_TEST_SIMULATED_RIG = "1"
+          $env:ORBITRX_CAPTURE_DIR = (Resolve-Path release-shots\negative-control).Path
+          $proc = Start-Process -FilePath $exe -PassThru
+          if (-not $proc.WaitForExit(120000)) { Stop-Process -Id $proc.Id -Force; throw "negative control did not exit" }
+          Remove-Item Env:ORBITRX_TEST_SIMULATED_RIG -ErrorAction SilentlyContinue
           Remove-Item Env:ORBITRX_CAPTURE_DIR, Env:QT_SCALE_FACTOR -ErrorAction SilentlyContinue
       - name: Fail if the simulated rig leaked into the release build
         shell: pwsh
         run: |
+          foreach ($f in 'release-shots\100\rig-wizard-release-ports.txt', 'release-shots\150\rig-wizard-release-ports.txt', 'release-shots\negative-control\rig-wizard-release-ports.txt') {
+            if (-not (Test-Path $f) -or ((Get-Content $f -Raw).Trim().Length -eq 0)) { throw "Port list $f is missing or empty" }
+          }
+          $neg = Get-Content release-shots\negative-control\rig-wizard-release-ports.txt -Raw
+          Write-Host "Negative control (ORBITRX_TEST_SIMULATED_RIG=1) port list:"
+          Write-Host $neg
+          if ($neg -notmatch "Simulated") { throw "Negative control did not list the simulated rig, so the gate cannot be trusted" }
+          Write-Host "NEGATIVE-CONTROL: PASS (gate detects 'Simulated' when the test switch is on)"
           $ports = Get-Content release-shots\100\rig-wizard-release-ports.txt, release-shots\150\rig-wizard-release-ports.txt -Raw
           Write-Host "Release exe port list (100% and 150%):"
           Write-Host $ports
@@ -155,7 +171,24 @@ jobs:
             Write-Host "$d : $fit"
             if ($fit -notmatch 'save_visible=True') { throw "Save button not visible in $d" }
             if ($fit -notmatch 'settings_frame_on_screen=True' -or $fit -notmatch 'main_frame_on_screen=True') { throw "A window runs off the screen in $d" }
+            if ($fit -notmatch 'main_hscroll=False') { throw "Main window shows a horizontal scrollbar in $d" }
+            if ($fit -notmatch 'about_frame_on_screen=True' -or $fit -notmatch 'wizard_frame_on_screen=True') { throw "About or rig wizard runs off the screen in $d" }
           }
+          Write-Host "FIT-GATE: PASS (Save visible; Settings, main window, About and rig wizard fully on screen; no main-window horizontal scrollbar)"
+      - name: Publisher check (Jamie Sibley, never Obsidian Dynamics)
+        shell: pwsh
+        run: |
+          foreach ($f in 'dist\OrbitRxMonitor.exe', 'dist\OrbitRxMonitor-Setup.exe') {
+            $v = (Get-Item $f).VersionInfo
+            Write-Host "$f : CompanyName='$($v.CompanyName)' LegalCopyright='$($v.LegalCopyright)'"
+            if ("$($v.CompanyName) $($v.LegalCopyright)" -match 'Obsidian') { throw "Obsidian Dynamics found in $f version info" }
+            if ($v.CompanyName -ne 'Jamie Sibley') { throw "Unexpected CompanyName in $f" }
+          }
+          Write-Host "PUBLISHER-CHECK: PASS"
+      - name: Scan the bundled PYZ for the simulated-rig gate
+        shell: pwsh
+        run: |
+          python tools/scan_pyz.py dist\OrbitRxMonitor.exe release-shots\pyz-scan.txt
       - name: Measure DX cluster field edges
         shell: pwsh
         run: |

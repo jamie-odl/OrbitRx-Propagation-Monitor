@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-COMPANY_NAME = "Obsidian Dynamics (Jamie Sibley)"
+COMPANY_NAME = "Jamie Sibley"
 PRODUCT_NAME = "OrbitRx Propagation Monitor"
 LEGAL_COPYRIGHT = "Copyright (C) 2026 Jamie Sibley"
 ORIGINAL_FILENAME = "OrbitRxMonitor.exe"

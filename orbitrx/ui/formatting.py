@@ -9,6 +9,15 @@ import datetime
 
 NONE_TEXT = "n/a"
 
+# M4: fallback "expected weather poll interval" used by insert_gap_breaks when the
+# caller has no better estimate (e.g. no config available). Mirrors a plausible
+# real-world space-weather refresh cadence.
+EXPECTED_POLL_S = 15 * 60
+
+# M4: floor below which a gap is never considered a break, regardless of how
+# short the expected poll interval is.
+MIN_GAP_BREAK_S = 30 * 60
+
 # Internal/raw source identifiers -> human-readable labels (M7: no leaking
 # internal identifiers like "a_running" into the UI).
 NOAA_SOURCE_LABELS: dict[str, str] = {
@@ -132,27 +141,26 @@ def humanize_iso_dates(text: str) -> str:
 
 
 def insert_gap_breaks(
-    times: list[datetime.datetime], values: list[float], threshold_multiplier: float = 3.0
+    times: list[datetime.datetime],
+    values: list[float],
+    poll_interval_s: float = EXPECTED_POLL_S,
+    min_gap_s: float = MIN_GAP_BREAK_S,
 ) -> tuple[list[datetime.datetime], list[float]]:
     """Insert a NaN point at the midpoint of any gap between consecutive `times` that
-    exceeds threshold_multiplier times the median interval, so a matplotlib line
-    plotted through the result breaks instead of jumping across the gap (S3).
+    exceeds max(3 * poll_interval_s, min_gap_s), so a matplotlib line plotted through
+    the result breaks only across a real outage, not across ordinary poll jitter (M4).
+
+    With fewer than 4 samples there isn't enough history to tell a real outage from
+    jitter, so everything is connected.
     """
-    if len(times) < 2:
+    if len(times) < 4:
         return list(times), list(values)
-    intervals = [(times[i + 1] - times[i]).total_seconds() for i in range(len(times) - 1)]
-    sorted_intervals = sorted(intervals)
-    mid = len(sorted_intervals) // 2
-    median = (
-        sorted_intervals[mid]
-        if len(sorted_intervals) % 2
-        else (sorted_intervals[mid - 1] + sorted_intervals[mid]) / 2
-    )
-    threshold = median * threshold_multiplier
+    threshold = max(3 * poll_interval_s, min_gap_s)
     out_times = [times[0]]
     out_values = [values[0]]
     for i in range(1, len(times)):
-        if median > 0 and intervals[i - 1] > threshold:
+        gap = (times[i] - times[i - 1]).total_seconds()
+        if gap > threshold:
             out_times.append(times[i - 1] + (times[i] - times[i - 1]) / 2)
             out_values.append(float("nan"))
         out_times.append(times[i])
