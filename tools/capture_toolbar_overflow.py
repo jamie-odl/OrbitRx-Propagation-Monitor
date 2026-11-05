@@ -25,9 +25,9 @@ def main(out_dir: Path) -> int:
 
     app = QApplication.instance() or QApplication(sys.argv)
 
-    # Work in a temp config dir next to out
-    work = out_dir / "_overflow_work"
-    work.mkdir(exist_ok=True)
+    # Work in a private temp dir (never pollute the screens output folder).
+    import tempfile
+    work = Path(tempfile.mkdtemp(prefix="orbitrx-overflow-"))
     os.chdir(work)
     (work / "config.json").write_text(
         '{"map_backend":"static","check_updates_on_launch":false,'
