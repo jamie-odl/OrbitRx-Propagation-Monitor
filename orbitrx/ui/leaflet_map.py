@@ -86,7 +86,7 @@ new QWebChannel(qt.webChannelTransport, ch => {
   if (tilesOk) spotBridge.tilesLoaded(); else if (tilesFailed) spotBridge.tileError();
 });
 const map = L.map('map', {worldCopyJump: true, zoomControl: true, minZoom: 1, maxZoom: 6}).setView([20, 0], 2);
-// V11 must-fix 1: offline-first dark equirectangular basemap — never Carto watermarks.
+// V11 must-fix 1: offline-first dark equirectangular basemap - never Carto watermarks.
 const basemap = L.imageOverlay('__BASEMAP_URL__', [[-90, -180], [90, 180]], {
   opacity: 1, interactive: false, zIndex: 0
 }).addTo(map);
@@ -334,12 +334,8 @@ if WEBENGINE_AVAILABLE:
             self._hide_unavailable_overlay()
             self._ready = False
             self._tiles_ok = False
-            from orbitrx.paths import ensure_map_image
-            from PySide6.QtCore import QUrl as _QUrl
-            basemap_path = ensure_map_image()
-            basemap_url = _QUrl.fromLocalFile(str(basemap_path.resolve())).toString()
-            base = basemap_path.resolve().parent
-            self.web.setHtml(_leaflet_html(basemap_url), _QUrl.fromLocalFile(str(base) + "/"))
+            # reload() re-renders the setHtml document (file:// basemap URL intact).
+            self.web.reload()
 
         def _on_ready(self, ok: bool) -> None:
             self._ready = ok

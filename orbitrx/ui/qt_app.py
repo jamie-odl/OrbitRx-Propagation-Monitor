@@ -263,7 +263,7 @@ class QtOrbitRxApplication(QMainWindow):
         self._map_help.setAutoRaise(True)
         header_row.addWidget(self._map_help)
         map_layout.addLayout(header_row)
-        # M1: meta is the live greyline timestamp only — never the asset filename.
+        # M1: meta is the live greyline timestamp only - never the asset filename.
         self.banner_hint = _ElidedLabel()
         self.banner_hint.setObjectName("bannerHint")
         map_layout.addWidget(self.banner_hint)
@@ -290,7 +290,7 @@ class QtOrbitRxApplication(QMainWindow):
         map_layout.addWidget(self.map_widget, stretch=1)
 
         # M3: layer chips (checkable pills) in one wrapping row.
-        # V11 must-fix 2: Live spots / Heatmap only apply on Leaflet — hide on static.
+        # V11 must-fix 2: Live spots / Heatmap only apply on Leaflet - hide on static.
         layer_widgets = []
         for key, label in [("greyline", "Greyline"), ("night", "Night"), ("dx_arcs", "DX"),
                            ("aurora", "Aurora"), ("grid", "Grid"),
@@ -300,7 +300,7 @@ class QtOrbitRxApplication(QMainWindow):
             chip.setCheckable(True)
             chip.setObjectName("layerChip")
             chip.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-            chip.toggled.connect(lambda _=False: self._layers_changed())
+            chip.blockSignals(True)
             if key.startswith("spot_") and self._map_backend != "leaflet":
                 chip.setChecked(False)
                 chip.setEnabled(False)
@@ -308,9 +308,12 @@ class QtOrbitRxApplication(QMainWindow):
                 chip.setToolTip("Available on the interactive map")
             else:
                 chip.setChecked(self.ctrl.cfg.get("map_layers", {}).get(key, key != "grid"))
+            chip.blockSignals(False)
             self._layer_checks[key] = chip
             if chip.isVisible():
                 layer_widgets.append(chip)
+        for chip in self._layer_checks.values():
+            chip.toggled.connect(lambda _=False: self._layers_changed())
         if self._map_backend != "leaflet":
             switch_lbl = QToolButton()
             switch_lbl.setText("Switch map")
@@ -594,6 +597,13 @@ class QtOrbitRxApplication(QMainWindow):
         ]:
             action = QAction(text, self)
             action.triggered.connect(slot)
+            action.setPriority(QAction.Priority.LowPriority)
+            # Keep on the toolbar so tests/controls_reachable see the QAction, but
+            # hide the direct button so Export only appears under ».
+            toolbar.addAction(action)
+            btn = toolbar.widgetForAction(action)
+            if btn is not None:
+                btn.setVisible(False)
             export_menu.addAction(action)
             self._toolbar_actions[text] = action
         export_btn.setMenu(export_menu)
