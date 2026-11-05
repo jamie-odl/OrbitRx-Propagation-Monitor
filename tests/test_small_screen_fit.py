@@ -100,8 +100,12 @@ def test_main_window_content_scrolls_instead_of_overflowing(window):
     """M3 (V7): the main window's content sits in a scroll area, so a content
     minimum larger than a small screen scrolls rather than running off-screen."""
     from PySide6.QtWidgets import QScrollArea
+    from orbitrx.ui.qt_app import QtOrbitRxApplication
 
-    central = window.centralWidget()
+    win = QtOrbitRxApplication()
+    central = win.centralWidget()
     assert isinstance(central, QScrollArea)
     assert central.objectName() == "centralScroll"
     assert central.widgetResizable()
+    win.ctrl.stop()
+    win.close()
