@@ -182,7 +182,7 @@ jobs:
             $v = (Get-Item $f).VersionInfo
             Write-Host "$f : CompanyName='$($v.CompanyName)' LegalCopyright='$($v.LegalCopyright)'"
             if ("$($v.CompanyName) $($v.LegalCopyright)" -match 'Obsidian') { throw "Obsidian Dynamics found in $f version info" }
-            if ($v.CompanyName -ne 'Jamie Sibley') { throw "Unexpected CompanyName in $f" }
+            if ("$($v.CompanyName)".Trim() -ne 'Jamie Sibley') { throw "Unexpected CompanyName in $f" }
           }
           Write-Host "PUBLISHER-CHECK: PASS"
       - name: PE check (security directory 0/0, publisher strings)
