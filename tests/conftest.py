@@ -32,4 +32,11 @@ def pytest_unconfigure(config):
     import sys
     sys.stdout.flush()
     sys.stderr.flush()
+    if sys.platform == "win32":
+        # Windows' C runtime _exit runs DLL detach handlers, which triggers
+        # the same QtWebEngine shutdown crash; TerminateProcess does not.
+        import ctypes
+        ctypes.windll.kernel32.TerminateProcess(
+            ctypes.windll.kernel32.GetCurrentProcess(), _exit_status,
+        )
     os._exit(_exit_status)
