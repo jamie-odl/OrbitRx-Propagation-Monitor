@@ -40,6 +40,35 @@ MAP_UNAVAILABLE_STYLE = (
 )
 MAP_UNAVAILABLE_HINT_STYLE = f"color: {MUTED}; font-size: 12px;"
 
+
+class _MapOffMark(QWidget):
+    """V12 tune 3: branded map-off mark (not a stock broken-file glyph)."""
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        from PySide6.QtGui import QPainter, QColor, QPen, QPainterPath
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w, h = self.width(), self.height()
+        # Soft plate
+        p.setBrush(QColor(17, 28, 48))
+        p.setPen(QPen(QColor(ACCENT), 1.5))
+        p.drawRoundedRect(1, 1, w - 2, h - 2, 8, 8)
+        # Mini globe meridian/parallel
+        cx, cy, r = w / 2, h / 2, min(w, h) * 0.28
+        p.setBrush(QColor(0, 0, 0, 0))
+        p.setPen(QPen(QColor(TEXT_MUTED), 1.4))
+        p.drawEllipse(int(cx - r), int(cy - r), int(2 * r), int(2 * r))
+        p.drawLine(int(cx), int(cy - r), int(cx), int(cy + r))
+        p.drawArc(int(cx - r * 0.55), int(cy - r), int(r * 1.1), int(2 * r), 0, 180 * 16)
+        p.drawArc(int(cx - r * 0.55), int(cy - r), int(r * 1.1), int(2 * r), 180 * 16, 180 * 16)
+        # Slash = offline
+        pen = QPen(QColor(ACCENT), 2.2)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        p.drawLine(int(cx - r * 0.85), int(cy + r * 0.85), int(cx + r * 0.85), int(cy - r * 0.85))
+        p.end()
+
+
 # M3: how long to wait for Leaflet's tile layer to report its first successful
 # tile load before treating the map as unavailable.
 TILE_LOAD_TIMEOUT_MS = 8_000
@@ -118,7 +147,7 @@ function setPayload(p) {
     }
   }
   if (p.layers.greyline && p.terminator.length > 1) {
-    termLine = L.polyline(p.terminator, {color:'#FF8A4C', weight:2, opacity:0.95}).addTo(map);
+    termLine = L.polyline(p.terminator, {color:'#FF8A4C', weight:2, opacity:0.82}).addTo(map);
   }
   if (p.user) {
     if (!userM) userM = L.circleMarker(p.user, {radius:5, color:'#3DDC97', fillColor:'#3DDC97', fillOpacity:1, weight:3, opacity:0.45}).addTo(map).bindPopup('You');
@@ -130,7 +159,7 @@ function setPayload(p) {
   }
   (p.spots||[]).forEach(s => {
     if (p.layers.dx_arcs && s.from_ll && s.to_ll) {
-      L.polyline([s.from_ll, s.to_ll], {color:'rgba(120,180,255,0.55)', weight:1.25}).addTo(dxLayer);
+      L.polyline([s.from_ll, s.to_ll], {color:'rgba(120,180,255,0.40)', weight:1.0}).addTo(dxLayer);
     }
     if (s.from_ll) L.circleMarker(s.from_ll, {radius:5, color:'#fff', fillColor:'#FF9800', fillOpacity:1}).addTo(dxLayer);
     if (s.to_ll) {
@@ -150,7 +179,7 @@ function setLiveSpots(p) {
     const zoomScale = Math.pow(0.72, Math.max(0, map.getZoom() - 2));
     const heats = (p.heat||[]).slice(0, 40);
     heats.forEach(c => {
-      L.circle([c[0], c[1]], {radius: 280000 * zoomScale, stroke:false, fillColor:'#F07178', fillOpacity: 0.28}).addTo(liveHeat);
+      L.circle([c[0], c[1]], {radius: 160000 * zoomScale, stroke:false, fillColor:'#F07178', fillOpacity: 0.28}).addTo(liveHeat);
     });
   }
   if (p.arcs) {
@@ -158,7 +187,7 @@ function setLiveSpots(p) {
     spots.forEach(s => {
       let opacity = (typeof s.opacity === 'number') ? s.opacity : 0.9;
       if (typeof s.age_min === 'number' && s.age_min > 15) opacity = Math.min(opacity, 0.35);
-      L.polyline([s.tx, s.rx], {color:'rgba(120,180,255,0.55)', weight:1.25, opacity: opacity}).bindTooltip(s.label).addTo(liveArcs);
+      L.polyline([s.tx, s.rx], {color:'rgba(120,180,255,0.40)', weight:1.0, opacity: opacity}).bindTooltip(s.label).addTo(liveArcs);
       L.circleMarker(s.tx, {radius:3, color:'#78B4FF', fillOpacity:1, opacity: opacity}).addTo(liveArcs);
     });
   }
@@ -298,10 +327,13 @@ if WEBENGINE_AVAILABLE:
             card.setStyleSheet(MAP_UNAVAILABLE_STYLE)
             card_layout = QVBoxLayout(card)
 
-            icon = QLabel("⌖")  # map-off glyph stand-in (32px feel)
-            icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            icon.setStyleSheet(f"font-size: 32px; color: {TEXT_MUTED}; background: transparent;")
-            card_layout.addWidget(icon)
+            icon = _MapOffMark()
+            icon.setFixedSize(40, 40)
+            wrap = QHBoxLayout()
+            wrap.addStretch(1)
+            wrap.addWidget(icon)
+            wrap.addStretch(1)
+            card_layout.addLayout(wrap)
 
             self._unavailable_message = QLabel(MAP_UNAVAILABLE_TEXT)
             self._unavailable_message.setWordWrap(True)

@@ -220,15 +220,14 @@ class PropagationMapWidget(QWidget):
             for px, py in scene.terminator[1:]:
                 path.lineTo(px, py)
             greyline = QGraphicsPathItem(path)
-            # P3: cosmetic so the stroke stays 2 logical px at every zoom level,
-            # instead of scaling with the map like a baked-in raster line would.
-            # M1: 2.0 logical-px greyline + soft outer glow.
-            glow = QGraphicsPathItem(QPainterPath(path))
-            gpen = QPen(QColor(255, 138, 76, 64), 8)
-            gpen.setCosmetic(True)
-            glow.setPen(gpen)
-            self._add_to_vectors(glow)
-            pen = QPen(QColor(GREYLINE), 2)
+            # P3/V12: cosmetic ~2 logical-px terminator; hairline outer only
+            # (no thick 8px glow — Founder eyes read that as amateur weight).
+            hair = QGraphicsPathItem(QPainterPath(path))
+            hpen = QPen(QColor(255, 138, 76, 48), 3)
+            hpen.setCosmetic(True)
+            hair.setPen(hpen)
+            self._add_to_vectors(hair)
+            pen = QPen(QColor(GREYLINE), 2.0)
             pen.setCosmetic(True)
             greyline.setPen(pen)
             self._add_to_vectors(greyline)

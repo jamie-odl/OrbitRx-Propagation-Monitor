@@ -116,8 +116,17 @@ class _ReflowGrid(QWidget):
         self._relayout(self._columns_for_width(len(widgets) * min_item_width))
 
     def _columns_for_width(self, width: int) -> int:
-        cols = max(self._min_cols, min(self._max_cols, width // self._min_item_width))
-        return max(1, min(len(self._widgets) or 1, cols))
+        n = len(self._widgets) or 1
+        fit = max(self._min_cols, min(self._max_cols, width // self._min_item_width))
+        cols = max(1, min(n, fit))
+        # V12 tune 2: avoid an orphan last-row chip (e.g. Heatmap alone under Greyline).
+        if cols < n:
+            while cols > self._min_cols:
+                rem = n % cols
+                if rem == 0 or rem >= (cols + 1) // 2:
+                    break
+                cols -= 1
+        return cols
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -294,7 +303,7 @@ class QtOrbitRxApplication(QMainWindow):
         layer_widgets = []
         for key, label in [("greyline", "Greyline"), ("night", "Night"), ("dx_arcs", "DX"),
                            ("aurora", "Aurora"), ("grid", "Grid"),
-                           ("spot_arcs", "Live spots"), ("spot_heatmap", "Heatmap")]:
+                           ("spot_arcs", "Live"), ("spot_heatmap", "Heat")]:
             chip = QToolButton()
             chip.setText(label)
             chip.setCheckable(True)
@@ -325,7 +334,7 @@ class QtOrbitRxApplication(QMainWindow):
             switch_lbl.setToolTip("Live spots need the interactive map. Switch in Settings > Map & spots.")
             switch_lbl.clicked.connect(lambda: self._settings(initial_page="Map & spots"))
             layer_widgets.append(switch_lbl)
-        self._layer_grid = _ReflowGrid(layer_widgets, min_item_width=96, max_cols=8)
+        self._layer_grid = _ReflowGrid(layer_widgets, min_item_width=72, max_cols=8)
         self._layer_grid.setMinimumHeight(36)
         self._layer_grid.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         # V11 must-fix 3: chips live under the map pane (not inside it) so 150%
