@@ -45,7 +45,7 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QScrollArea, QSlider,
-    QSpinBox, QSplitter, QStackedWidget, QTabWidget, QToolBar, QVBoxLayout, QWidget, QFileDialog,
+    QSpinBox, QSplitter, QStackedWidget, QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget, QFileDialog,
     QSystemTrayIcon, QMenu,
 )
 
@@ -279,14 +279,19 @@ class QtOrbitRxApplication(QMainWindow):
             cb.stateChanged.connect(self._layers_changed)
             if key.startswith("spot_") and self._map_backend != "leaflet":
                 cb.setEnabled(False)
-                cb.setToolTip("Live spots need the interactive map. Switch in Settings > Map & spots.")
+                # P5: disabled toggles explain themselves on hover.
+                cb.setToolTip("Available on the interactive map")
             self._layer_checks[key] = cb
             layer_widgets.append(cb)
         if self._map_backend != "leaflet":
-            switch_lbl = QLabel('<a href="#">Switch map</a>')
-            switch_lbl.setObjectName("muted")
+            # P5: a small text button styled like the toolbar, not a link.
+            switch_lbl = QToolButton()
+            switch_lbl.setText("Switch map")
+            switch_lbl.setObjectName("switchMapButton")
+            switch_lbl.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            switch_lbl.setAutoRaise(True)
             switch_lbl.setToolTip("Live spots need the interactive map. Switch in Settings > Map & spots.")
-            switch_lbl.linkActivated.connect(lambda _: self._settings(initial_page="Map & spots"))
+            switch_lbl.clicked.connect(lambda: self._settings(initial_page="Map & spots"))
             layer_widgets.append(switch_lbl)
         # M1: the layer toggles reflow into a two-row-ish flow as the map pane
         # narrows, instead of ever needing a horizontal scrollbar.
@@ -829,7 +834,7 @@ class QtOrbitRxApplication(QMainWindow):
         lo, hi = widen_to_min_span(lo, hi)
         span_h = (hi - lo).total_seconds() / 3600.0
         if span_h < 36:
-            locator = AutoDateLocator(maxticks=7)
+            locator = AutoDateLocator(maxticks=6)
         else:
             # "dd MMM" daily ticks: one tick per day (or fewer) so they never overlap.
             locator = DayLocator(interval=max(1, round(span_h / 24 / 3)))

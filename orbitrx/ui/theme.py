@@ -93,7 +93,7 @@ QSlider::groove:horizontal {{ height: 4px; background: {BORDER}; border-radius: 
 QSlider::handle:horizontal {{ background: {ACCENT}; width: 14px; margin: -6px 0; border-radius: 7px; }}
 QCheckBox::indicator {{ width: 14px; height: 14px; border: 1px solid {CHECK_BORDER}; border-radius: 3px; background: {SURFACE}; }}
 QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
-QCheckBox:disabled {{ color: #55687A; }}
+QCheckBox:disabled {{ color: #6B7F92; }}
 QCheckBox::indicator:disabled {{ border-color: #33475A; background: {BG}; }}
 QListWidget {{ background: {SURFACE}; border: 1px solid {CONTROL_BORDER}; border-radius: 4px; }}
 QToolTip {{ background: {SURFACE}; color: {TEXT}; border: 1px solid {BORDER}; }}

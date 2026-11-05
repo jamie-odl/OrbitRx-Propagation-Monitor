@@ -165,3 +165,30 @@ def test_action_button_grid_has_no_ragged_hole(tmp_path, monkeypatch): # N-new-5
     win.ctrl.stop()
     win.deleteLater()
     app.processEvents()
+
+
+def test_static_disabled_spot_toggles_explain_and_switch_is_a_button(tmp_path, monkeypatch):  # P5
+    monkeypatch.chdir(tmp_path)
+    from PySide6.QtWidgets import QApplication, QToolButton
+
+    import orbitrx.spots.service as svc
+    monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
+    import orbitrx.dx as dx
+    monkeypatch.setattr(dx.DxClusterService, "start", lambda self: None)
+    from orbitrx.ui.controller import OrbitRxController
+    monkeypatch.setattr(OrbitRxController, "fetch_weather", lambda self: None)
+    monkeypatch.setattr(OrbitRxController, "refresh_location", lambda self: None)
+
+    app = QApplication.instance() or QApplication([])
+    from orbitrx.ui.qt_app import QtOrbitRxApplication
+    win = QtOrbitRxApplication()
+    if win._map_backend != "leaflet":
+        for key in ("spot_arcs", "spot_heatmap"):
+            cb = win._layer_checks[key]
+            assert not cb.isEnabled()
+            assert cb.toolTip() == "Available on the interactive map"
+        btn = win.findChild(QToolButton, "switchMapButton")
+        assert btn is not None and btn.text() == "Switch map"
+    win.ctrl.stop()
+    win.deleteLater()
+    app.processEvents()
