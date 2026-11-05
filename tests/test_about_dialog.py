@@ -9,17 +9,21 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
 
-from orbitrx.ui.about import BUY_ME_A_COFFEE_URL, _about_html, _version_line
+from orbitrx.ui.about import BUY_ME_A_COFFEE_URL, _about_html, _build_commit, _version_line
 
 
 def test_about_html_has_no_placeholder_wording():
     html = _about_html()
     assert "placeholder link" not in html.lower()
     assert "not live yet" not in html.lower()
+    assert "TODO-placeholder" not in html
+    assert "buymeacoffee.com/TODO" not in html
+    assert "tip link will appear here" not in html.lower()
 
 
-def test_about_html_still_links_buy_me_a_coffee():
+def test_about_html_links_buy_me_a_coffee():
     html = _about_html()
+    assert BUY_ME_A_COFFEE_URL == "https://buymeacoffee.com/thevenom"
     assert BUY_ME_A_COFFEE_URL in html
     assert "buy me a coffee" in html.lower()
 
@@ -33,6 +37,11 @@ def test_about_html_links_notice_file():
 def test_version_line_includes_version_number():
     import orbitrx
     assert orbitrx.__version__ in _version_line()
+
+
+def test_build_commit_prefers_env(monkeypatch):
+    monkeypatch.setenv("ORBITRX_COMMIT_SHA", "abc1234deadbeef")
+    assert _build_commit() == "abc1234deadb"
 
 
 def test_about_dialog_is_selectable_and_fixed_width(qtbot_app):

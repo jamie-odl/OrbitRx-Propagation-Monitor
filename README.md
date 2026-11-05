@@ -110,7 +110,7 @@ installer/ Inno Setup script
 ## Support
 
 OrbitRx is free. If it helps you make contacts, you can buy me a coffee:
-https://www.buymeacoffee.com/TODO-placeholder (placeholder link, not live yet).
+https://buymeacoffee.com/thevenom
 
 ## Licence
 

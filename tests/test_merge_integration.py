@@ -124,11 +124,14 @@ def test_license_is_mit_jamie_sibley():
     assert "MIT License" in text and "Jamie Sibley" in text
 
 
-def test_buy_me_a_coffee_placeholder_is_clearly_marked():
+def test_buy_me_a_coffee_uses_jamie_url():
     about = (ROOT / "orbitrx" / "ui" / "about.py").read_text(encoding="utf-8")
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "TODO" in about and "buymeacoffee.com/TODO-placeholder" in about
-    assert "buymeacoffee.com/TODO-placeholder" in readme
+    assert "TODO-placeholder" not in about
+    assert "buymeacoffee.com/TODO" not in about
+    assert "buymeacoffee.com/thevenom" in about or "buymeacoffee.com/thevenom" in about.replace("https://", "")
+    assert "buymeacoffee.com/thevenom" in about
+    assert "buymeacoffee.com/thevenom" in readme
 
 
 def test_removed_legacy_files():
@@ -225,3 +228,10 @@ def test_path_muf_label_has_no_unit_when_missing(tmp_path, monkeypatch): # S2
     ctrl.state.path_muf = 21.4
     ctrl.state.path_muf_label = None
     assert ctrl.weather_labels()["path_muf"] == "Path MUF: 21.4 MHz"
+
+
+def test_default_dx_cluster_callsign_is_blank():
+    from orbitrx.config import DEFAULT_CONFIG
+    assert DEFAULT_CONFIG["dx_cluster_callsign"] == ""
+    example = (ROOT / "config.example.json").read_text(encoding="utf-8")
+    assert '"dx_cluster_callsign": ""' in example
