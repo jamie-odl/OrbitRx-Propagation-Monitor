@@ -31,7 +31,12 @@ log = logging.getLogger("orbitrx")
 # M3: shown over the map when the page fails to load, or loads but the tiles
 # never do (offline, or an unreachable tile server) -- never a blank white page.
 MAP_UNAVAILABLE_TEXT = "Map tiles unavailable (offline?)"
-MAP_UNAVAILABLE_STYLE = f"{CARD_STYLE} color: {CARD_TEXT}; font-size: 14px; padding: 16px;"
+# Scoped to the card's object name so the border/radius never cascades onto
+# the icon, message and buttons inside it.
+MAP_UNAVAILABLE_STYLE = (
+    f"QWidget#mapUnavailableCard {{ {CARD_STYLE} padding: 16px; }}"
+    f" QWidget#mapUnavailableCard QLabel {{ color: {CARD_TEXT}; font-size: 14px; border: none; background: transparent; }}"
+)
 MAP_UNAVAILABLE_HINT_STYLE = f"color: {MUTED}; font-size: 12px;"
 
 # M3: how long to wait for Leaflet's tile layer to report its first successful
@@ -62,14 +67,20 @@ _LEAFLET_HTML = """<!DOCTYPE html>
 <div id="map"></div>
 <script>
 let spotBridge = null;
-new QWebChannel(qt.webChannelTransport, ch => { spotBridge = ch.objects.spotBridge; });
+// Tile events can fire before the web channel is ready, so remember them and
+// report once the bridge exists (otherwise the 8 s timeout fires on a good map).
+let tilesOk = false, tilesFailed = false;
+new QWebChannel(qt.webChannelTransport, ch => {
+  spotBridge = ch.objects.spotBridge;
+  if (tilesOk) spotBridge.tilesLoaded(); else if (tilesFailed) spotBridge.tileError();
+});
 const map = L.map('map', {worldCopyJump: true, zoomControl: true}).setView([20, 0], 2);
 const tileLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   maxZoom: 12, className: 'orbitrx-dark-tiles'
 }).addTo(map);
-tileLayer.on('load', () => { if (spotBridge) spotBridge.tilesLoaded(); });
-tileLayer.on('tileerror', () => { if (spotBridge) spotBridge.tileError(); });
+tileLayer.on('tileload', () => { if (!tilesOk) { tilesOk = true; if (spotBridge) spotBridge.tilesLoaded(); } });
+tileLayer.on('tileerror', () => { if (tilesOk) return; tilesFailed = true; if (spotBridge) spotBridge.tileError(); });
 let userM=null, sunM=null, dxLayer=L.layerGroup().addTo(map), termLine=null, nightPane=[];
 function setPayload(p) {
   dxLayer.clearLayers();
@@ -248,6 +259,8 @@ if WEBENGINE_AVAILABLE:
             outer.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
             card = QWidget()
+            card.setObjectName("mapUnavailableCard")
+            card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
             card.setStyleSheet(MAP_UNAVAILABLE_STYLE)
             card_layout = QVBoxLayout(card)
 
@@ -278,6 +291,7 @@ if WEBENGINE_AVAILABLE:
             log.info("Leaflet map retry requested; reloading")
             self._hide_unavailable_overlay()
             self._ready = False
+            self._tiles_ok = False
             self.web.reload()
 
         def _on_ready(self, ok: bool) -> None:
@@ -285,10 +299,13 @@ if WEBENGINE_AVAILABLE:
             if not ok:
                 log.warning("Leaflet map page failed to load")
                 self._show_unavailable_overlay()
-            else:
+            elif not getattr(self, "_tiles_ok", False):
+                # Tiles can arrive before loadFinished; only arm the timeout if
+                # none have been reported yet.
                 self._tile_timeout_timer.start(TILE_LOAD_TIMEOUT_MS)
 
         def _on_tiles_loaded(self) -> None:
+            self._tiles_ok = True
             self._tile_timeout_timer.stop()
             self._hide_unavailable_overlay()
 

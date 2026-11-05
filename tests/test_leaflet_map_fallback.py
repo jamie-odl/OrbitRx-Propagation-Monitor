@@ -105,3 +105,12 @@ def test_successful_load_starts_a_bounded_tile_wait(leaflet_widget):
     assert leaflet_widget._tile_timeout_timer.isActive() is True
     assert leaflet_widget._tile_timeout_timer.interval() == TILE_LOAD_TIMEOUT_MS
     assert TILE_LOAD_TIMEOUT_MS <= 20_000
+
+
+def test_tiles_loaded_before_page_ready_does_not_arm_the_timeout(leaflet_widget):
+    """M3: tile events can arrive before loadFinished; that must not show the overlay."""
+    w = leaflet_widget
+    w._on_tiles_loaded()
+    w._on_ready(True)
+    assert not w._tile_timeout_timer.isActive()
+    assert not w._unavailable_overlay.isVisible()

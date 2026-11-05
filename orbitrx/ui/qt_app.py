@@ -722,7 +722,7 @@ class QtOrbitRxApplication(QMainWindow):
         """M5: path_muf/sunrise/sunset only mean anything once a location is set;
         otherwise show the single explanatory line instead of three "n/a" rows."""
         has_location = self.ctrl.state.user_lat is not None and self.ctrl.state.user_lon is not None
-        for key in ("path_muf", "sunrise", "sunset"):
+        for key in ("path_muf", "sunrise", "sunset", "you"):
             if key in self._labels:
                 self._labels[key].setVisible(has_location)
         self._location_hint_lbl.setVisible(not has_location)
@@ -1419,6 +1419,8 @@ def settings_fit_report(dlg: QDialog) -> dict:
     )
     fields_right_visible = True
     for field in dlg.fields.values():
+        if not field.isVisibleTo(dlg):
+            continue  # on another Settings page
         top_right = field.mapTo(dlg, field.rect().topRight())
         if top_right.x() > dlg.width():
             fields_right_visible = False

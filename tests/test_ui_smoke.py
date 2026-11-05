@@ -98,16 +98,26 @@ def test_no_visible_qlabel_renders_below_caption_minimum(tmp_path, monkeypatch):
     app.processEvents()
 
     checked = 0
-    for lbl in win.findChildren(QLabel):
-        if not lbl.isVisible():
-            continue
-        checked += 1
-        f = lbl.font()
-        px = QFontInfo(f).pixelSize()
-        if px <= 0:  # some platform plugins (Windows offscreen) do not resolve QFontInfo
-            px = f.pixelSize() if f.pixelSize() > 0 else round(f.pointSizeF() * lbl.logicalDpiY() / 72.0)
-        assert px > 0, f"{lbl.objectName() or lbl.text()[:30]!r} has no resolvable font size"
-        assert px >= 11, f"{lbl.objectName() or lbl.text()[:30]!r} renders at {px}px"
+    # In the compact Map/Conditions layout (small offscreen screens) scan both tabs.
+    panes = [None]
+    if getattr(win, "_compact", False):
+        panes = [win._map_tab, win._side_pane]
+    seen = set()
+    for pane in panes:
+        if pane is not None:
+            win._compact_tabs.setCurrentWidget(pane)
+            app.processEvents()
+        for lbl in win.findChildren(QLabel):
+            if not lbl.isVisible() or id(lbl) in seen:
+                continue
+            seen.add(id(lbl))
+            checked += 1
+            f = lbl.font()
+            px = QFontInfo(f).pixelSize()
+            if px <= 0:  # some platform plugins (Windows offscreen) do not resolve QFontInfo
+                px = f.pixelSize() if f.pixelSize() > 0 else round(f.pointSizeF() * lbl.logicalDpiY() / 72.0)
+            assert px > 0, f"{lbl.objectName() or lbl.text()[:30]!r} has no resolvable font size"
+            assert px >= 11, f"{lbl.objectName() or lbl.text()[:30]!r} renders at {px}px"
     assert checked > 10  # sanity: we actually scanned a meaningful number of labels
 
     win.ctrl.stop()

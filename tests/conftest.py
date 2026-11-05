@@ -6,11 +6,15 @@ Small-screen behaviour is tested explicitly at 667x441 and on the real
 1024x768 Windows runner.
 """
 import os
+import sys
 from pathlib import Path
 
-if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
-    cfg = Path(__file__).parent / "data" / "offscreen-1920x1200.json"
-    os.environ["QT_QPA_PLATFORM"] = f"offscreen:configfile={cfg}"
+# POSIX only: on Windows the drive colon ("C:") would split the platform
+# plugin's ":"-separated argument list, and tests chdir to a temp dir on
+# another drive, so a relative path cannot be used either.
+if os.environ.get("QT_QPA_PLATFORM") == "offscreen" and sys.platform != "win32":
+    _cfg = Path(__file__).resolve().parent / "data" / "offscreen-1920x1200.json"
+    os.environ["QT_QPA_PLATFORM"] = f"offscreen:configfile={_cfg}"
 
 
 _exit_status = 0

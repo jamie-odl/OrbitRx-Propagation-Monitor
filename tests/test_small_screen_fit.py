@@ -193,6 +193,12 @@ def test_main_window_reflows_at_small_sizes(window, width, height, expect_compac
     win.resize(width, height)
     window.processEvents()
 
+    if win.width() < width:
+        # The platform screen is smaller than the requested size (Windows'
+        # offscreen plugin is 800 px wide), so the breakpoint rule applies to
+        # the width the window actually got.
+        from orbitrx.ui.qt_app import COMPACT_WIDTH_BELOW
+        expect_compact = expect_compact or win.width() < COMPACT_WIDTH_BELOW
     assert win._compact is expect_compact
     assert _visible_horizontal_scrollbars(win) == []
     assert win.hscroll_visible() is False
