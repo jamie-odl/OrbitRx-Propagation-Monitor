@@ -51,7 +51,7 @@ try:
     import matplotlib
     matplotlib.use("QtAgg")
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-    from matplotlib.dates import AutoDateLocator, DateFormatter
+    from matplotlib.dates import AutoDateLocator, DateFormatter, DayLocator
     from matplotlib.figure import Figure
     PLOT_QT = True
 except ImportError:
@@ -611,7 +611,12 @@ class QtOrbitRxApplication(QMainWindow):
         # instead of a sliver.
         lo, hi = pad_datetime_range(min(times), max(times))
         lo, hi = widen_to_min_span(lo, hi)
-        locator = AutoDateLocator(maxticks=7)
+        span_h = (hi - lo).total_seconds() / 3600.0
+        if span_h <= 24:
+            locator = AutoDateLocator(maxticks=7)
+        else:
+            # "dd MMM HH:mm" labels are wide: one tick per day (or fewer) so they never overlap.
+            locator = DayLocator(interval=max(1, round(span_h / 24 / 3)))
         ax.xaxis.set_major_locator(locator)
         # M4: every tick shows HH:mm (never minutes alone); "dd MMM HH:mm" once the
         # range spans more than a day, so the day is still unambiguous.

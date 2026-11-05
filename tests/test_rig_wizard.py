@@ -174,7 +174,8 @@ def test_simulated_cat_controller_shows_connected_state(app, cfg): # N1
 
     dlg = RigWizardDialog(cfg, SimulatedCatController())
     dlg._test_cat()
-    assert dlg.status_text.text() == "● Connected: 14.074 MHz"
+    assert dlg.status_text.text() == "Connected: 14.074 MHz"
+    assert "●" not in dlg.status_text.text()  # single status dot comes from status_icon
     assert dlg.status_text.styleSheet() == "color: #3FB950;"
     assert dlg.status_icon.text() == "🟢"
 

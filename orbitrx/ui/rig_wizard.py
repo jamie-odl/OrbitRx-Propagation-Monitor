@@ -148,7 +148,7 @@ class RigWizardDialog(QDialog):
         if result.startswith(_SIMULATED_PREFIX):
             freq = result[len(_SIMULATED_PREFIX):]
             self.status_icon.setText("🟢")
-            self.status_text.setText(f"● Connected: {freq} MHz")
+            self.status_text.setText(f"Connected: {freq} MHz")  # the status icon already shows the dot
             self.status_text.setStyleSheet(f"color: {SIMULATED_CAT_COLOR};")
             return
         ok = "Sent CAT" in result

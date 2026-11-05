@@ -223,3 +223,20 @@ def test_short_range_ticks_are_unique_hh_mm():  # M4
     assert len(labels) >= 2
     assert len(labels) == len(set(labels))
     assert all(len(l) == 5 and l[2] == ":" for l in labels)
+
+
+def test_48h_sample_tick_labels_do_not_overlap(window, monkeypatch):  # M4
+    data = json.loads(HISTORY_SAMPLE_48H.read_text())
+    monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: data["rows"])
+    window.tabs.setCurrentIndex(1)
+    window._refresh_plot_tab()
+    canvas = window.plot_container.itemAt(0).widget()
+    canvas.resize(420, 420)
+    canvas.draw()
+    ax = canvas.figure.get_axes()[0]
+    r = canvas.get_renderer()
+    boxes = [t.get_window_extent(r) for t in ax.get_xticklabels() if t.get_text() and t.get_visible()]
+    boxes.sort(key=lambda b: b.x0)
+    assert len(boxes) >= 2
+    for a, b in zip(boxes, boxes[1:]):
+        assert a.x1 <= b.x0, f"x tick labels overlap: {[(t.get_text()) for t in ax.get_xticklabels()]} {[(round(x.x0),round(x.x1)) for x in boxes]} fig={canvas.figure.get_size_inches()} dpi={canvas.figure.dpi}"
