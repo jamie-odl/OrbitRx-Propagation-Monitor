@@ -127,7 +127,7 @@ def test_write_version_info_reads_version_file(tmp_path):
     assert "filevers=(9, 2, 1, 0)" in out.read_text(encoding="utf-8")
 
 
-def test_publisher_is_jamie_sibley_everywhere_and_never_obsidian_dynamics():
+def test_publisher_is_thevenom_everywhere_and_never_obsidian_dynamics():
     """Founder override (05 Nov 2026): publisher / author is the pseudonym thevenom."""
     root = Path(__file__).resolve().parents[1]
     sources = {
@@ -139,10 +139,15 @@ def test_publisher_is_jamie_sibley_everywhere_and_never_obsidian_dynamics():
         "LICENSE": ("Copyright (C) 2026 thevenom",),
         "NOTICE": ("Copyright (C) 2026 thevenom",),
         "README.md": ("Copyright (C) 2026 thevenom", "unsigned", "SHA256SUMS"),
+        ".github/workflows/ci.yml": ("Publisher check (thevenom", "ne 'thevenom'"),
     }
     for rel, needles in sources.items():
         text = (root / rel).read_text(encoding="utf-8")
-        assert "Obsidian Dynamics" not in text, rel
+        # ci.yml must keep an Obsidian rejection guard; other ship surfaces must not name it.
+        if rel.endswith("ci.yml"):
+            assert "Obsidian" in text and "throw" in text
+        else:
+            assert "Obsidian Dynamics" not in text, rel
         for needle in needles:
             assert needle in text, (rel, needle)
 
