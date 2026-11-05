@@ -592,8 +592,8 @@ class QtOrbitRxApplication(QMainWindow):
         for spine in ax.spines.values():
             spine.set_color("#37474F")
 
-        if len(times) < 2:
-            # S2: a single point has no meaningful x-range to plot against.
+        if len(times) < 2 or (max(times) - min(times)).total_seconds() < 60:
+            # S2: fewer than two readings at least a minute apart have no meaningful line to plot.
             ax.set_xticks([])
             ax.set_yticks([])
             ax.text(

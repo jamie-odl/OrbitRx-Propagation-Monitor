@@ -240,3 +240,16 @@ def test_48h_sample_tick_labels_do_not_overlap(window, monkeypatch):  # M4
     assert len(boxes) >= 2
     for a, b in zip(boxes, boxes[1:]):
         assert a.x1 <= b.x0, f"x tick labels overlap: {[(t.get_text()) for t in ax.get_xticklabels()]} {[(round(x.x0),round(x.x1)) for x in boxes]} fig={canvas.figure.get_size_inches()} dpi={canvas.figure.dpi}"
+
+
+def test_two_readings_seconds_apart_show_not_enough_data(window, monkeypatch):  # S2
+    rows = [
+        {"ts": "2026-11-05T00:33:00+00:00", "kp": 1.3, "flux": 111},
+        {"ts": "2026-11-05T00:33:20+00:00", "kp": 1.3, "flux": 111},
+    ]
+    monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    window.tabs.setCurrentIndex(1)
+    window._refresh_plot_tab()
+    canvas = window.plot_container.itemAt(0).widget()
+    texts = [t.get_text() for ax in canvas.figure.get_axes() for t in ax.texts]
+    assert "Not enough data yet" in texts
