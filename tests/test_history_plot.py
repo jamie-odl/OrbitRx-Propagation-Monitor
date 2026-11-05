@@ -162,24 +162,36 @@ def test_medium_range_keeps_day_and_time_tick_format(window, monkeypatch): # S3
     assert ax.xaxis.get_major_formatter().fmt == "%d %b %H:%M"
 
 
-def test_hist_ending_label_only_shows_for_multi_day_ranges(window, monkeypatch): # N2
+def test_hist_ending_label_visible_in_empty_and_data_states(window, monkeypatch): # S1
     # isVisible() also depends on the top-level window actually being shown.
     window.show()
-    assert window.hist_ending_lbl.isHidden() is True
-    data = json.loads(HISTORY_SAMPLE_48H.read_text())
-    monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: data["rows"])
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+
+    # Empty state: before Refresh is ever clicked, the label is a field label
+    # for the date picker and must already be visible, not hidden.
     assert window.hist_ending_lbl.isVisible() is True
     assert window.hist_ending_lbl.text() == "Ending"
 
+    # Empty state: a query that finds nothing for the selected date.
+    monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: [])
+    window._refresh_plot_tab()
+    assert "No data" in window.plot_placeholder.text()
+    assert window.hist_ending_lbl.isVisible() is True
+
+    # Data state: a multi-day range renders the full dual-axis chart.
+    data = json.loads(HISTORY_SAMPLE_48H.read_text())
+    monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: data["rows"])
+    window._refresh_plot_tab()
+    assert window.hist_ending_lbl.isVisible() is True
+
+    # Data state: a short, single-day range still renders a chart.
     short_rows = [
         {"ts": "2026-11-04T21:30:00+00:00", "kp": 2.0, "flux": 110},
         {"ts": "2026-11-04T23:00:00+00:00", "kp": 2.5, "flux": 115},
     ]
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: short_rows)
     window._refresh_plot_tab()
-    assert window.hist_ending_lbl.isHidden() is True
+    assert window.hist_ending_lbl.isVisible() is True
 
 
 def test_single_point_shows_not_enough_data_text_in_plot(window, monkeypatch): # S2

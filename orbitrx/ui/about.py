@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QVBoxLayout
 
 from orbitrx import __version__
 from orbitrx.paths import project_root
+from orbitrx.ui.window_fit import fit_to_screen
 
 # TODO(jamie): replace with the real Buy Me a Coffee page before release.
 BUY_ME_A_COFFEE_URL = "https://www.buymeacoffee.com/TODO-placeholder"
@@ -50,7 +51,7 @@ DX cluster nodes, OpenStreetMap map tiles, Leaflet. See <a href="{_notice_url()}
 """
 
 
-def show_about(parent=None) -> None:
+def _build_about_dialog(parent=None) -> QDialog:
     dlg = QDialog(parent)
     dlg.setWindowTitle("About OrbitRx")
     dlg.setFixedWidth(480)
@@ -66,4 +67,13 @@ def show_about(parent=None) -> None:
     buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
     buttons.rejected.connect(dlg.reject)
     lay.addWidget(buttons)
-    dlg.exec()
+
+    # Natural size at 100%, then clamped to the available screen so Close
+    # stays reachable on a small or scaled-up display.
+    dlg.adjustSize()
+    fit_to_screen(dlg, 360, 200)
+    return dlg
+
+
+def show_about(parent=None) -> None:
+    _build_about_dialog(parent).exec()

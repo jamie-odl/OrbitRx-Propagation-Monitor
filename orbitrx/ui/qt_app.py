@@ -24,6 +24,7 @@ from orbitrx.ui.formatting import (
 )
 from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
 from orbitrx.ui.theme import ERR, MUTED, OK, apply_theme
+from orbitrx.ui.window_fit import fit_to_screen
 from orbitrx.update_checker import check_github_release
 
 try:
@@ -35,7 +36,7 @@ except ImportError:
 if not QT_AVAILABLE:
     raise ImportError("PySide6 is required for the Qt UI")
 
-from PySide6.QtCore import QDate, QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QDate, QEvent, QObject, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
@@ -122,6 +123,7 @@ class QtOrbitRxApplication(QMainWindow):
         geom = self.ctrl.cfg.get("window_geometry", "1400x820")
         self.resize(*self._parse_geom(geom))
         self._build_ui()
+        fit_to_screen(self, 640, 440)
         self._load_map()
         self._refresh_map()
         self.ctrl.seed_demo_spots()
@@ -296,10 +298,9 @@ class QtOrbitRxApplication(QMainWindow):
         plot_tab = QWidget()
         plot_layout = QVBoxLayout(plot_tab)
         hist_row = QHBoxLayout()
-        # N2: only shown once the rendered range exceeds a day, so a single date
-        # picker reads as "the end of a longer range" rather than "just this day".
+        # S1: a field label for the date picker, so it must stay visible in every
+        # plot state (before Refresh, no-data, and an actually-rendered chart alike).
         self.hist_ending_lbl = QLabel("Ending")
-        self.hist_ending_lbl.setVisible(False)
         hist_row.addWidget(self.hist_ending_lbl)
         self.hist_date = QDateEdit()
         self.hist_date.setCalendarPopup(True)
@@ -570,7 +571,6 @@ class QtOrbitRxApplication(QMainWindow):
         dlg.exec()
 
     def _refresh_plot_tab(self) -> None:
-        self.hist_ending_lbl.setVisible(False)
         if not PLOT_QT:
             self.plot_placeholder.setText("matplotlib Qt backend required")
             return
@@ -592,11 +592,6 @@ class QtOrbitRxApplication(QMainWindow):
             times.append(datetime.datetime.fromisoformat(r["ts"]))
             kp.append(float(r.get("kp") or 0))
             flux.append(float(r.get("flux") or 0))
-
-        # N2: the single date picker reads as "the end of the range" once the
-        # rendered data actually spans more than a day.
-        raw_span_h = (max(times) - min(times)).total_seconds() / 3600.0 if times else 0.0
-        self.hist_ending_lbl.setVisible(raw_span_h > 24)
 
         fig = Figure(figsize=(5, 3.5), facecolor="#0B1220")
         ax = fig.add_subplot(111)
@@ -719,10 +714,18 @@ class QtOrbitRxApplication(QMainWindow):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Settings")
-        dlg.setFixedSize(720, 520)
+        dlg.setMinimumSize(520, 380)
         outer = QVBoxLayout(dlg)
-        body = QHBoxLayout()
-        outer.addLayout(body, stretch=1)
+
+        # The list+pages area scrolls independently so a small/scaled-up screen can
+        # shrink the dialog without ever hiding the Save/Cancel buttons below it.
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll_body = QWidget()
+        body = QHBoxLayout(scroll_body)
+        scroll.setWidget(scroll_body)
+        outer.addWidget(scroll, stretch=1)
 
         page_list = QListWidget()
         page_list.setFixedWidth(180)
@@ -931,6 +934,7 @@ class QtOrbitRxApplication(QMainWindow):
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
         outer.addWidget(buttons)
+        dlg.buttons = buttons
 
         page_names = ["Station", "Rig", "DX cluster", "Map & spots", "Services"]
         start_row = page_names.index(initial_page) if initial_page in page_names else 0
@@ -938,6 +942,11 @@ class QtOrbitRxApplication(QMainWindow):
         # M3: spinbox text starts at the same inset as QLineEdit text (6px padding).
         for _sb in dlg.findChildren(QAbstractSpinBox):
             _sb.lineEdit().setTextMargins(6, 0, 0, 0)
+
+        # Natural size at 100%, then clamped to the available screen so Save/Cancel
+        # stay reachable on a small or scaled-up display.
+        dlg.resize(720, 520)
+        fit_to_screen(dlg, 520, 380)
         return dlg
 
     def _apply_settings_dialog(self, dlg: QDialog) -> None:
@@ -1059,6 +1068,15 @@ def _app_icon() -> QIcon:
     return QIcon()
 
 
+def _save_button_fully_visible(dlg: QDialog) -> bool:
+    """Whether the Settings dialog's Save button's geometry lies within the dialog's
+    own visible rect, i.e. it hasn't been pushed off-screen by a too-small window."""
+    save_btn = dlg.buttons.button(QDialogButtonBox.StandardButton.Save)
+    top_left = save_btn.mapTo(dlg, save_btn.rect().topLeft())
+    btn_rect = QRect(top_left, save_btn.size())
+    return dlg.rect().contains(btn_rect)
+
+
 def run_release_capture_hook(out_dir: str | Path) -> int:
     """Release-exe self-capture (M3 evidence): grab the rig wizard's port dropdown and
     the DX cluster settings page into `out_dir`, then return. Runs against whatever
@@ -1076,6 +1094,7 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
     QtOrbitRxApplication._alarm_storm = lambda self: None
     win = QtOrbitRxApplication()
     win.resize(1440, 860)
+    fit_to_screen(win, 640, 440)
     win.show()
 
     def wait(seconds: float) -> None:
@@ -1111,7 +1130,33 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
     app.primaryScreen().grabWindow(0, fg.x(), fg.y(), fg.width(), fg.height()).save(
         str(out_dir / "settings-dx-cluster.png")
     )
+    # Whole Settings dialog (list + pages + the pinned Save/Cancel row) after
+    # fit_to_screen, so a release build's capture has direct evidence Save is
+    # still on-screen even on a small/scaled-up display.
+    app.primaryScreen().grabWindow(0, fg.x(), fg.y(), fg.width(), fg.height()).save(
+        str(out_dir / "settings-full.png")
+    )
+    # Whole-desktop grab: shows the dialog's position relative to the real screen edges.
+    app.primaryScreen().grabWindow(0).save(str(out_dir / "desktop-settings.png"))
+    save_visible = _save_button_fully_visible(settings_dlg)
+    settings_size = (settings_dlg.width(), settings_dlg.height())
     settings_dlg.reject()
+
+    win_screen = win.screen() or app.primaryScreen()
+    avail = win_screen.availableGeometry()
+    wait(0.2)
+    main_fg = win.frameGeometry()
+    win_screen.grabWindow(0, main_fg.x(), main_fg.y(), main_fg.width(), main_fg.height()).save(
+        str(out_dir / "main-window.png")
+    )
+    win_screen.grabWindow(0).save(str(out_dir / "desktop-main.png"))
+    (out_dir / "fit.txt").write_text(
+        f"avail={avail.width()}x{avail.height()} "
+        f"settings={settings_size[0]}x{settings_size[1]} "
+        f"save_visible={save_visible} "
+        f"main={win.width()}x{win.height()}\n",
+        encoding="utf-8",
+    )
 
     win.ctrl.stop()
     win.close()

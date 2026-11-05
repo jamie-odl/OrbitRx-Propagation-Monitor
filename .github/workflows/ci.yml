@@ -138,8 +138,22 @@ jobs:
         shell: pwsh
         run: |
           $ports = Get-Content release-shots\100\rig-wizard-release-ports.txt, release-shots\150\rig-wizard-release-ports.txt -Raw
+          Write-Host "Release exe port list (100% and 150%):"
+          Write-Host $ports
           if ($ports -match "Simulated") {
             throw "Simulated rig port leaked into the release exe's port list"
+          }
+          Write-Host "SIMULATED-GATE: PASS (no 'Simulated' entry in the release exe port list)"
+      - name: Check Settings and main window fit the screen at 150%
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.Windows.Forms
+          $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+          Write-Host "Runner screen: $($b.Width)x$($b.Height)"
+          foreach ($d in 'release-shots\100', 'release-shots\150') {
+            $fit = Get-Content (Join-Path $d 'fit.txt') -Raw
+            Write-Host "$d : $fit"
+            if ($fit -notmatch 'save_visible=True') { throw "Save button not visible in $d" }
           }
       - name: Measure DX cluster field edges
         shell: pwsh

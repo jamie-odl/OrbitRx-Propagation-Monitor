@@ -40,6 +40,30 @@ def test_capture_hook_writes_dropdown_and_settings_captures(tmp_path, monkeypatc
     assert ports_txt.is_file()
 
 
+def test_capture_hook_writes_fit_evidence(tmp_path, monkeypatch):
+    monkeypatch.delenv("ORBITRX_TEST_SIMULATED_RIG", raising=False)
+    from orbitrx.ui.qt_app import run_release_capture_hook
+
+    out_dir = tmp_path / "capture"
+    exit_code = run_release_capture_hook(out_dir)
+    assert exit_code == 0
+
+    settings_full_png = out_dir / "settings-full.png"
+    main_png = out_dir / "main-window.png"
+    fit_txt = out_dir / "fit.txt"
+    assert settings_full_png.is_file() and settings_full_png.stat().st_size > 0
+    assert main_png.is_file() and main_png.stat().st_size > 0
+    assert fit_txt.is_file()
+
+    line = fit_txt.read_text(encoding="utf-8").strip()
+    parts = dict(p.split("=", 1) for p in line.split())
+    assert set(parts) == {"avail", "settings", "save_visible", "main"}
+    for key in ("avail", "settings", "main"):
+        w, h = parts[key].split("x")
+        assert int(w) > 0 and int(h) > 0
+    assert parts["save_visible"] == "True"
+
+
 def test_capture_hook_port_list_never_contains_simulated_rig(tmp_path, monkeypatch):
     monkeypatch.delenv("ORBITRX_TEST_SIMULATED_RIG", raising=False)
     from orbitrx.ui.qt_app import run_release_capture_hook

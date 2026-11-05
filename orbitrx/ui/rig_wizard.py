@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 from orbitrx.cat import CatController, RIG_PROFILES, default_port_fallback
 from orbitrx.config import AppConfig
 from orbitrx.ui.theme import ERR, OK
+from orbitrx.ui.window_fit import fit_to_screen
 
 # N1: distinct from the normal OK colour, this marks a *simulated* connected state
 # (screenshots/tests only) so it is never mistaken for a genuine CAT success.
@@ -131,6 +132,11 @@ class RigWizardDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         lay.addWidget(buttons)
+
+        # Natural size at 100%, then clamped to the available screen so Save/Cancel
+        # stay reachable on a small or scaled-up display.
+        self.adjustSize()
+        fit_to_screen(self, 420, 200)
 
     def _fill_ports(self) -> None:
         populate_port_combo(self.port_combo, self.cat, str(self.cfg.get("cat_port", "") or ""))
