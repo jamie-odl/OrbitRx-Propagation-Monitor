@@ -123,10 +123,12 @@ jobs:
             $env:ORBITRX_CAPTURE_DIR = (Resolve-Path $CaptureDir).Path
             if ($ScaleFactor) { $env:QT_SCALE_FACTOR = $ScaleFactor }
             $proc = Start-Process -FilePath $exe -PassThru
-            if (!(Wait-Process -Id $proc.Id -Timeout 120 -ErrorAction SilentlyContinue)) {
+            if (-not $proc.WaitForExit(120000)) {
               Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
               throw "OrbitRxMonitor.exe did not exit within 120s for $CaptureDir"
             }
+            Get-ChildItem $CaptureDir | Format-Table Name, Length
+            if (-not (Test-Path (Join-Path $CaptureDir 'rig-wizard-release-ports.txt'))) { throw "No capture written for $CaptureDir (exit $($proc.ExitCode))" }
           }
 
           Invoke-ReleaseCapture "release-shots\100" $null

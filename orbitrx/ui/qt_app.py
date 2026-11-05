@@ -1071,6 +1071,9 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     app = QApplication.instance() or QApplication([])
     apply_theme(app)
+    # Capture mode must never block on a modal alarm popup.
+    QtOrbitRxApplication._alarm_excellent = lambda self: None
+    QtOrbitRxApplication._alarm_storm = lambda self: None
     win = QtOrbitRxApplication()
     win.resize(1440, 860)
     win.show()
@@ -1119,7 +1122,13 @@ def run_qt_app() -> None:
     import sys
     capture_dir = os.environ.get("ORBITRX_CAPTURE_DIR")
     if capture_dir:
-        sys.exit(run_release_capture_hook(capture_dir))
+        import threading
+        watchdog = threading.Timer(60.0, lambda: os._exit(3))  # capture never hangs CI
+        watchdog.daemon = True
+        watchdog.start()
+        code = run_release_capture_hook(capture_dir)
+        sys.stdout.flush()
+        os._exit(code)  # background service threads must not keep the capture process alive
     app = QApplication(sys.argv)
     apply_theme(app)
     app.setWindowIcon(_app_icon())

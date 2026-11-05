@@ -100,3 +100,15 @@ def test_empty_overlay_is_a_legible_pill_on_the_leaflet_map():  # S2
     assert "background: rgba(15,23,32,0.85)" in style
     assert "border-radius" in style
     assert "padding: 8px 14px" in style
+
+
+def test_empty_overlay_pill_is_a_single_line(window):  # S2
+    win = window
+    mw = getattr(win, "map_widget", None) or getattr(win, "map_view", None)
+    if mw is None or not hasattr(mw, "set_empty_overlay"):
+        import pytest
+        pytest.skip("no static map widget exposed")
+    mw.set_empty_overlay("No spots in this window (6 h ago)")
+    lbl = mw._empty_overlay
+    assert not lbl.wordWrap()
+    assert lbl.height() < 2 * lbl.fontMetrics().height() + 20

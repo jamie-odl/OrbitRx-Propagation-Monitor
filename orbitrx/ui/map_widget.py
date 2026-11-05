@@ -96,7 +96,7 @@ class PropagationMapWidget(QWidget):
         # current replay window has nothing to plot.
         self._empty_overlay = QLabel("", self)
         self._empty_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_overlay.setWordWrap(True)
+        self._empty_overlay.setWordWrap(False)  # one-line pill; the text is short
         self._empty_overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._empty_overlay.setStyleSheet(EMPTY_OVERLAY_STYLE)
         self._empty_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
