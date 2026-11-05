@@ -64,8 +64,10 @@ def row_edges_at_mid_height(img: Image.Image, top_y: int, bottom_y: int) -> tupl
     w, _ = img.size
     px = img.load()
     mid_y = (top_y + bottom_y) // 2
-    xs = [x for x in range(w) if _matches(px[x, mid_y])]
-    if not xs:
+    # Only the form's field column (right of the page list) counts; a field row has
+    # border pixels at both of its vertical edges, so at least two well-separated hits.
+    xs = [x for x in range(int(w * 0.45), w) if _matches(px[x, mid_y])]
+    if len(xs) < 2 or max(xs) - min(xs) < w * 0.2:
         return None
     return min(xs), max(xs)
 
