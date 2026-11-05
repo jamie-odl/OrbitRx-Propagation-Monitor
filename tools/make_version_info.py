@@ -8,9 +8,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-COMPANY_NAME = "Jamie Sibley"
+COMPANY_NAME = "thevenom"
 PRODUCT_NAME = "OrbitRx Propagation Monitor"
-LEGAL_COPYRIGHT = "Copyright (C) 2026 Jamie Sibley"
+LEGAL_COPYRIGHT = "Copyright (C) 2026 thevenom"
 ORIGINAL_FILENAME = "OrbitRxMonitor.exe"
 
 _TEMPLATE = """# UTF-8

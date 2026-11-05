@@ -2,7 +2,7 @@
 
 Usage: python tools/pe_check.py OUT.txt EXE [EXE ...]
 Fails (exit 1) unless every exe has IMAGE_DIRECTORY_ENTRY_SECURITY = 0/0,
-CompanyName "Jamie Sibley" and no "Obsidian" anywhere in its version strings.
+CompanyName "thevenom" and no "Obsidian" anywhere in its version strings.
 Pure-stdlib parser so it runs on any CI runner.
 """
 from __future__ import annotations
@@ -49,7 +49,7 @@ def check(path: Path) -> tuple[bool, list[str]]:
              f"  security_dir rva=0x{sec[0]:x} size={sec[1]}",
              f"  debug_dir rva=0x{dbg[0]:x} size={dbg[1]} (CodeView debug entry, not a signature)"]
     lines += [f"  {k}={v}" for k, v in fields.items()]
-    ok = sec == (0, 0) and fields["CompanyName"] == "Jamie Sibley" and not obsidian
+    ok = sec == (0, 0) and fields["CompanyName"] == "thevenom" and not obsidian
     lines.append(f"  RESULT: {'PASS' if ok else 'FAIL'}")
     return ok, lines
 

@@ -114,4 +114,4 @@ https://buymeacoffee.com/thevenom
 
 ## Licence
 
-MIT, Copyright (C) 2026 Jamie Sibley. See [LICENSE](LICENSE).
+MIT, Copyright (C) 2026 thevenom. See [LICENSE](LICENSE).

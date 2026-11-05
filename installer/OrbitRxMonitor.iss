@@ -8,10 +8,10 @@ AppName=OrbitRx Propagation Monitor
 #endif
 AppVersion={#AppVer}
 AppVerName=OrbitRx Propagation Monitor {#AppVer}
-AppPublisher=Jamie Sibley
-AppCopyright=Copyright (C) 2026 Jamie Sibley
+AppPublisher=thevenom
+AppCopyright=Copyright (C) 2026 thevenom
 VersionInfoVersion={#AppVer}.0
-VersionInfoCompany=Jamie Sibley
+VersionInfoCompany=thevenom
 VersionInfoProductName=OrbitRx Propagation Monitor
 LicenseFile=..\LICENSE
 OutputDir=..\dist

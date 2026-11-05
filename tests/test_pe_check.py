@@ -6,7 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 import pe_check  # noqa: E402
 
 
-def _fake_pe(security=(0, 0), company="Jamie Sibley"):
+def _fake_pe(security=(0, 0), company="thevenom"):
     data = bytearray(0x400)
     struct.pack_into("<I", data, 0x3C, 0x80)
     data[0x80:0x84] = b"PE\0\0"
@@ -16,7 +16,7 @@ def _fake_pe(security=(0, 0), company="Jamie Sibley"):
     struct.pack_into("<I", data, base - 4, 16)
     struct.pack_into("<II", data, base + 8 * 4, *security)
     blob = b""
-    for k, v in (("CompanyName", company), ("LegalCopyright", "Copyright (C) 2026 Jamie Sibley")):
+    for k, v in (("CompanyName", company), ("LegalCopyright", "Copyright (C) 2026 thevenom")):
         key = k.encode("utf-16-le") + b"\0\0"
         while (len(blob) + len(key)) % 4:
             blob += b"\0"

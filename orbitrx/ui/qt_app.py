@@ -301,7 +301,8 @@ class QtOrbitRxApplication(QMainWindow):
             chip.setObjectName("layerChip")
             chip.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             chip.blockSignals(True)
-            if key.startswith("spot_") and self._map_backend != "leaflet":
+            spot_on_static = key.startswith("spot_") and self._map_backend != "leaflet"
+            if spot_on_static:
                 chip.setChecked(False)
                 chip.setEnabled(False)
                 chip.setVisible(False)
@@ -310,7 +311,8 @@ class QtOrbitRxApplication(QMainWindow):
                 chip.setChecked(self.ctrl.cfg.get("map_layers", {}).get(key, key != "grid"))
             chip.blockSignals(False)
             self._layer_checks[key] = chip
-            if chip.isVisible():
+            # Unparented QToolButton.isVisible() is False before show — never gate on it.
+            if not spot_on_static:
                 layer_widgets.append(chip)
         for chip in self._layer_checks.values():
             chip.toggled.connect(lambda _=False: self._layers_changed())
@@ -324,6 +326,8 @@ class QtOrbitRxApplication(QMainWindow):
             switch_lbl.clicked.connect(lambda: self._settings(initial_page="Map & spots"))
             layer_widgets.append(switch_lbl)
         self._layer_grid = _ReflowGrid(layer_widgets, min_item_width=96, max_cols=8)
+        self._layer_grid.setMinimumHeight(36)
+        self._layer_grid.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         # V11 must-fix 3: chips live under the map pane (not inside it) so 150%
         # compact never paints them over Antarctica / greyline.
 
@@ -595,20 +599,38 @@ class QtOrbitRxApplication(QMainWindow):
             ("Export snapshot", self._export_json),
             ("Export DX CSV", self._export_dx),
         ]:
-            action = QAction(text, self)
-            action.triggered.connect(slot)
-            action.setPriority(QAction.Priority.LowPriority)
-            # Keep on the toolbar so tests/controls_reachable see the QAction, but
-            # hide the direct button so Export only appears under ».
-            toolbar.addAction(action)
-            btn = toolbar.widgetForAction(action)
-            if btn is not None:
-                btn.setVisible(False)
-            export_menu.addAction(action)
-            self._toolbar_actions[text] = action
+            # Hidden toolbar QAction keeps tests/controls_reachable happy; a separate
+            # menu QAction stays visible under » (sharing one action would hide both).
+            tb_action = QAction(text, self)
+            tb_action.triggered.connect(slot)
+            tb_action.setPriority(QAction.Priority.LowPriority)
+            tb_action.setVisible(False)
+            toolbar.addAction(tb_action)
+            self._toolbar_actions[text] = tb_action
+            menu_action = QAction(text, self)
+            menu_action.triggered.connect(slot)
+            export_menu.addAction(menu_action)
         export_btn.setMenu(export_menu)
         toolbar.addWidget(export_btn)
         self._toolbar_overflow = export_btn
+        self._hide_export_toolbar_buttons()
+
+    def _hide_export_toolbar_buttons(self) -> None:
+        """Export actions stay on the toolbar (tests) but only the » menu shows them."""
+        for name in ("Export snapshot", "Export DX CSV"):
+            action = self._toolbar_actions.get(name)
+            if action is None:
+                continue
+            btn = self._toolbar.widgetForAction(action)
+            if btn is not None:
+                btn.setVisible(False)
+        overflow = getattr(self, "_toolbar_overflow", None)
+        if overflow is not None:
+            overflow.setVisible(True)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        super().showEvent(event)
+        self._hide_export_toolbar_buttons()
 
     def controls_reachable(self) -> dict[str, bool]:
         """Primary toolbar actions visible; Export actions reachable via the » menu."""
@@ -1374,7 +1396,11 @@ class QtOrbitRxApplication(QMainWindow):
         if central is None or not hasattr(self, "map_widget"):
             return
         ratio = 0.42 if self._compact else 0.48
-        target = max(180, int(central.height() * ratio))
+        target = max(160, int(central.height() * ratio))
+        if self._compact:
+            # Leave room for layer chips (min 36) + slider strip (~72) under the map.
+            reserve = 36 + 72 + 24
+            target = min(target, max(120, central.height() - reserve))
         self.map_widget.setMinimumHeight(target)
         if hasattr(self.map_widget, "setSizePolicy"):
             from PySide6.QtWidgets import QSizePolicy as _QSP

@@ -47,8 +47,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "omnirig_rig_number": 1,
     # Location: manual lat/lon by default; IP geolocation is opt-in (privacy)
     "ip_geolocation_enabled": False,
-    "home_lat": None,
-    "home_lon": None,
+    "home_lat": 51.5081,  # London centre (Trafalgar Sq); never a private home
+    "home_lon": -0.1281,
     # Live Spots (PSKReporter). Poll interval is clamped to 300 s minimum.
     "spots_enabled": True,
     "spots_mode": "FT8",

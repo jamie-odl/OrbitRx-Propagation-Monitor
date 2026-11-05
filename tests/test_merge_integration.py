@@ -121,7 +121,7 @@ def test_release_docs_exist_without_em_dashes(name):
 
 def test_license_is_mit_jamie_sibley():
     text = (ROOT / "LICENSE").read_text(encoding="utf-8")
-    assert "MIT License" in text and "Jamie Sibley" in text
+    assert "MIT License" in text and "thevenom" in text
 
 
 def test_buy_me_a_coffee_uses_jamie_url():
