@@ -158,7 +158,16 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _build_ui(self) -> None:
         central = QWidget()
-        self.setCentralWidget(central)
+        # M3 (V7): on a small or scaled-up screen the window is clamped to the
+        # available geometry; if the content's minimum is still larger, the whole
+        # content scrolls instead of running off the screen edge.
+        central_scroll = QScrollArea()
+        central_scroll.setObjectName("centralScroll")
+        central_scroll.setWidgetResizable(True)
+        central_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        central_scroll.setWidget(central)
+        self._central_scroll = central_scroll
+        self.setCentralWidget(central_scroll)
         root = QHBoxLayout(central)
 
         left = QVBoxLayout()
@@ -230,7 +239,7 @@ class QtOrbitRxApplication(QMainWindow):
 
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
-        right_scroll.setMinimumWidth(400)
+        right_scroll.setMinimumWidth(320)
         right_scroll.setMaximumWidth(420)
         right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # S3: the Stats tab below has its own scroll area; only one vertical scrollbar

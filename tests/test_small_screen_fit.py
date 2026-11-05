@@ -94,3 +94,14 @@ def test_about_dialog_fits_small_available_geometry(window, small_avail):
     dlg = _build_about_dialog()
     assert dlg.width() <= small_avail.width()
     assert dlg.height() <= small_avail.height()
+
+
+def test_main_window_content_scrolls_instead_of_overflowing(window):
+    """M3 (V7): the main window's content sits in a scroll area, so a content
+    minimum larger than a small screen scrolls rather than running off-screen."""
+    from PySide6.QtWidgets import QScrollArea
+
+    central = window.centralWidget()
+    assert isinstance(central, QScrollArea)
+    assert central.objectName() == "centralScroll"
+    assert central.widgetResizable()
