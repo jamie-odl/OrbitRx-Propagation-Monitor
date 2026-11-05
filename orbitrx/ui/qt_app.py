@@ -332,22 +332,15 @@ class QtOrbitRxApplication(QMainWindow):
         replay_row.addWidget(self.lbl_replay)
         slider_strip_layout.addLayout(replay_row)
 
-        # M1: everything above (banner, cluster row, map, layer toggles) scrolls
-        # vertically only (never horizontally); the sliders below stay outside
-        # this scroll area so they are always visible without scrolling.
-        map_scroll = QScrollArea()
-        map_scroll.setObjectName("mapScroll")
-        map_scroll.setWidgetResizable(True)
-        map_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        map_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        map_scroll.setWidget(map_pane)
-        self._map_scroll = map_scroll
+        # M1: no scroll area around the map pane. The map stretches and shrinks so
+        # the layer toggles and sliders stay visible without scrolling.
+        self._map_scroll = None
         self._map_pane = map_pane
 
         map_tab = QWidget()
         map_tab_layout = QVBoxLayout(map_tab)
         map_tab_layout.setContentsMargins(0, 0, 0, 0)
-        map_tab_layout.addWidget(map_scroll, stretch=1)
+        map_tab_layout.addWidget(map_pane, stretch=1)
         map_tab_layout.addWidget(slider_strip)
         self._map_tab = map_tab
 
