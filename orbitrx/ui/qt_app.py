@@ -169,11 +169,13 @@ class _UiInvoker(QObject):
 class QtOrbitRxApplication(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        apply_theme()
+        app = QApplication.instance()
+        if app is not None:
+            apply_theme(app)
         self.setWindowTitle(f"OrbitRx Propagation Monitor {__version__}")
         self.renderer = MapRenderer(width=900, height=720)
         self._labels: dict[str, QLabel] = {}
-        self._layer_checks: dict[str, QCheckBox] = {}
+        self._layer_checks: dict[str, QToolButton] = {}
         self._map_container: QWidget | None = None
         self._tray: QSystemTrayIcon | None = None
 
@@ -244,25 +246,42 @@ class QtOrbitRxApplication(QMainWindow):
         # P1: a bold header ("Static map"/"Interactive map") plus a muted secondary
         # hint line (file name/dims, or OpenStreetMap credit, or an error) that
         # elides on the right with the full text always available as a tooltip.
+        map_layout.setContentsMargins(16, 16, 16, 8)
+        map_layout.setSpacing(8)
+        header_row = QHBoxLayout()
         self.banner = QLabel("Loading map...")
-        self.banner.setObjectName("banner")
-        self.banner.setWordWrap(True)
-        map_layout.addWidget(self.banner)
+        self.banner.setObjectName("panelTitle")
+        self.banner.setWordWrap(False)
+        header_row.addWidget(self.banner)
+        header_row.addStretch(1)
+        self._map_help = QToolButton()
+        self._map_help.setText("?")
+        self._map_help.setObjectName("helpChip")
+        self._map_help.setToolTip(
+            "Scroll to zoom · Right-drag to pan · Double-click to reset · Click a spot to tune"
+        )
+        self._map_help.setAutoRaise(True)
+        header_row.addWidget(self._map_help)
+        map_layout.addLayout(header_row)
+        # M1: meta is the live greyline timestamp only — never the asset filename.
         self.banner_hint = _ElidedLabel()
         self.banner_hint.setObjectName("bannerHint")
-        self.banner_hint.setStyleSheet(f"color: {MUTED_SECONDARY}; font-size: {FONT_BODY - 1}px;")
         map_layout.addWidget(self.banner_hint)
 
         cluster_row = QHBoxLayout()
         cluster_row.addWidget(QLabel("Cluster:"))
         self.cluster_combo = QComboBox()
+        self.cluster_combo.setMaximumWidth(420)
         self._populate_cluster_combo()
         self.cluster_combo.currentIndexChanged.connect(self._cluster_node_changed)
-        cluster_row.addWidget(self.cluster_combo, stretch=1)
+        cluster_row.addWidget(self.cluster_combo)
+        cluster_row.addStretch(1)
         map_layout.addLayout(cluster_row)
 
         self.map_widget = self._create_map_widget()
         self.map_widget.spot_clicked.connect(self._tune_from_map)
+        if hasattr(self.map_widget, "greyline_meta_changed"):
+            self.map_widget.greyline_meta_changed.connect(self.banner_hint.setFullText)
         self.map_widget.map_clicked.connect(self._on_map_click)
         if hasattr(self.map_widget, "switch_to_static_requested"):
             self.map_widget.switch_to_static_requested.connect(
@@ -270,21 +289,24 @@ class QtOrbitRxApplication(QMainWindow):
             )
         map_layout.addWidget(self.map_widget, stretch=1)
 
+        # M3: layer chips (checkable pills) in one wrapping row.
         layer_widgets = []
         for key, label in [("greyline", "Greyline"), ("night", "Night"), ("dx_arcs", "DX"),
                            ("aurora", "Aurora"), ("grid", "Grid"),
                            ("spot_arcs", "Live spots"), ("spot_heatmap", "Heatmap")]:
-            cb = QCheckBox(label)
-            cb.setChecked(self.ctrl.cfg.get("map_layers", {}).get(key, key != "grid"))
-            cb.stateChanged.connect(self._layers_changed)
+            chip = QToolButton()
+            chip.setText(label)
+            chip.setCheckable(True)
+            chip.setChecked(self.ctrl.cfg.get("map_layers", {}).get(key, key != "grid"))
+            chip.setObjectName("layerChip")
+            chip.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            chip.toggled.connect(lambda _=False: self._layers_changed())
             if key.startswith("spot_") and self._map_backend != "leaflet":
-                cb.setEnabled(False)
-                # P5: disabled toggles explain themselves on hover.
-                cb.setToolTip("Available on the interactive map")
-            self._layer_checks[key] = cb
-            layer_widgets.append(cb)
+                chip.setEnabled(False)
+                chip.setToolTip("Available on the interactive map")
+            self._layer_checks[key] = chip
+            layer_widgets.append(chip)
         if self._map_backend != "leaflet":
-            # P5: a small text button styled like the toolbar, not a link.
             switch_lbl = QToolButton()
             switch_lbl.setText("Switch map")
             switch_lbl.setObjectName("switchMapButton")
@@ -293,9 +315,7 @@ class QtOrbitRxApplication(QMainWindow):
             switch_lbl.setToolTip("Live spots need the interactive map. Switch in Settings > Map & spots.")
             switch_lbl.clicked.connect(lambda: self._settings(initial_page="Map & spots"))
             layer_widgets.append(switch_lbl)
-        # M1: the layer toggles reflow into a two-row-ish flow as the map pane
-        # narrows, instead of ever needing a horizontal scrollbar.
-        self._layer_grid = _ReflowGrid(layer_widgets, min_item_width=108, max_cols=4)
+        self._layer_grid = _ReflowGrid(layer_widgets, min_item_width=96, max_cols=8)
         map_layout.addWidget(self._layer_grid)
 
         # M1: the sliders live in a fixed strip below the map (added to
@@ -381,32 +401,62 @@ class QtOrbitRxApplication(QMainWindow):
         stats_form_widget = QWidget()
         stats_form = QFormLayout(stats_form_widget)
         stats_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        stats_form.setHorizontalSpacing(12)
+        stats_form.setVerticalSpacing(8)
         stats_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        for key in [
-            # S6: "band_grid" is deliberately absent - the band_panel tiles above are the
-            # single source for per-band conditions, so there is no second wrapping line.
-            "kp", "kp_forecast", "solar", "sunspot", "a_index", "solar_wind", "time",
-            "bands", "muf", "path_muf", "hamqsl", "sunrise", "sunset",
-            "location", "cluster", "solar_forecast", "contest", "dx",
-        ]:
-            lbl = QLabel(f"{key}: --")
+        # M4: labelled definition-list groups (SPACE WEATHER / PROPAGATION / PATH / OPS).
+        space_keys = ["kp", "kp_forecast", "solar", "sunspot", "a_index", "solar_wind", "time"]
+        prop_keys = ["bands", "muf", "hamqsl"]
+        location_keys = ["path_muf", "sunrise", "sunset", "location"]
+        late_keys = ["cluster", "solar_forecast", "contest", "dx"]
+        pretty = {
+            "kp": "Kp", "kp_forecast": "Kp forecast", "solar": "Solar flux",
+            "sunspot": "Sunspot", "a_index": "A-index", "solar_wind": "Solar wind",
+            "time": "UTC", "bands": "Bands", "muf": "MUF", "hamqsl": "HamQSL",
+            "path_muf": "Path MUF", "sunrise": "Sunrise", "sunset": "Sunset",
+            "location": "You", "cluster": "Cluster", "solar_forecast": "Forecast",
+            "contest": "Contest", "dx": "DX",
+        }
+        for key in space_keys + prop_keys + location_keys + late_keys:
+            lbl = QLabel("--")
             lbl.setWordWrap(True)
-            lbl.setStyleSheet("padding: 2px;")
+            lbl.setStyleSheet("padding: 2px; font-weight: 600; ")
+            lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             self._labels[key] = lbl
             if key == "solar":
                 lbl.setToolTip("Change vs previous reading")
-            stats_form.addRow(lbl)
-        # M5: replaces the path_muf/sunrise/sunset rows with a single explanatory
-        # line (and a link to the same action as the toolbar's Location button)
-        # instead of three "n/a" rows when no location is set.
+
+        def _section(title: str) -> None:
+            hdr = QLabel(title)
+            hdr.setObjectName("sectionLabel")
+            stats_form.addRow(hdr)
+
+        def _add_keys(keys: list[str]) -> None:
+            for key in keys:
+                name = QLabel(pretty.get(key, key))
+                name.setObjectName("muted")
+                name.setMinimumWidth(110)
+                stats_form.addRow(name, self._labels[key])
+
+        _section("SPACE WEATHER")
+        _add_keys(space_keys)
+        _section("PROPAGATION")
+        _add_keys(prop_keys)
+        _section("PATH")
         self._location_hint_lbl = QLabel(
-            'Set your location to see sunrise, sunset and path MUF. <a href="#">Location</a>'
+            'Set your location to unlock path MUF and sun times. <a href="#">Location</a>'
         )
         self._location_hint_lbl.setWordWrap(True)
         self._location_hint_lbl.setObjectName("muted")
+        self._location_hint_lbl.setStyleSheet(
+            "background: #1A2438; border: 1px solid #243044; border-radius: 10px; padding: 12px;"
+        )
         self._location_hint_lbl.linkActivated.connect(lambda _: self.ctrl.refresh_location())
         self._location_hint_lbl.setVisible(False)
         stats_form.addRow(self._location_hint_lbl)
+        _add_keys(location_keys)
+        _section("OPS")
+        _add_keys(late_keys)
         stats_scroll.setWidget(stats_form_widget)
         stats_outer.addWidget(stats_scroll, stretch=1)
 
@@ -483,11 +533,13 @@ class QtOrbitRxApplication(QMainWindow):
         # instead (see resizeEvent).
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._splitter.addWidget(self._map_tab)
+        side_pane.setMinimumWidth(280)
+        side_pane.setMaximumWidth(360)
         self._splitter.addWidget(side_pane)
         self._splitter.setStretchFactor(0, 3)
         self._splitter.setStretchFactor(1, 1)
         self._splitter.setChildrenCollapsible(False)
-        self._splitter.setSizes([900, 300])
+        self._splitter.setSizes([900, 320])
 
         self._compact_tabs = QTabWidget()
         self._compact_tabs.setObjectName("compactTabs")
@@ -580,7 +632,7 @@ class QtOrbitRxApplication(QMainWindow):
             if self._map_backend == "leaflet":
                 self._map_label = "Interactive map · OpenStreetMap"
                 self.banner.setText("Interactive map")
-                self.banner_hint.setFullText("OpenStreetMap")
+                self.banner_hint.setFullText("")
                 return
             map_path = ensure_map_image()
             if not map_path.is_file():
@@ -589,11 +641,10 @@ class QtOrbitRxApplication(QMainWindow):
             img.load()
             self.renderer.set_base_map(img)
             self.map_widget.set_base_map(self.renderer.base_rgba_image())
-            # P1: "Static map" header plus a muted secondary hint with the file
-            # name and dimensions, instead of one combined line.
-            self._map_label = f"Static map · {map_path.name} ({img.width}×{img.height})"
+            # M1: never print the asset filename in the UI.
+            self._map_label = "Static map"
             self.banner.setText("Static map")
-            self.banner_hint.setFullText(f"{map_path.name} · {img.width}×{img.height}")
+            self.banner_hint.setFullText("")
         except Exception as e:
             self.renderer.set_base_map(None)
             if hasattr(self.map_widget, "set_base_map"):
@@ -653,8 +704,19 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _refresh_labels_and_map(self) -> None:
         labels = self.ctrl.weather_labels()
+        # M4: row caption lives in the form label; strip duplicated "Key: " prefixes.
+        strip_map = {
+            "kp": "Kp: ", "kp_forecast": "Kp Forecast: ", "solar": "Solar Flux: ",
+            "sunspot": "Sunspot: ", "a_index": "A-index: ", "solar_wind": "Wind: ",
+            "time": "NOAA data: ", "bands": "Bands: ", "muf": "MUF: ",
+            "path_muf": "Path MUF: ", "sunrise": "Sunrise: ", "sunset": "Sunset: ",
+            "location": "You: ", "cluster": "Cluster: ",
+        }
         for k, v in labels.items():
             if k in self._labels:
+                prefix = strip_map.get(k)
+                if prefix and v.startswith(prefix):
+                    v = v[len(prefix):]
                 self._labels[k].setText(v)
         self._update_location_hint_visibility()
         self.alerts_list.clear()
@@ -715,7 +777,7 @@ class QtOrbitRxApplication(QMainWindow):
         """M5: path_muf/sunrise/sunset only mean anything once a location is set;
         otherwise show the single explanatory line instead of three "n/a" rows."""
         has_location = self.ctrl.state.user_lat is not None and self.ctrl.state.user_lon is not None
-        for key in ("path_muf", "sunrise", "sunset", "you"):
+        for key in ("path_muf", "sunrise", "sunset", "location"):
             if key in self._labels:
                 self._labels[key].setVisible(has_location)
         self._location_hint_lbl.setVisible(not has_location)
@@ -1262,6 +1324,19 @@ class QtOrbitRxApplication(QMainWindow):
         super().resizeEvent(event)
         self._update_compact_mode()
 
+    def _apply_map_min_height(self) -> None:
+        """N6 / M9.3: in compact Map tab, keep the map at least ~40% of the
+        central height so 150%/1024 does not shrink it to a tiny thumbnail."""
+        central = self.centralWidget()
+        if central is None or not hasattr(self, "map_widget"):
+            return
+        ratio = 0.42 if self._compact else 0.48
+        target = max(180, int(central.height() * ratio))
+        self.map_widget.setMinimumHeight(target)
+        if hasattr(self.map_widget, "setSizePolicy"):
+            from PySide6.QtWidgets import QSizePolicy as _QSP
+            self.map_widget.setSizePolicy(_QSP.Policy.Expanding, _QSP.Policy.Expanding)
+
     def _update_compact_mode(self) -> None:
         """M1: below COMPACT_WIDTH_BELOW logical px, swap the map/side splitter for
         a Map/Conditions tab pair (and back above COMPACT_WIDTH_ABOVE) so neither
@@ -1273,6 +1348,7 @@ class QtOrbitRxApplication(QMainWindow):
             self._enter_compact_mode()
         elif self._compact and width > COMPACT_WIDTH_ABOVE:
             self._exit_compact_mode()
+        self._apply_map_min_height()
 
     def _enter_compact_mode(self) -> None:
         self._compact = True
@@ -1452,6 +1528,25 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
             time.sleep(0.05)
 
     wait(0.3)
+    # N2: raise the app above any runner console so screen grabs are not covered.
+    win.raise_()
+    win.activateWindow()
+    app.processEvents()
+
+    # Wait briefly for weather/band tiles so captures do not show UNKNOWN (N6).
+    try:
+        win.ctrl.fetch_weather()
+    except Exception:
+        pass
+    deadline = time.time() + 10.0
+    while time.time() < deadline:
+        app.processEvents()
+        grid = getattr(win.ctrl.state, "band_grid", {}) or {}
+        if grid and any(v and v != "UNKNOWN" for v in grid.values()):
+            break
+        time.sleep(0.2)
+    win._refresh_labels_and_map()
+    app.processEvents()
 
     cat = win.ctrl.cat
     if os.environ.get("ORBITRX_TEST_SIMULATED_RIG") == "1":
@@ -1484,18 +1579,23 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
 
     settings_dlg = win._build_settings_dialog(initial_page="DX cluster")
     settings_dlg.show()
-    wait(0.3)
+    settings_dlg.raise_()
+    settings_dlg.activateWindow()
+    wait(0.4)
     fg = settings_dlg.frameGeometry()
-    app.primaryScreen().grabWindow(0, fg.x(), fg.y(), fg.width(), fg.height()).save(
-        str(out_dir / "settings-dx-cluster.png")
-    )
-    # Whole Settings dialog (list + pages + the pinned Save/Cancel row) after
-    # fit_to_screen, so a release build's capture has direct evidence Save is
-    # still on-screen even on a small/scaled-up display.
-    app.primaryScreen().grabWindow(0, fg.x(), fg.y(), fg.width(), fg.height()).save(
-        str(out_dir / "settings-full.png")
-    )
-    # Whole-desktop grab: shows the dialog's position relative to the real screen edges.
+    # Grab the dialog widget itself (not the whole screen) so a runner console
+    # cannot cover the evidence (N2).
+    settings_dlg.grab().save(str(out_dir / "settings-dx-cluster.png"))
+    # N7: settings-full is the Station page, not a duplicate of DX cluster.
+    for i in range(settings_dlg.page_list.count()):
+        if settings_dlg.page_list.item(i).text().strip().lower().startswith("station"):
+            settings_dlg.page_list.setCurrentRow(i)
+            break
+    wait(0.3)
+    settings_dlg.grab().save(str(out_dir / "settings-full.png"))
+    # Whole-desktop grab after raising the dialog again.
+    settings_dlg.raise_()
+    app.processEvents()
     app.primaryScreen().grabWindow(0).save(str(out_dir / "desktop-settings.png"))
     save_visible = _save_button_fully_visible(settings_dlg)
     settings_on_screen = settings_dlg.screen().availableGeometry().contains(settings_dlg.frameGeometry())
@@ -1507,19 +1607,21 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
     about.show()
     wait(0.4)
     afg = about.frameGeometry()
-    (about.screen() or app.primaryScreen()).grabWindow(0, afg.x(), afg.y(), afg.width(), afg.height()).save(
-        str(out_dir / "about.png")
-    )
+    about.grab().save(str(out_dir / "about.png"))
     about_on_screen = (about.screen() or app.primaryScreen()).availableGeometry().contains(afg)
     about.reject()
 
     win_screen = win.screen() or app.primaryScreen()
     avail = win_screen.availableGeometry()
-    wait(0.2)
+    win.raise_()
+    win.activateWindow()
+    wait(0.3)
     main_fg = win.frameGeometry()
-    win_screen.grabWindow(0, main_fg.x(), main_fg.y(), main_fg.width(), main_fg.height()).save(
-        str(out_dir / "main-window.png")
-    )
+    # N2: widget grab for the window itself (immune to overlapping consoles).
+    win.grab().save(str(out_dir / "main-window.png"))
+    # Desktop grab still useful for on-screen framing; raise first.
+    win.raise_()
+    app.processEvents()
     win_screen.grabWindow(0).save(str(out_dir / "desktop-main.png"))
     # M1: all of Settings/Rig/About must be reachable (directly or via the
     # toolbar's overflow chevron) in this capture.

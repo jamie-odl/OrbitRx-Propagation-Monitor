@@ -197,7 +197,7 @@ class DxClusterService:
             s = None
             host = self.cfg.get("dx_cluster_host")
             port = int(self.cfg.get("dx_cluster_port", 23))
-            callsign = self.cfg.get("dx_cluster_callsign", "W1AW-9")
+            callsign = self.cfg.get("dx_cluster_callsign", "")
             try:
                 self.on_status("connecting")
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

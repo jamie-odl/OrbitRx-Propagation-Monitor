@@ -24,18 +24,19 @@ from pathlib import Path
 from orbitrx.map_renderer import MapLayers, MapRenderer
 from orbitrx.paths import bundled_root
 from orbitrx.ui.formatting import format_hour_offset, format_map_hud_datetime
-from orbitrx.ui.theme import BG, CARD_STYLE, CARD_TEXT, EMPTY_OVERLAY_STYLE, MUTED
+from orbitrx.ui.theme import ACCENT, BG, BG_ELEVATED, BORDER, CARD_STYLE, CARD_TEXT, EMPTY_OVERLAY_STYLE, MUTED, TEXT, TEXT_MUTED
 
 log = logging.getLogger("orbitrx")
 
 # M3: shown over the map when the page fails to load, or loads but the tiles
 # never do (offline, or an unreachable tile server) -- never a blank white page.
 MAP_UNAVAILABLE_TEXT = "Map tiles unavailable (offline?)"
-# Scoped to the card's object name so the border/radius never cascades onto
-# the icon, message and buttons inside it.
+MAP_UNAVAILABLE_BODY = "Check your connection, then retry - or switch to the static map."
+# M5: branded offline card - elevated fill, 12 radius, no stock triangle as sole brand.
 MAP_UNAVAILABLE_STYLE = (
-    f"QWidget#mapUnavailableCard {{ {CARD_STYLE} padding: 16px; }}"
-    f" QWidget#mapUnavailableCard QLabel {{ color: {CARD_TEXT}; font-size: 14px; border: none; background: transparent; }}"
+    f"QWidget#mapUnavailableCard {{ background: {BG_ELEVATED}; border: 1px solid {BORDER}; "
+    f"border-radius: 12px; padding: 24px; }}"
+    f" QWidget#mapUnavailableCard QLabel {{ border: none; background: transparent; }}"
 )
 MAP_UNAVAILABLE_HINT_STYLE = f"color: {MUTED}; font-size: 12px;"
 
@@ -59,10 +60,20 @@ _LEAFLET_HTML = """<!DOCTYPE html>
 <style>__LEAFLET_CSS__</style>
 <script>__LEAFLET_JS__</script>
 <script>__QWEBCHANNEL_JS__</script>
-<style>html,body,#map{margin:0;height:100%;background:#101820}
-.orbitrx-dark-tiles{filter:invert(100%) hue-rotate(180deg) brightness(0.85) contrast(0.9) saturate(0.6)}
-.leaflet-control-attribution{background:rgba(15,23,32,0.8);color:#8FA3B8}
-.leaflet-control-attribution a{color:#8FA3B8}</style>
+<style>html,body,#map{margin:0;height:100%;background:#070B14}
+.leaflet-control-attribution{
+  background:rgba(7,11,20,0.75)!important;color:#6B7A90!important;
+  border-radius:8px;padding:2px 8px;font-size:11px!important;margin:8px!important}
+.leaflet-control-attribution a{color:#6B7A90!important}
+.leaflet-control-zoom a{
+  background:#121A2B!important;color:#9AA8BC!important;border-color:#243044!important;
+  width:28px!important;height:28px!important;line-height:28px!important;
+  border-radius:0!important}
+.leaflet-control-zoom{border:none!important;border-radius:8px;overflow:hidden;
+  box-shadow:none!important;width:28px}
+.leaflet-control-zoom a:first-child{border-radius:8px 8px 0 0!important}
+.leaflet-control-zoom a:last-child{border-radius:0 0 8px 8px!important;height:28px!important}
+</style>
 </head><body>
 <div id="map"></div>
 <script>
@@ -75,9 +86,9 @@ new QWebChannel(qt.webChannelTransport, ch => {
   if (tilesOk) spotBridge.tilesLoaded(); else if (tilesFailed) spotBridge.tileError();
 });
 const map = L.map('map', {worldCopyJump: true, zoomControl: true}).setView([20, 0], 2);
-const tileLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-  maxZoom: 12, className: 'orbitrx-dark-tiles'
+const tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  maxZoom: 12, subdomains: 'abcd'
 }).addTo(map);
 tileLayer.on('tileload', () => { if (!tilesOk) { tilesOk = true; if (spotBridge) spotBridge.tilesLoaded(); } });
 tileLayer.on('tileerror', () => { if (tilesOk) return; tilesFailed = true; if (spotBridge) spotBridge.tileError(); });
@@ -89,25 +100,25 @@ function setPayload(p) {
   if (p.layers.night) {
     for (let lon=-180; lon<180; lon+=2) {
       if (Math.abs(((lon - p.sun_lon + 180) % 360) - 180) > 90) {
-        const r = L.rectangle([[ -85, lon], [85, lon+2]], {color:'#000', fillColor:'#000', fillOpacity:0.35, weight:0});
+        const r = L.rectangle([[ -85, lon], [85, lon+2]], {color:'#080E1C', fillColor:'#080E1C', fillOpacity:0.55, weight:0});
         r.addTo(map); nightPane.push(r);
       }
     }
   }
   if (p.layers.greyline && p.terminator.length > 1) {
-    termLine = L.polyline(p.terminator, {color:'#FF6420', weight:3, opacity:0.9}).addTo(map);
+    termLine = L.polyline(p.terminator, {color:'#FF8A4C', weight:2, opacity:0.95}).addTo(map);
   }
   if (p.user) {
-    if (!userM) userM = L.circleMarker(p.user, {radius:8, color:'#fff', fillColor:'#00E676', fillOpacity:1}).addTo(map).bindPopup('You');
+    if (!userM) userM = L.circleMarker(p.user, {radius:5, color:'#3DDC97', fillColor:'#3DDC97', fillOpacity:1, weight:3, opacity:0.45}).addTo(map).bindPopup('You');
     else userM.setLatLng(p.user);
   }
   if (p.sun) {
-    if (!sunM) sunM = L.circleMarker(p.sun, {radius:10, color:'#FFA000', fillColor:'#FFEB3B', fillOpacity:1}).addTo(map).bindPopup('Sub-solar');
+    if (!sunM) sunM = L.circleMarker(p.sun, {radius:9, color:'#F0B429', fillColor:'#F0B429', fillOpacity:1, weight:0}).addTo(map).bindPopup('Sub-solar');
     else sunM.setLatLng(p.sun);
   }
   (p.spots||[]).forEach(s => {
     if (p.layers.dx_arcs && s.from_ll && s.to_ll) {
-      L.polyline([s.from_ll, s.to_ll], {color:'#00E5FF', dashArray:'6 6', weight:2}).addTo(dxLayer);
+      L.polyline([s.from_ll, s.to_ll], {color:'rgba(120,180,255,0.55)', weight:1.25}).addTo(dxLayer);
     }
     if (s.from_ll) L.circleMarker(s.from_ll, {radius:5, color:'#fff', fillColor:'#FF9800', fillOpacity:1}).addTo(dxLayer);
     if (s.to_ll) {
@@ -125,15 +136,18 @@ function setLiveSpots(p) {
     // P4: radius shrinks with zoom so the heatmap never swamps the spot lines
     // underneath it at a closer-in view.
     const zoomScale = Math.pow(0.72, Math.max(0, map.getZoom() - 2));
-    (p.heat||[]).forEach(c => {
-      L.circle([c[0], c[1]], {radius: 280000 * zoomScale, stroke:false, fillColor:'#FF5252', fillOpacity: 0.35}).addTo(liveHeat);
+    const heats = (p.heat||[]).slice(0, 40);
+    heats.forEach(c => {
+      L.circle([c[0], c[1]], {radius: 280000 * zoomScale, stroke:false, fillColor:'#F07178', fillOpacity: 0.28}).addTo(liveHeat);
     });
   }
   if (p.arcs) {
-    (p.spots||[]).forEach(s => {
-      const opacity = (typeof s.opacity === 'number') ? s.opacity : 0.9;
-      L.polyline([s.tx, s.rx], {color:s.color, weight:1.5, opacity: opacity}).bindTooltip(s.label).addTo(liveArcs);
-      L.circleMarker(s.tx, {radius:3, color:s.color, fillOpacity:1, opacity: opacity}).addTo(liveArcs);
+    const spots = (p.spots||[]).slice(0, 200);
+    spots.forEach(s => {
+      let opacity = (typeof s.opacity === 'number') ? s.opacity : 0.9;
+      if (typeof s.age_min === 'number' && s.age_min > 15) opacity = Math.min(opacity, 0.35);
+      L.polyline([s.tx, s.rx], {color:'rgba(120,180,255,0.55)', weight:1.25, opacity: opacity}).bindTooltip(s.label).addTo(liveArcs);
+      L.circleMarker(s.tx, {radius:3, color:'#78B4FF', fillOpacity:1, opacity: opacity}).addTo(liveArcs);
     });
   }
 }
@@ -195,7 +209,8 @@ if WEBENGINE_AVAILABLE:
             self._layers = MapLayers()
             layout = QVBoxLayout(self)
             layout.setContentsMargins(0, 0, 0, 0)
-            self.hud = QLabel("Scroll to zoom · Click a spot to tune")
+            self.hud = QLabel("")
+            self.hud.hide()
             self.hud.setObjectName("muted")
             # M3: its text grows with the current time/offset state, so it must wrap
             # (and never force the pane wider) on a narrow window.
@@ -264,19 +279,27 @@ if WEBENGINE_AVAILABLE:
             card.setStyleSheet(MAP_UNAVAILABLE_STYLE)
             card_layout = QVBoxLayout(card)
 
-            icon = QLabel("⚠")
+            icon = QLabel("⌖")  # map-off glyph stand-in (32px feel)
             icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            icon.setStyleSheet("font-size: 28px; background: transparent;")
+            icon.setStyleSheet(f"font-size: 32px; color: {TEXT_MUTED}; background: transparent;")
             card_layout.addWidget(icon)
 
             self._unavailable_message = QLabel(MAP_UNAVAILABLE_TEXT)
             self._unavailable_message.setWordWrap(True)
             self._unavailable_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._unavailable_message.setStyleSheet("background: transparent;")
+            self._unavailable_message.setStyleSheet(
+                f"background: transparent; color: {TEXT}; font-size: 15px; font-weight: 600;"
+            )
             card_layout.addWidget(self._unavailable_message)
+            body = QLabel(MAP_UNAVAILABLE_BODY)
+            body.setWordWrap(True)
+            body.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            body.setStyleSheet(f"background: transparent; color: {MUTED}; font-size: 13px;")
+            card_layout.addWidget(body)
 
             btn_row = QHBoxLayout()
             self.retry_btn = QPushButton("Retry")
+            self.retry_btn.setObjectName("primaryButton")
             self.switch_static_btn = QPushButton("Switch to static map")
             self.retry_btn.clicked.connect(self._retry)
             self.switch_static_btn.clicked.connect(self.switch_to_static_requested.emit)

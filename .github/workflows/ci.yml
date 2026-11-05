@@ -88,6 +88,11 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
+      - name: Stamp commit SHA into About metadata (N4)
+        shell: bash
+        run: |
+          python tools/stamp_commit.py "${GITHUB_SHA:0:7}"
+          grep -E 'COMMIT_SHA = "' orbitrx/_build_meta.py
       - name: Build executable
         run: |
           pyinstaller OrbitRxMonitor.spec --noconfirm
@@ -117,12 +122,29 @@ jobs:
           $exe = (Resolve-Path dist\OrbitRxMonitor.exe).Path
           New-Item -ItemType Directory -Force -Path release-shots\100, release-shots\150 | Out-Null
 
+          function Hide-RunnerConsoles {
+            # N2: keep PowerShell/cmd consoles from covering the release captures.
+            Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public static class WinMin {
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
+}
+"@
+            $hwnd = [WinMin]::GetConsoleWindow()
+            if ($hwnd -ne [IntPtr]::Zero) { [WinMin]::ShowWindow($hwnd, 6) | Out-Null } # SW_MINIMIZE
+            Get-Process | Where-Object { $_.MainWindowTitle -match 'GitHub|Host|PowerShell|cmd' } |
+              ForEach-Object { try { $_.CloseMainWindow() | Out-Null } catch {} }
+          }
           function Invoke-ReleaseCapture([string]$CaptureDir, [string]$ScaleFactor) {
             Remove-Item Env:ORBITRX_TEST_SIMULATED_RIG -ErrorAction SilentlyContinue
             Remove-Item Env:QT_SCALE_FACTOR -ErrorAction SilentlyContinue
             $env:ORBITRX_CAPTURE_DIR = (Resolve-Path $CaptureDir).Path
+            $env:ORBITRX_COMMIT_SHA = $env:GITHUB_SHA.Substring(0,7)
             if ($ScaleFactor) { $env:QT_SCALE_FACTOR = $ScaleFactor }
-            $proc = Start-Process -FilePath $exe -PassThru
+            Hide-RunnerConsoles
+            $proc = Start-Process -FilePath $exe -WindowStyle Normal -PassThru
             if (-not $proc.WaitForExit(120000)) {
               Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
               throw "OrbitRxMonitor.exe did not exit within 120s for $CaptureDir"
@@ -207,6 +229,10 @@ jobs:
         run: |
           python tools/measure_field_edges.py release-shots\100\settings-dx-cluster.png release-shots\100\settings-dx-cluster-edges.txt
           python tools/measure_field_edges.py release-shots\150\settings-dx-cluster.png release-shots\150\settings-dx-cluster-edges.txt
+          foreach ($f in 'release-shots\100\settings-dx-cluster-edges.txt', 'release-shots\150\settings-dx-cluster-edges.txt') {
+            if (-not (Test-Path $f) -or ((Get-Content $f -Raw).Trim().Length -eq 0)) { throw "Edges file $f is empty" }
+            Write-Host "$f :"; Get-Content $f
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:

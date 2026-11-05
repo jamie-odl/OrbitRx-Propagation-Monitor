@@ -7,7 +7,7 @@ from PIL import Image
 
 from orbitrx.map_renderer import MapLayers, MapRenderer, MapScene
 from orbitrx.ui.formatting import format_hour_offset, format_map_hud_datetime
-from orbitrx.ui.theme import BG, EMPTY_OVERLAY_STYLE, FONT_CAPTION, MUTED
+from orbitrx.ui.theme import BG_MAP_MATTE, EMPTY_OVERLAY_STYLE, FONT_CAPTION, GREYLINE, MUTED, OK, WARN
 
 try:
     from PySide6.QtCore import Qt, QRectF, Signal
@@ -44,6 +44,7 @@ def _pil_to_qpixmap(img: Image.Image) -> QPixmap:
 class PropagationMapWidget(QWidget):
     """GPU-friendly map: persistent base raster + overlay + vector DX layer."""
 
+    greyline_meta_changed = Signal(str)
     spot_clicked = Signal(float)
     map_clicked = Signal(float, float)
 
@@ -83,7 +84,7 @@ class PropagationMapWidget(QWidget):
         self.view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         # P2: letterbox fill, so a pane that isn't exactly 2:1 shows dark bars
         # (never a crop) above/below or left/right of the map.
-        self.view.setBackgroundBrush(QBrush(QColor(BG)))
+        self.view.setBackgroundBrush(QBrush(QColor(BG_MAP_MATTE)))
         layout.addWidget(self.view, stretch=1)
 
         self.scene = QGraphicsScene()
@@ -195,10 +196,11 @@ class PropagationMapWidget(QWidget):
         offset = state.slider_offset_hours
         now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=offset)
         extra = f"  ({format_hour_offset(offset)})" if offset else ""
-        self.hud.setText(
-            f"Greyline @ {format_map_hud_datetime(now)}{extra} · "
-            "Scroll to zoom · Right-drag to pan · Double-click to reset · Click a spot to tune"
-        )
+        meta = f"Greyline @ {format_map_hud_datetime(now)}{extra}"
+        self.hud.setText("")  # gestures live on the help chip; meta under the title
+        self.hud.hide()
+        if hasattr(self, "greyline_meta_changed"):
+            self.greyline_meta_changed.emit(meta)
 
     def _clear_vectors(self) -> None:
         for item in self._vector_root.childItems()[:]:
@@ -220,7 +222,13 @@ class PropagationMapWidget(QWidget):
             greyline = QGraphicsPathItem(path)
             # P3: cosmetic so the stroke stays 2 logical px at every zoom level,
             # instead of scaling with the map like a baked-in raster line would.
-            pen = QPen(QColor(255, 150, 60, 230), 2)
+            # M1: 2.0 logical-px greyline + soft outer glow.
+            glow = QGraphicsPathItem(QPainterPath(path))
+            gpen = QPen(QColor(255, 138, 76, 64), 8)
+            gpen.setCosmetic(True)
+            glow.setPen(gpen)
+            self._add_to_vectors(glow)
+            pen = QPen(QColor(GREYLINE), 2)
             pen.setCosmetic(True)
             greyline.setPen(pen)
             self._add_to_vectors(greyline)
@@ -236,32 +244,37 @@ class PropagationMapWidget(QWidget):
                 x, y = ann.data["x"], ann.data["y"]
                 if img_w > 32:
                     x = min(max(x, 16.0), img_w - 16.0)
-                glow = QGraphicsEllipseItem(x - 16, y - 16, 32, 32)
-                glow.setBrush(QBrush(QColor(255, 235, 80, 80)))
+                # M1: 18px disc #F0B429 + soft halo, no cartoon rays.
+                glow = QGraphicsEllipseItem(x - 14, y - 14, 28, 28)
+                glow.setBrush(QBrush(QColor(240, 180, 41, 89)))
                 glow.setPen(QPen(Qt.PenStyle.NoPen))
                 self._add_to_vectors(glow)
                 core = QGraphicsEllipseItem(x - 9, y - 9, 18, 18)
-                core.setBrush(QBrush(QColor("#FFEB3B")))
-                core.setPen(QPen(QColor("#FFA000"), 2))
+                core.setBrush(QBrush(QColor(WARN)))
+                core.setPen(QPen(Qt.PenStyle.NoPen))
                 self._add_to_vectors(core)
 
             elif ann.kind == "user":
                 x, y = ann.data["x"], ann.data["y"]
-                dot = QGraphicsEllipseItem(x - 7, y - 7, 14, 14)
-                dot.setBrush(QBrush(QColor("#00E676")))
-                dot.setPen(QPen(QColor("white"), 2))
+                # M1: 10px disc --ok + 14px ring + label 11/600 with matte halo.
+                ring = QGraphicsEllipseItem(x - 7, y - 7, 14, 14)
+                ring.setBrush(QBrush(QColor(61, 220, 151, 89)))
+                ring.setPen(QPen(Qt.PenStyle.NoPen))
+                self._add_to_vectors(ring)
+                dot = QGraphicsEllipseItem(x - 5, y - 5, 10, 10)
+                dot.setBrush(QBrush(QColor(OK)))
+                dot.setPen(QPen(Qt.PenStyle.NoPen))
                 self._add_to_vectors(dot)
-                # P3: a 1px dark halo around "You" so it stays readable over light
-                # land, not just dark ocean -- a plain QGraphicsTextItem has no
-                # way to stroke its glyphs, so this builds the label as a path.
                 label_path = QPainterPath()
-                fm = QFontMetrics(sun_font)
-                label_path.addText(x + 10, y - 14 + fm.ascent(), sun_font, "You")
+                you_font = QFont("Segoe UI", FONT_CAPTION)
+                you_font.setWeight(QFont.Weight.DemiBold)
+                fm = QFontMetrics(you_font)
+                label_path.addText(x + 10, y - 14 + fm.ascent(), you_font, "You")
                 halo = QGraphicsPathItem(label_path)
-                halo_pen = QPen(QColor(15, 23, 32, 180), 3)
+                halo_pen = QPen(QColor(7, 11, 20, 220), 3)
                 halo_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
                 halo.setPen(halo_pen)
-                halo.setBrush(QBrush(QColor("white")))
+                halo.setBrush(QBrush(QColor("#E8EEF7")))
                 self._add_to_vectors(halo)
 
             elif ann.kind == "dx_spot":

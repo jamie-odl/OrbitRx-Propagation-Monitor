@@ -18,8 +18,8 @@ def bundled_root() -> Path | None:
 
 
 def resolve_map_path() -> Path:
-    """Find world_map.jpg from bundle, project root, or cwd."""
-    names = ["world_map.jpg"]
+    """Find the static basemap (v2 first, legacy JPG fallback)."""
+    names = ["static_basemap_v2.png", "static_basemap_v2.webp", "world_map.jpg"]
     search: list[Path] = []
     bundle = bundled_root()
     if bundle:
@@ -30,25 +30,25 @@ def resolve_map_path() -> Path:
     for path in search:
         if path.is_file() and path.stat().st_size > 10_000:
             return path
-    return root / "world_map.jpg"
+    return root / "static_basemap_v2.png"
 
 
 def ensure_map_image() -> Path:
-    """Return path to world map, downloading if missing."""
+    """Return path to static basemap, generating a fallback if missing."""
     path = resolve_map_path()
     if path.is_file() and path.stat().st_size > 10_000:
         return path
 
-    target = project_root() / "world_map.jpg"
+    target = project_root() / "static_basemap_v2.png"
     try:
         from generate_map import generate_world_map
 
         generate_world_map(1800, 900)
-        if target.is_file():
-            return target
     except Exception:
         pass
-
-    if path != target and target.is_file():
+    if target.is_file():
         return target
+    legacy = project_root() / "world_map.jpg"
+    if legacy.is_file():
+        return legacy
     return target

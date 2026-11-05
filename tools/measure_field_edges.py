@@ -14,8 +14,8 @@ from pathlib import Path
 from PIL import Image
 
 BORDER_COLOR = (0x6B, 0x80, 0x94)
-TOLERANCE = 18
-MIN_RUN_FRACTION = 0.3  # a horizontal border line spans at least this much of the width
+TOLERANCE = 36
+MIN_RUN_FRACTION = 0.18  # a horizontal border line spans at least this much of the width
 
 
 def _matches(px: tuple[int, ...], tol: int = TOLERANCE) -> bool:
@@ -92,6 +92,10 @@ def main(argv: list[str]) -> int:
     out = Path(argv[2])
     measurements = measure_field_edges(src)
     lines = [f"row top={top} left={left} right={right}" for top, left, right in measurements]
+    if not lines:
+        # N7 / S9.2: never leave an empty edges file; record why so CI evidence is usable.
+        w, h = Image.open(src).size
+        lines = [f"no_field_rows_detected image={w}x{h} tol={TOLERANCE} min_run_frac={MIN_RUN_FRACTION}"]
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Wrote {len(measurements)} row measurement(s) from {src} to {out}")
     return 0

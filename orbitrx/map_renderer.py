@@ -93,9 +93,12 @@ class MapRenderer:
                 # civil twilight blend: full dark below -6 degrees
                 alpha[row + i] = int(min(1.0, -elev / 0.105) * 120) if elev < 0 else 0
         mask = Image.frombytes("L", (gw, gh), bytes(alpha)).resize((w, h), Image.BILINEAR)
-        night = Image.new("RGBA", (w, h), (0, 0, 20, 0))
-        night.putalpha(mask)
-        return night
+        # M1: night veil only (rgba 8,14,28 @ ~0.55), no second heavy blue wash.
+        veil = Image.new("RGBA", (w, h), (8, 14, 28, 0))
+        # Remap legacy 0..120 mask into 0..140 (~0.55) without numpy.
+        a = mask.point(lambda p: min(140, int(p * 140 / 120)))
+        veil.putalpha(a)
+        return veil
 
     @staticmethod
     def _wrap_sun_marker(x: float, y: float, width: int, radius: float = 16.0) -> list[MapAnnotation]:
@@ -176,11 +179,14 @@ class MapRenderer:
         # pen, constant logical width at every zoom), not baked into this raster.
 
         if layers.aurora and kp >= 4:
+            # M1: thin elliptical stroke, no filled polar blob.
             oval_lat = aurora_oval_lat(kp)
-            y_top = int(h / 2 - (oval_lat / 90) * (h / 2))
-            y_bot = int(h / 2 + (oval_lat / 90) * (h / 2))
-            od.rectangle([(0, 0), (w, y_top)], fill=(60, 255, 140, 55))
-            od.rectangle([(0, y_bot), (w, h)], fill=(60, 255, 140, 55))
+            y_n = int(h / 2 - (oval_lat / 90) * (h / 2))
+            y_s = int(h / 2 + (oval_lat / 90) * (h / 2))
+            stroke = (61, 220, 151, 115)  # rgba(61,220,151,0.45)
+            # Northern oval across the map width
+            od.ellipse([(-w * 0.05, y_n - 18), (w * 1.05, y_n + 18)], outline=stroke, width=2)
+            od.ellipse([(-w * 0.05, y_s - 18), (w * 1.05, y_s + 18)], outline=stroke, width=2)
 
         self._overlay_cache_key = cache_key
         self._cached_overlay = overlay

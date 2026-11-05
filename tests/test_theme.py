@@ -11,7 +11,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from orbitrx.ui.theme import (
-    BG, CHECK_BORDER, CONTROL_BORDER, FONT_BODY, FONT_CAPTION, FONT_SECTION, FONT_TITLE, QSS,
+    BG, BG_ELEVATED, CHECK_BORDER, CONTROL_BORDER, FONT_BODY, FONT_CAPTION, FONT_SECTION, FONT_TITLE, QSS,
     SURFACE,
 )
 
@@ -52,7 +52,7 @@ def test_qss_uses_control_border_for_inputs_and_buttons():
 
 
 def test_qss_fields_selector_covers_lineedit_combobox_and_spinboxes(): # M11
-    assert f"QLineEdit, QComboBox, QAbstractSpinBox {{ background: {SURFACE}; border: 1px solid {CONTROL_BORDER}" in QSS
+    assert f"QLineEdit, QComboBox, QAbstractSpinBox {{ background: {BG_ELEVATED}; border: 1px solid {CONTROL_BORDER}" in QSS
 
 
 def test_qss_styles_spinbox_up_down_buttons(): # N-new-2

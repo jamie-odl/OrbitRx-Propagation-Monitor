@@ -14,7 +14,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "cat_confirm_before_tune": True,
     "dx_cluster_host": "dxc.ve7cc.net",
     "dx_cluster_port": 23,
-    "dx_cluster_callsign": "W1AW-9",
+    "dx_cluster_callsign": "",
     "dx_cluster_nodes": [
         {"name": "VE7CC", "host": "dxc.ve7cc.net", "port": 23},
         {"name": "NC7J", "host": "nc7j.com", "port": 7373},
