@@ -273,3 +273,12 @@ def test_cluster_live_indicator_in_panel_header(window):
     window.ctrl.state.cluster_status = "disconnected"
     window._render_cluster_label()
     assert window.cluster_live_lbl.text() == "Cluster: disconnected"
+
+
+def test_spinbox_text_inset_matches_line_edit(window):  # M3
+    from PySide6.QtWidgets import QAbstractSpinBox
+    dlg = window._build_settings_dialog()
+    sbs = dlg.findChildren(QAbstractSpinBox)
+    assert sbs
+    for sb in sbs:
+        assert sb.lineEdit().textMargins().left() == 6

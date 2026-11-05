@@ -36,6 +36,7 @@ if not QT_AVAILABLE:
 from PySide6.QtCore import QDate, QEvent, QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractSpinBox,
     QSizePolicy,
     QGridLayout,
     QApplication, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QDoubleSpinBox,
@@ -907,6 +908,9 @@ class QtOrbitRxApplication(QMainWindow):
         page_names = ["Station", "Rig", "DX cluster", "Map & spots", "Services"]
         start_row = page_names.index(initial_page) if initial_page in page_names else 0
         page_list.setCurrentRow(start_row)
+        # M3: spinbox text starts at the same inset as QLineEdit text (6px padding).
+        for _sb in dlg.findChildren(QAbstractSpinBox):
+            _sb.lineEdit().setTextMargins(6, 0, 0, 0)
         return dlg
 
     def _apply_settings_dialog(self, dlg: QDialog) -> None:
