@@ -88,11 +88,16 @@ def concise_date_offset_formats() -> list[str]:
 
 
 def history_plot_date_format(lo: datetime.datetime, hi: datetime.datetime) -> str:
-    """matplotlib tick format for the history plot x-axis (M4): every tick shows
-    hours and minutes, with the day added once the range spans more than a day.
+    """matplotlib tick format for the history plot x-axis: hours and minutes within a
+    day (M4), the day added once the range spans more than a day, and date-only daily
+    ticks once the range reaches 36 h so "dd MMM" labels never repeat "00:00" (S3).
     """
     span_hours = (hi - lo).total_seconds() / 3600.0
-    return "%H:%M" if span_hours <= 24 else "%d %b %H:%M"
+    if span_hours <= 24:
+        return "%H:%M"
+    if span_hours < 36:
+        return "%d %b %H:%M"
+    return "%d %b"
 
 
 def format_map_hud_datetime(dt: datetime.datetime) -> str:
@@ -124,6 +129,35 @@ def humanize_iso_dates(text: str) -> str:
             return m.group(0)
         return dt.strftime("%d %b ") + m.group(5)
     return _ISO_STAMP.sub(_sub, text)
+
+
+def insert_gap_breaks(
+    times: list[datetime.datetime], values: list[float], threshold_multiplier: float = 3.0
+) -> tuple[list[datetime.datetime], list[float]]:
+    """Insert a NaN point at the midpoint of any gap between consecutive `times` that
+    exceeds threshold_multiplier times the median interval, so a matplotlib line
+    plotted through the result breaks instead of jumping across the gap (S3).
+    """
+    if len(times) < 2:
+        return list(times), list(values)
+    intervals = [(times[i + 1] - times[i]).total_seconds() for i in range(len(times) - 1)]
+    sorted_intervals = sorted(intervals)
+    mid = len(sorted_intervals) // 2
+    median = (
+        sorted_intervals[mid]
+        if len(sorted_intervals) % 2
+        else (sorted_intervals[mid - 1] + sorted_intervals[mid]) / 2
+    )
+    threshold = median * threshold_multiplier
+    out_times = [times[0]]
+    out_values = [values[0]]
+    for i in range(1, len(times)):
+        if median > 0 and intervals[i - 1] > threshold:
+            out_times.append(times[i - 1] + (times[i] - times[i - 1]) / 2)
+            out_values.append(float("nan"))
+        out_times.append(times[i])
+        out_values.append(values[i])
+    return out_times, out_values
 
 
 def widen_to_min_span(

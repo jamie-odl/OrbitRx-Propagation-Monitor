@@ -111,3 +111,43 @@ jobs:
             dist/OrbitRxMonitor-Setup.exe
             dist/SHA256SUMS.txt
           retention-days: 30
+      - name: Self-capture the release exe at 100% and 150% scale (M3 evidence)
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path dist\OrbitRxMonitor.exe).Path
+          New-Item -ItemType Directory -Force -Path release-shots\100, release-shots\150 | Out-Null
+
+          function Invoke-ReleaseCapture([string]$CaptureDir, [string]$ScaleFactor) {
+            Remove-Item Env:ORBITRX_TEST_SIMULATED_RIG -ErrorAction SilentlyContinue
+            Remove-Item Env:QT_SCALE_FACTOR -ErrorAction SilentlyContinue
+            $env:ORBITRX_CAPTURE_DIR = (Resolve-Path $CaptureDir).Path
+            if ($ScaleFactor) { $env:QT_SCALE_FACTOR = $ScaleFactor }
+            $proc = Start-Process -FilePath $exe -PassThru
+            if (!(Wait-Process -Id $proc.Id -Timeout 120 -ErrorAction SilentlyContinue)) {
+              Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              throw "OrbitRxMonitor.exe did not exit within 120s for $CaptureDir"
+            }
+          }
+
+          Invoke-ReleaseCapture "release-shots\100" $null
+          Invoke-ReleaseCapture "release-shots\150" "1.5"
+          Remove-Item Env:ORBITRX_CAPTURE_DIR, Env:QT_SCALE_FACTOR -ErrorAction SilentlyContinue
+      - name: Fail if the simulated rig leaked into the release build
+        shell: pwsh
+        run: |
+          $ports = Get-Content release-shots\100\rig-wizard-release-ports.txt, release-shots\150\rig-wizard-release-ports.txt -Raw
+          if ($ports -match "Simulated") {
+            throw "Simulated rig port leaked into the release exe's port list"
+          }
+      - name: Measure DX cluster field edges
+        shell: pwsh
+        run: |
+          python tools/measure_field_edges.py release-shots\100\settings-dx-cluster.png release-shots\100\settings-dx-cluster-edges.txt
+          python tools/measure_field_edges.py release-shots\150\settings-dx-cluster.png release-shots\150\settings-dx-cluster-edges.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: release-exe-captures
+          path: release-shots/
+          retention-days: 30
+          if-no-files-found: warn

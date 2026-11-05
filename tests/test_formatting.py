@@ -14,6 +14,7 @@ from orbitrx.ui.formatting import (
     format_source_label,
     format_value,
     history_plot_date_format,
+    insert_gap_breaks,
     pad_datetime_range,
 )
 
@@ -119,12 +120,20 @@ def test_history_plot_date_format_is_hh_mm_within_a_day(): # M4
     assert hi.strftime(fmt) == "23:00"
 
 
-def test_history_plot_date_format_adds_day_beyond_a_day(): # M4
+def test_history_plot_date_format_is_date_only_beyond_36_hours(): # S3
     lo = datetime.datetime(2026, 11, 2, 0, 0, tzinfo=datetime.timezone.utc)
     hi = datetime.datetime(2026, 11, 4, 23, 0, tzinfo=datetime.timezone.utc)
     fmt = history_plot_date_format(lo, hi)
+    assert fmt == "%d %b"
+    assert hi.strftime(fmt) == "04 Nov"
+
+
+def test_history_plot_date_format_keeps_time_between_24_and_36_hours(): # S3
+    lo = datetime.datetime(2026, 11, 3, 0, 0, tzinfo=datetime.timezone.utc)
+    hi = datetime.datetime(2026, 11, 4, 6, 0, tzinfo=datetime.timezone.utc)  # 30h
+    fmt = history_plot_date_format(lo, hi)
     assert fmt == "%d %b %H:%M"
-    assert hi.strftime(fmt) == "04 Nov 23:00"
+    assert hi.strftime(fmt) == "04 Nov 06:00"
 
 
 def test_format_map_hud_datetime_has_no_iso_date(): # S1
@@ -139,3 +148,37 @@ def test_humanize_iso_dates_in_alert_text():  # S1
     out = humanize_iso_dates("2026-11-04 19:04 UTC  WATCH: Geomagnetic Storm")
     assert out.startswith("04 Nov 19:04 UTC")
     assert "2026-11-04" not in out
+
+
+def _hourly(start: datetime.datetime, n: int) -> list[datetime.datetime]:
+    return [start + datetime.timedelta(hours=i) for i in range(n)]
+
+
+def test_insert_gap_breaks_is_a_no_op_for_evenly_spaced_data(): # S3
+    times = _hourly(datetime.datetime(2026, 11, 4, 0, 0, tzinfo=datetime.timezone.utc), 5)
+    values = [1.0, 2.0, 3.0, 4.0, 5.0]
+    out_times, out_values = insert_gap_breaks(times, values)
+    assert out_times == times
+    assert out_values == values
+
+
+def test_insert_gap_breaks_inserts_nan_at_a_large_gap(): # S3
+    import math
+
+    start = datetime.datetime(2026, 11, 4, 0, 0, tzinfo=datetime.timezone.utc)
+    times = _hourly(start, 5) + [start + datetime.timedelta(hours=11)]  # one 6h gap
+    values = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]
+    out_times, out_values = insert_gap_breaks(times, values)
+    assert len(out_times) == len(times) + 1
+    nan_idx = [i for i, v in enumerate(out_values) if math.isnan(v)]
+    assert len(nan_idx) == 1
+    i = nan_idx[0]
+    assert times[4] < out_times[i] < times[5]
+
+
+def test_insert_gap_breaks_leaves_short_series_untouched(): # S3
+    out_times, out_values = insert_gap_breaks([], [])
+    assert out_times == [] and out_values == []
+    t = [datetime.datetime(2026, 11, 4, 0, 0, tzinfo=datetime.timezone.utc)]
+    out_times, out_values = insert_gap_breaks(t, [1.0])
+    assert out_times == t and out_values == [1.0]

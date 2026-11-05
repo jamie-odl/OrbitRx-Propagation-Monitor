@@ -74,3 +74,29 @@ def test_replay_offset_appends_hours_ago_to_overlay(window):
     window._refresh_live_spots()
     assert window.map_widget._empty_overlay.isVisible() is True
     assert window.map_widget._empty_overlay.text() == "No spots in this window (6 h ago)"
+
+
+def test_empty_overlay_is_a_legible_pill_on_the_static_map(window): # S2
+    style = window.map_widget._empty_overlay.styleSheet()
+    assert "color: #C9D1D9" in style
+    assert "font-size: 13px" in style
+    assert "background: rgba(15,23,32,0.85)" in style
+    assert "border-radius" in style
+    assert "padding: 8px 14px" in style
+
+
+def test_empty_overlay_is_a_legible_pill_on_the_leaflet_map():  # S2
+    from orbitrx.ui.leaflet_map import WEBENGINE_AVAILABLE, LeafletMapWidget
+    from orbitrx.map_renderer import MapRenderer
+
+    if not WEBENGINE_AVAILABLE:
+        pytest.skip("QtWebEngine not available")
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.instance() or QApplication([])
+    widget = LeafletMapWidget(MapRenderer(width=10, height=10))
+    style = widget._empty_overlay.styleSheet()
+    assert "color: #C9D1D9" in style
+    assert "background: rgba(15,23,32,0.85)" in style
+    assert "border-radius" in style
+    assert "padding: 8px 14px" in style

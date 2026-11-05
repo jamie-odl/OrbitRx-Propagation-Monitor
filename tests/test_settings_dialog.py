@@ -178,6 +178,27 @@ def test_ip_lookup_privacy_text_is_fully_visible(window): # R1
     assert notes[0].wordWrap() is True
 
 
+def test_location_label_baseline_matches_checkbox(window): # S1/R2
+    dlg = window._build_settings_dialog()
+    dlg.show()
+    station_page = dlg.stack.widget(EXPECTED_PAGES.index("Station"))
+    form = station_page.layout()
+    checkbox = dlg.fields["ip_geolocation_enabled"]
+    label = form.labelForField(checkbox)
+    assert label is not None
+    assert label.text() == "Location"
+    label_center = label.mapTo(dlg, label.rect().center()).y()
+    checkbox_center = checkbox.mapTo(dlg, checkbox.rect().center()).y()
+    assert abs(label_center - checkbox_center) <= 2
+
+
+def test_map_and_spots_description_uses_lowercase_live_spots(window): # S1
+    dlg = window._build_settings_dialog()
+    from orbitrx.ui.qt_app import SETTINGS_PAGE_DESCRIPTIONS
+    assert "live spots" in SETTINGS_PAGE_DESCRIPTIONS["Map & spots"]
+    assert "Live Spots" not in SETTINGS_PAGE_DESCRIPTIONS["Map & spots"]
+
+
 def test_settings_label_column_is_consistent_across_pages(window): # N-new-3
     from orbitrx.ui.qt_app import SETTINGS_LABEL_WIDTH
 

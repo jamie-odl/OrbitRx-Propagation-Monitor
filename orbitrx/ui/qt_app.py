@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
+import time
 from pathlib import Path
 
 from PIL import Image
@@ -18,7 +20,7 @@ from orbitrx.ui.formatting import (
     widen_to_min_span,
     humanize_iso_dates,
     format_hour_offset, format_no_spots_message, format_replay_offset,
-    history_plot_date_format, pad_datetime_range,
+    history_plot_date_format, insert_gap_breaks, pad_datetime_range,
 )
 from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
 from orbitrx.ui.theme import ERR, MUTED, OK, apply_theme
@@ -70,7 +72,7 @@ SETTINGS_PAGE_DESCRIPTIONS = {
     "Station": "Your callsign and home coordinates, used to centre the map and tag your spots.",
     "Rig": "Connect to your radio over CAT so clicking a spot on the map can tune it for you.",
     "DX cluster": "Pick a cluster node and filter which DX spots show up on the map.",
-    "Map & spots": "Choose the map backend and how often Live Spots refreshes from PSKReporter.",
+    "Map & spots": "Choose the map backend and how often live spots refresh from PSKReporter.",
     "Services": "Optional QRZ lookups and how often space weather data refreshes.",
 }
 
@@ -294,6 +296,11 @@ class QtOrbitRxApplication(QMainWindow):
         plot_tab = QWidget()
         plot_layout = QVBoxLayout(plot_tab)
         hist_row = QHBoxLayout()
+        # N2: only shown once the rendered range exceeds a day, so a single date
+        # picker reads as "the end of a longer range" rather than "just this day".
+        self.hist_ending_lbl = QLabel("Ending")
+        self.hist_ending_lbl.setVisible(False)
+        hist_row.addWidget(self.hist_ending_lbl)
         self.hist_date = QDateEdit()
         self.hist_date.setCalendarPopup(True)
         self.hist_date.setDisplayFormat("dd MMM yyyy")  # S1: no ISO dates in the UI
@@ -441,7 +448,7 @@ class QtOrbitRxApplication(QMainWindow):
             self.map_widget.set_empty_overlay(format_no_spots_message(val) if live_on and not spots else "")
         err = self.ctrl.spots.last_error
         if err:
-            self._set_status("Live Spots offline: PSKReporter unreachable, showing cached data")
+            self._set_status("Live spots offline: PSKReporter unreachable, showing cached data")
         elif val:
             self._set_status(f"Replaying {len(spots)} cached spots")
 
@@ -563,6 +570,7 @@ class QtOrbitRxApplication(QMainWindow):
         dlg.exec()
 
     def _refresh_plot_tab(self) -> None:
+        self.hist_ending_lbl.setVisible(False)
         if not PLOT_QT:
             self.plot_placeholder.setText("matplotlib Qt backend required")
             return
@@ -584,6 +592,11 @@ class QtOrbitRxApplication(QMainWindow):
             times.append(datetime.datetime.fromisoformat(r["ts"]))
             kp.append(float(r.get("kp") or 0))
             flux.append(float(r.get("flux") or 0))
+
+        # N2: the single date picker reads as "the end of the range" once the
+        # rendered data actually spans more than a day.
+        raw_span_h = (max(times) - min(times)).total_seconds() / 3600.0 if times else 0.0
+        self.hist_ending_lbl.setVisible(raw_span_h > 24)
 
         fig = Figure(figsize=(5, 3.5), facecolor="#0B1220")
         ax = fig.add_subplot(111)
@@ -612,24 +625,29 @@ class QtOrbitRxApplication(QMainWindow):
         lo, hi = pad_datetime_range(min(times), max(times))
         lo, hi = widen_to_min_span(lo, hi)
         span_h = (hi - lo).total_seconds() / 3600.0
-        if span_h <= 24:
+        if span_h < 36:
             locator = AutoDateLocator(maxticks=7)
         else:
-            # "dd MMM HH:mm" labels are wide: one tick per day (or fewer) so they never overlap.
+            # "dd MMM" daily ticks: one tick per day (or fewer) so they never overlap.
             locator = DayLocator(interval=max(1, round(span_h / 24 / 3)))
         ax.xaxis.set_major_locator(locator)
-        # M4: every tick shows HH:mm (never minutes alone); "dd MMM HH:mm" once the
-        # range spans more than a day, so the day is still unambiguous.
+        # M4/S3: HH:mm within a day, "dd MMM HH:mm" up to 36 h, then date-only "dd MMM"
+        # daily ticks so labels never repeat "00:00".
         ax.xaxis.set_major_formatter(DateFormatter(history_plot_date_format(lo, hi)))
         ax.set_xlim(lo, hi)
 
-        kp_line, = ax.plot(times, kp, label="Kp", marker="o", linestyle="-", color="#64B5F6")
+        # S3: break the line (insert a NaN) across any gap more than 3x the median
+        # sampling interval, instead of drawing a straight jump across missing data.
+        kp_times, kp_gapped = insert_gap_breaks(times, kp)
+        flux_times, flux_gapped = insert_gap_breaks(times, flux)
+
+        kp_line, = ax.plot(kp_times, kp_gapped, label="Kp", marker="o", linestyle="-", color="#64B5F6")
         ax.set_ylabel("Kp", color="#64B5F6")
         ax.set_ylim(0, 9)
         ax.yaxis.set_ticks(range(0, 10))
 
         ax2 = ax.twinx()
-        sfi_line, = ax2.plot(times, flux, label="SFI", marker="o", linestyle="-", color="#FFD54F")
+        sfi_line, = ax2.plot(flux_times, flux_gapped, label="SFI", marker="o", linestyle="-", color="#FFD54F")
         ax2.set_ylabel("SFI", color="#FFD54F")
         ax2.set_ylim(50, 300)
         for spine in ax2.spines.values():
@@ -738,13 +756,17 @@ class QtOrbitRxApplication(QMainWindow):
         self._add_settings_row(station, "Home longitude", fields["home_lon"])
         fields["ip_geolocation_enabled"] = QCheckBox("Look up my location from my IP")
         fields["ip_geolocation_enabled"].setChecked(bool(cfg.get("ip_geolocation_enabled", False)))
-        ip_col = QVBoxLayout()
-        ip_col.addWidget(fields["ip_geolocation_enabled"])
+        fields["ip_geolocation_enabled"].setContentsMargins(0, 0, 0, 0)
+        # S1/R2: the checkbox is the sole field widget in its row (not nested in a
+        # vbox with the helper text below it) so its single line of text sits at the
+        # same height as the "Location" label; the helper text gets its own row with
+        # an empty label instead.
+        location_label = self._add_settings_row(station, "Location", fields["ip_geolocation_enabled"])
+        location_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
         ip_note = QLabel("Sends your IP address to ipinfo.io to estimate your location.")
         ip_note.setWordWrap(True)
         ip_note.setObjectName("muted")
-        ip_col.addWidget(ip_note)
-        self._add_settings_row(station, "Location", ip_col)
+        station.addRow("", ip_note)
 
         # --- Rig ---
         rig = self._add_form_page(page_list, stack, "Rig")
@@ -842,7 +864,7 @@ class QtOrbitRxApplication(QMainWindow):
         map_backend = QComboBox()
         map_backend.addItem("Static world map (works offline)", "static")
         if self._leaflet_available():
-            map_backend.addItem("Interactive map with Live Spots (needs internet)", "leaflet")
+            map_backend.addItem("Interactive map with live spots (needs internet)", "leaflet")
         idx = map_backend.findData(cfg.get("map_backend", "static"))
         if idx >= 0:
             map_backend.setCurrentIndex(idx)
@@ -1037,8 +1059,67 @@ def _app_icon() -> QIcon:
     return QIcon()
 
 
+def run_release_capture_hook(out_dir: str | Path) -> int:
+    """Release-exe self-capture (M3 evidence): grab the rig wizard's port dropdown and
+    the DX cluster settings page into `out_dir`, then return. Runs against whatever
+    CatController the release build actually has -- the simulated rig is never involved
+    here, so a "Simulated" entry in the written port list is a genuine release bug.
+    Read-only, and waits only a few fixed seconds regardless of network state so it
+    completes the same way online or offline.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    app = QApplication.instance() or QApplication([])
+    apply_theme(app)
+    win = QtOrbitRxApplication()
+    win.resize(1440, 860)
+    win.show()
+
+    def wait(seconds: float) -> None:
+        deadline = time.time() + seconds
+        while time.time() < deadline:
+            app.processEvents()
+            time.sleep(0.05)
+
+    wait(0.3)
+
+    wizard = RigWizardDialog(win.ctrl.cfg, win.ctrl.cat, win)
+    wizard.show()
+    wait(0.2)
+    wizard.port_combo.showPopup()
+    wait(0.3)
+    rect = wizard.frameGeometry()
+    popup = wizard.port_combo.view().window()
+    if popup is not None and popup.isVisible():
+        rect = rect.united(popup.frameGeometry())
+    screen = wizard.screen() or app.primaryScreen()
+    screen.grabWindow(0, rect.x(), rect.y(), rect.width(), rect.height()).save(
+        str(out_dir / "rig-wizard-release-dropdown.png")
+    )
+    items = [wizard.port_combo.itemText(i) for i in range(wizard.port_combo.count())]
+    (out_dir / "rig-wizard-release-ports.txt").write_text("\n".join(items) + "\n", encoding="utf-8")
+    wizard.port_combo.hidePopup()
+    wizard.reject()
+
+    settings_dlg = win._build_settings_dialog(initial_page="DX cluster")
+    settings_dlg.show()
+    wait(0.3)
+    fg = settings_dlg.frameGeometry()
+    app.primaryScreen().grabWindow(0, fg.x(), fg.y(), fg.width(), fg.height()).save(
+        str(out_dir / "settings-dx-cluster.png")
+    )
+    settings_dlg.reject()
+
+    win.ctrl.stop()
+    win.close()
+    return 0
+
+
 def run_qt_app() -> None:
     import sys
+    capture_dir = os.environ.get("ORBITRX_CAPTURE_DIR")
+    if capture_dir:
+        sys.exit(run_release_capture_hook(capture_dir))
     app = QApplication(sys.argv)
     apply_theme(app)
     app.setWindowIcon(_app_icon())

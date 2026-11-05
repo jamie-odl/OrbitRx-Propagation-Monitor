@@ -1,5 +1,5 @@
 {
-  "_note": "synthetic sample for tests and screenshots: plausible Kp/SFI series, not real NOAA data",
+  "_note": "synthetic sample for tests and screenshots: plausible Kp/SFI series, not real NOAA data; a ~6h gap is cut out around 04 Nov 06:00-11:00 to exercise the gap-break line rendering (S3)",
   "rows": [
     {
       "ts": "2026-11-03T00:00:00+00:00",
@@ -150,36 +150,6 @@
       "ts": "2026-11-04T05:00:00+00:00",
       "kp": 3.2,
       "flux": 118.1
-    },
-    {
-      "ts": "2026-11-04T06:00:00+00:00",
-      "kp": 3.0,
-      "flux": 116.5
-    },
-    {
-      "ts": "2026-11-04T07:00:00+00:00",
-      "kp": 3.1,
-      "flux": 113.4
-    },
-    {
-      "ts": "2026-11-04T08:00:00+00:00",
-      "kp": 2.7,
-      "flux": 112.5
-    },
-    {
-      "ts": "2026-11-04T09:00:00+00:00",
-      "kp": 2.8,
-      "flux": 110.5
-    },
-    {
-      "ts": "2026-11-04T10:00:00+00:00",
-      "kp": 2.7,
-      "flux": 106.7
-    },
-    {
-      "ts": "2026-11-04T11:00:00+00:00",
-      "kp": 0.9,
-      "flux": 106.8
     },
     {
       "ts": "2026-11-04T12:00:00+00:00",

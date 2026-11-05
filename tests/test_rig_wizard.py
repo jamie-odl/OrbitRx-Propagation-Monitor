@@ -169,15 +169,58 @@ def test_present_saved_port_is_kept(app, cfg, monkeypatch):
     assert combo.currentData() == "COM7"
 
 
-def test_simulated_cat_controller_shows_connected_state(app, cfg): # N1
+def test_simulated_cat_controller_shows_connected_state(app, cfg, monkeypatch): # N1
     from orbitrx.ui.rig_wizard import RigWizardDialog, SimulatedCatController
 
+    monkeypatch.setenv("ORBITRX_TEST_SIMULATED_RIG", "1")
     dlg = RigWizardDialog(cfg, SimulatedCatController())
     dlg._test_cat()
     assert dlg.status_text.text() == "Connected: 14.074 MHz"
     assert "●" not in dlg.status_text.text()  # single status dot comes from status_icon
     assert dlg.status_text.styleSheet() == "color: #3FB950;"
     assert dlg.status_icon.text() == "🟢"
+
+
+def test_simulated_cat_controller_requires_env_var(monkeypatch): # M3
+    from orbitrx.ui.rig_wizard import SimulatedCatController
+
+    monkeypatch.delenv("ORBITRX_TEST_SIMULATED_RIG", raising=False)
+    with pytest.raises(RuntimeError):
+        SimulatedCatController()
+
+
+def test_simulated_cat_controller_works_once_env_var_is_set(monkeypatch): # M3
+    from orbitrx.ui.rig_wizard import SimulatedCatController
+
+    monkeypatch.setenv("ORBITRX_TEST_SIMULATED_RIG", "1")
+    sim = SimulatedCatController()
+    assert sim.port == "COM9"
+
+
+def test_wizard_port_list_never_contains_simulated_without_env_var(app, cfg, monkeypatch): # M3
+    from orbitrx.cat import CatController
+    from orbitrx.ui.rig_wizard import RigWizardDialog
+
+    monkeypatch.delenv("ORBITRX_TEST_SIMULATED_RIG", raising=False)
+    cat = CatController(cfg)
+    monkeypatch.setattr(cat, "list_ports_detailed", lambda: [("COM5", "USB Serial")])
+    dlg = RigWizardDialog(cfg, cat)
+    items = [dlg.port_combo.itemText(i) for i in range(dlg.port_combo.count())]
+    assert not any("Simulated" in item for item in items)
+
+
+def test_settings_port_list_never_contains_simulated_without_env_var(app, cfg, monkeypatch): # M3
+    from orbitrx.cat import CatController
+    from orbitrx.ui.rig_wizard import populate_port_combo
+    from PySide6.QtWidgets import QComboBox
+
+    monkeypatch.delenv("ORBITRX_TEST_SIMULATED_RIG", raising=False)
+    cat = CatController(cfg)
+    monkeypatch.setattr(cat, "list_ports_detailed", lambda: [("COM5", "USB Serial")])
+    combo = QComboBox()
+    populate_port_combo(combo, cat, "")
+    items = [combo.itemText(i) for i in range(combo.count())]
+    assert not any("Simulated" in item for item in items)
 
 
 def test_simulated_cat_controller_is_not_the_production_default(app, cfg): # N1

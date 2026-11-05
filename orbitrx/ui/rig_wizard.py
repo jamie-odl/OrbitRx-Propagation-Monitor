@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
@@ -19,9 +21,17 @@ _SIMULATED_PREFIX = "SIMULATED_CONNECTED:"
 class SimulatedCatController:
     """Fake CAT backend that always reports a connected rig, for screenshots and
     tests. Never used by production code: RigWizardDialog defaults to the real
-    CatController, this is only passed in explicitly by callers that want it."""
+    CatController, this is only passed in explicitly by callers that want it.
+
+    M3: unusable unless ORBITRX_TEST_SIMULATED_RIG=1 is set, so a release build can
+    never surface the simulated port even if something constructs this by mistake."""
 
     def __init__(self, freq_mhz: float = 14.074, port: str = "COM9") -> None:
+        if os.environ.get("ORBITRX_TEST_SIMULATED_RIG") != "1":
+            raise RuntimeError(
+                "SimulatedCatController is for screenshots/tests only; "
+                "set ORBITRX_TEST_SIMULATED_RIG=1 to use it."
+            )
         self.freq_mhz = freq_mhz
         self.port = port
 

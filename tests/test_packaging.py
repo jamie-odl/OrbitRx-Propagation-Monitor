@@ -103,6 +103,20 @@ def test_ci_has_windows_screenshot_job():
     assert "list_ports -v" in text
 
 
+def test_ci_release_build_self_captures_and_checks_for_simulated_rig(): # M3
+    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert "ORBITRX_CAPTURE_DIR" in text
+    assert "QT_SCALE_FACTOR" in text
+    assert "ORBITRX_TEST_SIMULATED_RIG" in text
+    assert "rig-wizard-release-ports.txt" in text
+    assert "Simulated" in text
+    assert "measure_field_edges.py" in text
+    assert "release-exe-captures" in text
+    # The signed/unsigned exe artifact must still contain only the three release files.
+    unsigned_block = text.split("name: OrbitRx-windows-unsigned")[1].split("retention-days:")[0]
+    assert "release-shots" not in unsigned_block
+
+
 def test_write_version_info_reads_version_file(tmp_path):
     from tools.make_version_info import write_version_info
 

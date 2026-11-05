@@ -96,7 +96,7 @@ def test_plot_x_axis_ticks_show_hours_and_minutes(window, monkeypatch): # M4
     assert ax.xaxis.get_major_formatter().fmt == "%H:%M"
 
 
-def test_plot_x_axis_ticks_include_day_for_multi_day_range(window, monkeypatch): # M4, regression
+def test_plot_x_axis_ticks_include_day_for_multi_day_range(window, monkeypatch): # M4, S3, regression
     rows = [
         {"ts": "2026-11-02T00:00:00+00:00", "kp": 2.0, "flux": 110},
         {"ts": "2026-11-04T23:00:00+00:00", "kp": 2.5, "flux": 115},
@@ -106,7 +106,7 @@ def test_plot_x_axis_ticks_include_day_for_multi_day_range(window, monkeypatch):
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
     ax = canvas.figure.get_axes()[0]
-    assert ax.xaxis.get_major_formatter().fmt == "%d %b %H:%M"
+    assert ax.xaxis.get_major_formatter().fmt == "%d %b"  # S3: >= 36h is date-only
 
 
 def test_no_data_shows_placeholder_not_crash(window):
@@ -116,7 +116,7 @@ def test_no_data_shows_placeholder_not_crash(window):
     assert "No data" in window.plot_placeholder.text()
 
 
-def test_48h_sample_fixture_uses_day_level_tick_format(window, monkeypatch): # M4
+def test_48h_sample_fixture_uses_day_level_tick_format(window, monkeypatch): # M4, S3
     """The committed synthetic 48h fixture (also used for screenshots) is a real
     regression check for the over-a-day tick format, not just synthetic 2-point data."""
     data = json.loads(HISTORY_SAMPLE_48H.read_text())
@@ -127,9 +127,59 @@ def test_48h_sample_fixture_uses_day_level_tick_format(window, monkeypatch): # M
     window._refresh_plot_tab()
     canvas = window.plot_container.itemAt(0).widget()
     ax = canvas.figure.get_axes()[0]
-    assert ax.xaxis.get_major_formatter().fmt == "%d %b %H:%M"
+    assert ax.xaxis.get_major_formatter().fmt == "%d %b"  # S3: >= 36h is date-only
     kp_line = ax.get_lines()[0]
     assert kp_line.get_linestyle() == "-"
+
+
+def test_48h_sample_fixture_breaks_the_line_across_its_gap(window, monkeypatch): # S3
+    """The committed fixture has a ~6h gap cut out around 04 Nov 06:00-11:00; both the
+    Kp and SFI lines must break there instead of drawing a straight jump across it."""
+    import math
+
+    data = json.loads(HISTORY_SAMPLE_48H.read_text())
+    monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: data["rows"])
+    window.tabs.setCurrentIndex(1)
+    window._refresh_plot_tab()
+    canvas = window.plot_container.itemAt(0).widget()
+    kp_ax, sfi_ax = canvas.figure.get_axes()
+    assert any(math.isnan(y) for y in kp_ax.get_lines()[0].get_ydata())
+    assert any(math.isnan(y) for y in sfi_ax.get_lines()[0].get_ydata())
+
+
+def test_medium_range_keeps_day_and_time_tick_format(window, monkeypatch): # S3
+    """A range under 36h (even once padded) keeps "dd MMM HH:mm", not the date-only
+    daily ticks reserved for >= 36h."""
+    rows = [
+        {"ts": "2026-11-03T00:00:00+00:00", "kp": 2.0, "flux": 110},
+        {"ts": "2026-11-04T06:00:00+00:00", "kp": 2.5, "flux": 115},
+    ]
+    monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: rows)
+    window.tabs.setCurrentIndex(1)
+    window._refresh_plot_tab()
+    canvas = window.plot_container.itemAt(0).widget()
+    ax = canvas.figure.get_axes()[0]
+    assert ax.xaxis.get_major_formatter().fmt == "%d %b %H:%M"
+
+
+def test_hist_ending_label_only_shows_for_multi_day_ranges(window, monkeypatch): # N2
+    # isVisible() also depends on the top-level window actually being shown.
+    window.show()
+    assert window.hist_ending_lbl.isHidden() is True
+    data = json.loads(HISTORY_SAMPLE_48H.read_text())
+    monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: data["rows"])
+    window.tabs.setCurrentIndex(1)
+    window._refresh_plot_tab()
+    assert window.hist_ending_lbl.isVisible() is True
+    assert window.hist_ending_lbl.text() == "Ending"
+
+    short_rows = [
+        {"ts": "2026-11-04T21:30:00+00:00", "kp": 2.0, "flux": 110},
+        {"ts": "2026-11-04T23:00:00+00:00", "kp": 2.5, "flux": 115},
+    ]
+    monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: short_rows)
+    window._refresh_plot_tab()
+    assert window.hist_ending_lbl.isHidden() is True
 
 
 def test_single_point_shows_not_enough_data_text_in_plot(window, monkeypatch): # S2

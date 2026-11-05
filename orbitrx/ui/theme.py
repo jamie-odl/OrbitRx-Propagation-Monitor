@@ -22,6 +22,13 @@ OK = "#81C784"
 WARN = "#FFB74D"
 ERR = "#E57373"
 
+# S2: the "No spots in this window" map overlay, legible at arm's length on top of
+# either map backend (>= 7:1 contrast between the text and its own pill background).
+EMPTY_OVERLAY_STYLE = (
+    "color: #C9D1D9; font-size: 13px; background: rgba(15,23,32,0.85); "
+    "border-radius: 14px; padding: 8px 14px;"
+)
+
 # Type scale (S7): caption/body/section/title are the only four sizes used app-wide.
 FONT_CAPTION = 11
 FONT_BODY = 13
