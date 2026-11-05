@@ -154,6 +154,7 @@ jobs:
             $fit = Get-Content (Join-Path $d 'fit.txt') -Raw
             Write-Host "$d : $fit"
             if ($fit -notmatch 'save_visible=True') { throw "Save button not visible in $d" }
+            if ($fit -notmatch 'settings_frame_on_screen=True' -or $fit -notmatch 'main_frame_on_screen=True') { throw "A window runs off the screen in $d" }
           }
       - name: Measure DX cluster field edges
         shell: pwsh

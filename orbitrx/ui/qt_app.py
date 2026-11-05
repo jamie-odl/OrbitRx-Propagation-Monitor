@@ -37,7 +37,7 @@ if not QT_AVAILABLE:
     raise ImportError("PySide6 is required for the Qt UI")
 
 from PySide6.QtCore import QDate, QEvent, QObject, QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QIcon, QPixmap
+from PySide6.QtGui import QAction, QGuiApplication, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QSizePolicy,
@@ -1083,7 +1083,15 @@ def _save_button_fully_visible(dlg: QDialog) -> bool:
     save_btn = dlg.buttons.button(QDialogButtonBox.StandardButton.Save)
     top_left = save_btn.mapTo(dlg, save_btn.rect().topLeft())
     btn_rect = QRect(top_left, save_btn.size())
-    return dlg.rect().contains(btn_rect)
+    if not dlg.rect().contains(btn_rect):
+        return False
+    # V7: it must also be inside the screen's available area (not behind the
+    # taskbar or off the bottom edge), measured in global coordinates.
+    if dlg.isVisible() and QGuiApplication.platformName() not in ("offscreen", "minimal"):
+        screen = dlg.screen() or QGuiApplication.primaryScreen()
+        global_rect = QRect(save_btn.mapToGlobal(save_btn.rect().topLeft()), save_btn.size())
+        return screen.availableGeometry().contains(global_rect)
+    return True
 
 
 def run_release_capture_hook(out_dir: str | Path) -> int:
@@ -1148,6 +1156,7 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
     # Whole-desktop grab: shows the dialog's position relative to the real screen edges.
     app.primaryScreen().grabWindow(0).save(str(out_dir / "desktop-settings.png"))
     save_visible = _save_button_fully_visible(settings_dlg)
+    settings_on_screen = settings_dlg.screen().availableGeometry().contains(settings_dlg.frameGeometry())
     settings_size = (settings_dlg.width(), settings_dlg.height())
     settings_dlg.reject()
 
@@ -1163,7 +1172,9 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
         f"avail={avail.width()}x{avail.height()} "
         f"settings={settings_size[0]}x{settings_size[1]} "
         f"save_visible={save_visible} "
-        f"main={win.width()}x{win.height()}\n",
+        f"settings_frame_on_screen={settings_on_screen} "
+        f"main={win.width()}x{win.height()} "
+        f"main_frame_on_screen={avail.contains(main_fg)}\n",
         encoding="utf-8",
     )
 

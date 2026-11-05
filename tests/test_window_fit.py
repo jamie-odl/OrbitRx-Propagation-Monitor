@@ -104,3 +104,15 @@ def test_fit_to_screen_minimum_size_capped_to_tiny_available_geometry(app, monke
     assert widget.minimumHeight() == 300
     assert widget.width() == 400
     assert widget.height() == 300
+
+
+def test_client_avail_reserves_frame_and_title_bar():
+    from orbitrx.ui.window_fit import client_avail, clamp_rect
+
+    # 150% on 1024x768 with a taskbar: 683x480 logical; frame 8/31/8/8.
+    inner = client_avail((0, 0, 683, 480), (8, 31, 8, 8))
+    assert inner == (8, 31, 667, 441)
+    x, y, w, h = clamp_rect(720, 520, inner, 520, 380)
+    # The whole window (client plus frame) stays inside the available area.
+    assert x - 8 >= 0 and y - 31 >= 0
+    assert x + w + 8 <= 683 and y + h + 8 <= 480
