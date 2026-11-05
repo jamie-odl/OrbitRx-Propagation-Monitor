@@ -24,25 +24,32 @@ RELEASES_URL = "https://github.com/jamie-odl/OrbitRx-Propagation-Monitor/release
 
 
 def _build_commit() -> str | None:
-    """Short git commit hash for the About version line."""
+    """Short git commit hash for the About version line.
+
+    Preference: ORBITRX_COMMIT_SHA (CI capture) → live `git rev-parse --short HEAD`
+    when a checkout is present → stamped _build_meta (frozen builds only).
+    Live git wins over a stale stamp so About never shows an old tip SHA.
+    """
     env = (os.environ.get("ORBITRX_COMMIT_SHA") or "").strip()
     if env:
         return env[:12]
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=project_root(), capture_output=True, text=True, timeout=2,
+        )
+        commit = (out.stdout or "").strip()
+        if out.returncode == 0 and commit:
+            return commit[:12]
+    except Exception:
+        pass
     try:
         from orbitrx._build_meta import COMMIT_SHA as stamped
         if stamped:
             return str(stamped).strip()[:12]
     except Exception:
         pass
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "--short", "HEAD"],
-            cwd=project_root(), capture_output=True, text=True, timeout=2,
-        )
-        commit = out.stdout.strip()
-        return commit or None
-    except Exception:
-        return None
+    return None
 
 
 def _notice_url() -> str:

@@ -185,6 +185,10 @@ QToolButton#layerChip:disabled {{ opacity: 0.45; }}
 QStatusBar {{ background: {BG}; color: {TEXT_MUTED}; font-size: 11px; border-top: 1px solid {BORDER}; }}
 QDialogButtonBox {{ dialogbuttonbox-buttons-have-icons: 0; }}
 QDialogButtonBox QPushButton {{ min-width: 72px; }}
+QDialogButtonBox QPushButton#primaryButton {{
+    background: {ACCENT}; color: {BG}; border: none; font-weight: 600;
+}}
+QDialogButtonBox QPushButton#primaryButton:hover {{ background: #7AA2FF; }}
 QAbstractSpinBox QLineEdit {{ border: none; background: transparent; padding: 0px; }}
 """
 

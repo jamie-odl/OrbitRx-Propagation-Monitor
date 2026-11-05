@@ -290,6 +290,7 @@ class QtOrbitRxApplication(QMainWindow):
         map_layout.addWidget(self.map_widget, stretch=1)
 
         # M3: layer chips (checkable pills) in one wrapping row.
+        # V11 must-fix 2: Live spots / Heatmap only apply on Leaflet — hide on static.
         layer_widgets = []
         for key, label in [("greyline", "Greyline"), ("night", "Night"), ("dx_arcs", "DX"),
                            ("aurora", "Aurora"), ("grid", "Grid"),
@@ -297,15 +298,19 @@ class QtOrbitRxApplication(QMainWindow):
             chip = QToolButton()
             chip.setText(label)
             chip.setCheckable(True)
-            chip.setChecked(self.ctrl.cfg.get("map_layers", {}).get(key, key != "grid"))
             chip.setObjectName("layerChip")
             chip.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             chip.toggled.connect(lambda _=False: self._layers_changed())
             if key.startswith("spot_") and self._map_backend != "leaflet":
+                chip.setChecked(False)
                 chip.setEnabled(False)
+                chip.setVisible(False)
                 chip.setToolTip("Available on the interactive map")
+            else:
+                chip.setChecked(self.ctrl.cfg.get("map_layers", {}).get(key, key != "grid"))
             self._layer_checks[key] = chip
-            layer_widgets.append(chip)
+            if chip.isVisible():
+                layer_widgets.append(chip)
         if self._map_backend != "leaflet":
             switch_lbl = QToolButton()
             switch_lbl.setText("Switch map")
@@ -316,7 +321,8 @@ class QtOrbitRxApplication(QMainWindow):
             switch_lbl.clicked.connect(lambda: self._settings(initial_page="Map & spots"))
             layer_widgets.append(switch_lbl)
         self._layer_grid = _ReflowGrid(layer_widgets, min_item_width=96, max_cols=8)
-        map_layout.addWidget(self._layer_grid)
+        # V11 must-fix 3: chips live under the map pane (not inside it) so 150%
+        # compact never paints them over Antarctica / greyline.
 
         # M1: the sliders live in a fixed strip below the map (added to
         # map_tab_layout, not map_layout), so they never scroll out of view even
@@ -361,6 +367,7 @@ class QtOrbitRxApplication(QMainWindow):
         map_tab_layout = QVBoxLayout(map_tab)
         map_tab_layout.setContentsMargins(0, 0, 0, 0)
         map_tab_layout.addWidget(map_pane, stretch=1)
+        map_tab_layout.addWidget(self._layer_grid)
         map_tab_layout.addWidget(slider_strip)
         self._map_tab = map_tab
 
@@ -550,15 +557,15 @@ class QtOrbitRxApplication(QMainWindow):
         self._update_compact_mode()
 
     def _build_toolbar(self) -> None:
-        """M1: Location, Weather, Settings, Rig, Export snapshot, Export DX CSV and
-        About live in one top toolbar instead of a side-panel button grid, so they
-        stay reachable (directly or via Qt's automatic overflow chevron) no matter
-        how narrow the window gets. Settings/Rig/About come first so the overflow
-        drops the exports first."""
+        """Primary: Settings · Rig · About · Location · Weather. Export behind » menu
+        (V11 must-fix 5) so overflow is always explicit and working."""
+        from PySide6.QtWidgets import QMenu
+
         toolbar = QToolBar("Main", self)
         toolbar.setObjectName("mainToolbar")
         toolbar.setMovable(False)
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        toolbar.setIconSize(toolbar.iconSize())  # keep density
         self.addToolBar(toolbar)
         self._toolbar = toolbar
         self._toolbar_actions: dict[str, QAction] = {}
@@ -568,23 +575,44 @@ class QtOrbitRxApplication(QMainWindow):
             ("About", self._about),
             ("Location", self.ctrl.refresh_location),
             ("Weather", self.ctrl.fetch_weather),
-            ("Export snapshot", self._export_json),
-            ("Export DX CSV", self._export_dx),
         ]:
             action = QAction(text, self)
             action.triggered.connect(slot)
             toolbar.addAction(action)
             self._toolbar_actions[text] = action
+        toolbar.addSeparator()
+        export_btn = QToolButton(toolbar)
+        export_btn.setObjectName("toolbarOverflow")
+        export_btn.setText("»")
+        export_btn.setToolTip("Export")
+        export_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        export_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        export_menu = QMenu(export_btn)
+        for text, slot in [
+            ("Export snapshot", self._export_json),
+            ("Export DX CSV", self._export_dx),
+        ]:
+            action = QAction(text, self)
+            action.triggered.connect(slot)
+            export_menu.addAction(action)
+            self._toolbar_actions[text] = action
+        export_btn.setMenu(export_menu)
+        toolbar.addWidget(export_btn)
+        self._toolbar_overflow = export_btn
 
     def controls_reachable(self) -> dict[str, bool]:
-        """M1: whether each toolbar action is directly visible, or reachable in one
-        click via Qt's overflow chevron when the toolbar is too narrow to show it."""
+        """Primary toolbar actions visible; Export actions reachable via the » menu."""
+        overflow = getattr(self, "_toolbar_overflow", None)
+        overflow_ok = bool(overflow and overflow.isVisible())
         ext_button = self._toolbar.findChild(QWidget, "qt_toolbar_ext_button")
-        overflow_active = bool(ext_button and ext_button.isVisible())
+        qt_overflow = bool(ext_button and ext_button.isVisible())
         result = {}
         for name, action in self._toolbar_actions.items():
+            if name.startswith("Export"):
+                result[name] = overflow_ok or qt_overflow
+                continue
             widget = self._toolbar.widgetForAction(action)
-            result[name] = bool(widget and widget.isVisible()) or overflow_active
+            result[name] = bool(widget and widget.isVisible()) or qt_overflow
         return result
 
     def hscroll_visible(self) -> bool:
@@ -1226,6 +1254,11 @@ class QtOrbitRxApplication(QMainWindow):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dlg.accept)
         buttons.rejected.connect(dlg.reject)
+        save_btn = buttons.button(QDialogButtonBox.StandardButton.Save)
+        if save_btn is not None:
+            save_btn.setObjectName("primaryButton")
+            save_btn.setDefault(True)
+            save_btn.setStyleSheet("")  # let QSS #primaryButton apply
         outer.addWidget(buttons)
         dlg.buttons = buttons
 

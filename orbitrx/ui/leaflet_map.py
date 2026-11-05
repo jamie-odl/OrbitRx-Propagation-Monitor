@@ -85,13 +85,25 @@ new QWebChannel(qt.webChannelTransport, ch => {
   spotBridge = ch.objects.spotBridge;
   if (tilesOk) spotBridge.tilesLoaded(); else if (tilesFailed) spotBridge.tileError();
 });
-const map = L.map('map', {worldCopyJump: true, zoomControl: true}).setView([20, 0], 2);
-const tileLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OSM</a> &copy; <a href="https://carto.com/attributions">CARTO</a>',
-  maxZoom: 12, subdomains: 'abcd'
+const map = L.map('map', {worldCopyJump: true, zoomControl: true, minZoom: 1, maxZoom: 6}).setView([20, 0], 2);
+// V11 must-fix 1: offline-first dark equirectangular basemap — never Carto watermarks.
+const basemap = L.imageOverlay('__BASEMAP_URL__', [[-90, -180], [90, 180]], {
+  opacity: 1, interactive: false, zIndex: 0
 }).addTo(map);
-tileLayer.on('tileload', () => { if (!tilesOk) { tilesOk = true; if (spotBridge) spotBridge.tilesLoaded(); } });
-tileLayer.on('tileerror', () => { if (tilesOk) return; tilesFailed = true; if (spotBridge) spotBridge.tileError(); });
+L.control.attribution({prefix: false}).addTo(map);
+map.attributionControl.addAttribution('OrbitRx dark basemap');
+basemap.on('load', () => {
+  if (!tilesOk) { tilesOk = true; if (spotBridge) spotBridge.tilesLoaded(); }
+});
+basemap.on('error', () => {
+  if (tilesOk) return; tilesFailed = true; if (spotBridge) spotBridge.tileError();
+});
+setTimeout(() => {
+  const el = basemap.getElement && basemap.getElement();
+  if (!tilesOk && el && el.complete && el.naturalWidth > 0) {
+    tilesOk = true; if (spotBridge) spotBridge.tilesLoaded();
+  }
+}, 400);
 let userM=null, sunM=null, dxLayer=L.layerGroup().addTo(map), termLine=null, nightPane=[];
 function setPayload(p) {
   dxLayer.clearLayers();
@@ -155,8 +167,8 @@ map.on('click', e => { if (spotBridge) spotBridge.mapClicked(e.latlng.lat, e.lat
 </script></body></html>"""
 
 
-def _leaflet_html() -> str:
-    """Build the page with bundled Leaflet and Qt's qwebchannel.js inlined (no CDN, no qrc fetch)."""
+def _leaflet_html(basemap_url: str) -> str:
+    """Build the page with bundled Leaflet + offline dark basemap (no CDN tiles, no Carto)."""
     from PySide6.QtCore import QFile, QIODevice
 
     js = ""
@@ -169,7 +181,8 @@ def _leaflet_html() -> str:
     ljs = (leaflet_dir / "leaflet.js").read_text(encoding="utf-8")
     return (_LEAFLET_HTML.replace("__LEAFLET_CSS__", css)
             .replace("__LEAFLET_JS__", ljs)
-            .replace("__QWEBCHANNEL_JS__", js))
+            .replace("__QWEBCHANNEL_JS__", js)
+            .replace("__BASEMAP_URL__", basemap_url))
 
 
 if WEBENGINE_AVAILABLE:
@@ -227,6 +240,7 @@ if WEBENGINE_AVAILABLE:
                 f"OrbitRx/{__version__} (+https://github.com/jamie-odl/OrbitRx-Propagation-Monitor)"
             )
             self.web.settings().setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+            self.web.settings().setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
             # M3: a dark page background instead of Qt's default white, so a slow or
             # failed load never flashes blank white at any zoom/scale factor.
             self.web.page().setBackgroundColor(QColor(BG))
@@ -239,8 +253,13 @@ if WEBENGINE_AVAILABLE:
             channel = QWebChannel(self.web.page())
             channel.registerObject("spotBridge", self._bridge)
             self.web.page().setWebChannel(channel)
-            # Leaflet JS/CSS are bundled under ui/assets (no CDN). Map tiles still load online.
-            self.web.setHtml(_leaflet_html(), QUrl.fromLocalFile(str(ASSETS_DIR) + "/"))
+            # Leaflet JS/CSS bundled; basemap is the local dark equirectangular PNG (no Carto).
+            from orbitrx.paths import ensure_map_image
+            from PySide6.QtCore import QUrl as _QUrl
+            basemap_path = ensure_map_image()
+            basemap_url = _QUrl.fromLocalFile(str(basemap_path.resolve())).toString()
+            base = basemap_path.resolve().parent
+            self.web.setHtml(_leaflet_html(basemap_url), _QUrl.fromLocalFile(str(base) + "/"))
             self._ready = False
             self.web.loadFinished.connect(self._on_ready)
 
@@ -311,11 +330,16 @@ if WEBENGINE_AVAILABLE:
             self._unavailable_overlay.hide()
 
         def _retry(self) -> None:
-            log.info("Leaflet map retry requested; reloading")
+            log.info("Leaflet map retry requested; reloading offline basemap")
             self._hide_unavailable_overlay()
             self._ready = False
             self._tiles_ok = False
-            self.web.reload()
+            from orbitrx.paths import ensure_map_image
+            from PySide6.QtCore import QUrl as _QUrl
+            basemap_path = ensure_map_image()
+            basemap_url = _QUrl.fromLocalFile(str(basemap_path.resolve())).toString()
+            base = basemap_path.resolve().parent
+            self.web.setHtml(_leaflet_html(basemap_url), _QUrl.fromLocalFile(str(base) + "/"))
 
         def _on_ready(self, ok: bool) -> None:
             self._ready = ok
