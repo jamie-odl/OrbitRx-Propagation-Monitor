@@ -17,7 +17,8 @@ from orbitrx.spots.settings import clamp_poll_seconds
 from orbitrx.ui.formatting import (
     widen_to_min_span,
     humanize_iso_dates,
-    format_hour_offset, format_replay_offset, history_plot_date_format, pad_datetime_range,
+    format_hour_offset, format_no_spots_message, format_replay_offset,
+    history_plot_date_format, pad_datetime_range,
 )
 from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
 from orbitrx.ui.theme import ERR, MUTED, OK, apply_theme
@@ -61,6 +62,16 @@ CONTINENT_OPTS = [("NA", "North America"), ("SA", "South America"), ("EU", "Euro
 # Shared label column width for every Settings page, so the field column starts at the
 # same x regardless of which page's labels happen to be widest (N-new-3).
 SETTINGS_LABEL_WIDTH = 170
+
+# S4: a one-line description at the top of every Settings page, so a page with only
+# one or two controls still reads as a deliberate, populated screen.
+SETTINGS_PAGE_DESCRIPTIONS = {
+    "Station": "Your callsign and home coordinates, used to centre the map and tag your spots.",
+    "Rig": "Connect to your radio over CAT so clicking a spot on the map can tune it for you.",
+    "DX cluster": "Pick a cluster node and filter which DX spots show up on the map.",
+    "Map & spots": "Choose the map backend and how often Live Spots refreshes from PSKReporter.",
+    "Services": "Optional QRZ lookups and how often space weather data refreshes.",
+}
 
 
 class _UiInvoker(QObject):
@@ -173,14 +184,14 @@ class QtOrbitRxApplication(QMainWindow):
             cb.stateChanged.connect(self._layers_changed)
             if key.startswith("spot_") and self._map_backend != "leaflet":
                 cb.setEnabled(False)
-                cb.setToolTip("Live spots need the interactive map. Switch in Settings > Map.")
+                cb.setToolTip("Live spots need the interactive map. Switch in Settings > Map & spots.")
             self._layer_checks[key] = cb
             layer_row.addWidget(cb)
         if self._map_backend != "leaflet":
             switch_lbl = QLabel('<a href="#">Switch map</a>')
             switch_lbl.setObjectName("muted")
-            switch_lbl.setToolTip("Live spots need the interactive map. Switch in Settings > Map.")
-            switch_lbl.linkActivated.connect(lambda _: self._settings(initial_page="Map"))
+            switch_lbl.setToolTip("Live spots need the interactive map. Switch in Settings > Map & spots.")
+            switch_lbl.linkActivated.connect(lambda _: self._settings(initial_page="Map & spots"))
             layer_row.addWidget(switch_lbl)
         left.addLayout(layer_row)
 
@@ -415,16 +426,18 @@ class QtOrbitRxApplication(QMainWindow):
     def _refresh_live_spots(self) -> None:
         from orbitrx.spots.geo import arcs_payload, heatmap_payload
 
-        if not hasattr(self.map_widget, "set_live_spots"):
-            return
         val = self.replay_slider.value() if hasattr(self, "replay_slider") else 0
         spots = self.ctrl.spots.snapshot() if val == 0 else self.ctrl.spots.replay(float(val))
-        self.map_widget.set_live_spots({
-            "arcs": self._layer_checks["spot_arcs"].isChecked(),
-            "heatmap": self._layer_checks["spot_heatmap"].isChecked(),
-            "spots": arcs_payload(spots),
-            "heat": heatmap_payload(spots),
-        })
+        live_on = self._layer_checks["spot_arcs"].isChecked() or self._layer_checks["spot_heatmap"].isChecked()
+        if hasattr(self.map_widget, "set_live_spots"):
+            self.map_widget.set_live_spots({
+                "arcs": self._layer_checks["spot_arcs"].isChecked(),
+                "heatmap": self._layer_checks["spot_heatmap"].isChecked(),
+                "spots": arcs_payload(spots),
+                "heat": heatmap_payload(spots),
+            })
+        if hasattr(self.map_widget, "set_empty_overlay"):
+            self.map_widget.set_empty_overlay(format_no_spots_message(val) if live_on and not spots else "")
         err = self.ctrl.spots.last_error
         if err:
             self._set_status("Live Spots offline: PSKReporter unreachable, showing cached data")
@@ -578,6 +591,23 @@ class QtOrbitRxApplication(QMainWindow):
         for spine in ax.spines.values():
             spine.set_color("#37474F")
 
+        if len(times) < 2:
+            # S2: a single point has no meaningful x-range to plot against.
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.text(
+                0.5, 0.5, "Not enough data yet", transform=ax.transAxes,
+                ha="center", va="center", color=MUTED, fontsize=13,
+            )
+            fig.tight_layout()
+            canvas = FigureCanvas(fig)
+            self.plot_container.addWidget(canvas)
+            return
+
+        # S2: pad the data range by 10% total (5% each side) so points never sit
+        # flush against an axis edge, with a minimum 1 h span centred on the data
+        # so a tight cluster of points still occupies most of the plot width
+        # instead of a sliver.
         lo, hi = pad_datetime_range(min(times), max(times))
         lo, hi = widen_to_min_span(lo, hi)
         locator = AutoDateLocator(maxticks=7)
@@ -587,13 +617,13 @@ class QtOrbitRxApplication(QMainWindow):
         ax.xaxis.set_major_formatter(DateFormatter(history_plot_date_format(lo, hi)))
         ax.set_xlim(lo, hi)
 
-        kp_line, = ax.plot(times, kp, label="Kp", marker="o", color="#64B5F6")
+        kp_line, = ax.plot(times, kp, label="Kp", marker="o", linestyle="-", color="#64B5F6")
         ax.set_ylabel("Kp", color="#64B5F6")
         ax.set_ylim(0, 9)
         ax.yaxis.set_ticks(range(0, 10))
 
         ax2 = ax.twinx()
-        sfi_line, = ax2.plot(times, flux, label="SFI", marker="o", color="#FFD54F")
+        sfi_line, = ax2.plot(times, flux, label="SFI", marker="o", linestyle="-", color="#FFD54F")
         ax2.set_ylabel("SFI", color="#FFD54F")
         ax2.set_ylim(50, 300)
         for spine in ax2.spines.values():
@@ -645,6 +675,10 @@ class QtOrbitRxApplication(QMainWindow):
         form = QFormLayout(page)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        description = QLabel(SETTINGS_PAGE_DESCRIPTIONS.get(title, ""))
+        description.setObjectName("muted")
+        description.setWordWrap(True)
+        form.addRow(description)
         stack.addWidget(page)
         pages_list.addItem(title)
         return form
@@ -797,26 +831,8 @@ class QtOrbitRxApplication(QMainWindow):
             cont_layout.addWidget(cb)
         dxc.addRow(cont_box)
 
-        # --- Live spots ---
-        spots = self._add_form_page(page_list, stack, "Live spots")
-        spots_mode = QComboBox()
-        spots_mode.addItems(["FT8", "FT4", "WSPR"])
-        midx = spots_mode.findText(str(cfg.get("spots_mode", "FT8")))
-        if midx >= 0:
-            spots_mode.setCurrentIndex(midx)
-        fields["spots_mode"] = spots_mode
-        self._add_settings_row(spots, "Mode", spots_mode)
-        poll = QSpinBox()
-        poll.setRange(300, 3600)
-        poll.setSuffix(" s")
-        poll.setSingleStep(60)
-        poll.setMinimumHeight(30)
-        poll.setValue(clamp_poll_seconds(cfg.get("pskreporter_poll_seconds", 300)))
-        fields["pskreporter_poll_seconds"] = poll
-        self._add_settings_row(spots, "Poll interval", poll)
-
-        # --- Map ---
-        map_page = self._add_form_page(page_list, stack, "Map")
+        # --- Map & spots ---
+        map_page = self._add_form_page(page_list, stack, "Map & spots")
         map_backend = QComboBox()
         map_backend.addItem("Static world map (works offline)", "static")
         if self._leaflet_available():
@@ -826,6 +842,21 @@ class QtOrbitRxApplication(QMainWindow):
             map_backend.setCurrentIndex(idx)
         fields["map_backend"] = map_backend
         self._add_settings_row(map_page, "Map backend", map_backend)
+        spots_mode = QComboBox()
+        spots_mode.addItems(["FT8", "FT4", "WSPR"])
+        midx = spots_mode.findText(str(cfg.get("spots_mode", "FT8")))
+        if midx >= 0:
+            spots_mode.setCurrentIndex(midx)
+        fields["spots_mode"] = spots_mode
+        self._add_settings_row(map_page, "Mode", spots_mode)
+        poll = QSpinBox()
+        poll.setRange(300, 3600)
+        poll.setSuffix(" s")
+        poll.setSingleStep(60)
+        poll.setMinimumHeight(30)
+        poll.setValue(clamp_poll_seconds(cfg.get("pskreporter_poll_seconds", 300)))
+        fields["pskreporter_poll_seconds"] = poll
+        self._add_settings_row(map_page, "Poll interval", poll)
 
         # --- Services ---
         services = self._add_form_page(page_list, stack, "Services")
@@ -873,7 +904,7 @@ class QtOrbitRxApplication(QMainWindow):
         buttons.rejected.connect(dlg.reject)
         outer.addWidget(buttons)
 
-        page_names = ["Station", "Rig", "DX cluster", "Live spots", "Map", "Services"]
+        page_names = ["Station", "Rig", "DX cluster", "Map & spots", "Services"]
         start_row = page_names.index(initial_page) if initial_page in page_names else 0
         page_list.setCurrentRow(start_row)
         return dlg

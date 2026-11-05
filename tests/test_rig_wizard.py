@@ -169,6 +169,24 @@ def test_present_saved_port_is_kept(app, cfg, monkeypatch):
     assert combo.currentData() == "COM7"
 
 
+def test_simulated_cat_controller_shows_connected_state(app, cfg): # N1
+    from orbitrx.ui.rig_wizard import RigWizardDialog, SimulatedCatController
+
+    dlg = RigWizardDialog(cfg, SimulatedCatController())
+    dlg._test_cat()
+    assert dlg.status_text.text() == "● Connected: 14.074 MHz"
+    assert dlg.status_text.styleSheet() == "color: #3FB950;"
+    assert dlg.status_icon.text() == "🟢"
+
+
+def test_simulated_cat_controller_is_not_the_production_default(app, cfg): # N1
+    from orbitrx.cat import CatController
+    from orbitrx.ui.rig_wizard import RigWizardDialog, SimulatedCatController
+
+    dlg = RigWizardDialog(cfg, CatController(cfg))
+    assert not isinstance(dlg.cat, SimulatedCatController)
+
+
 def test_port_label_has_no_nested_brackets(): # S5
     from orbitrx.ui.rig_wizard import _port_label
 

@@ -5,7 +5,7 @@ import json
 from typing import Any
 
 try:
-    from PySide6.QtCore import QObject, QUrl, Signal, Slot
+    from PySide6.QtCore import QObject, Qt, QUrl, Signal, Slot
     from PySide6.QtWebChannel import QWebChannel
     from PySide6.QtWebEngineCore import QWebEngineSettings
     from PySide6.QtWebEngineWidgets import QWebEngineView
@@ -20,6 +20,7 @@ from pathlib import Path
 from orbitrx.map_renderer import MapLayers, MapRenderer
 from orbitrx.paths import bundled_root
 from orbitrx.ui.formatting import format_hour_offset, format_map_hud_datetime
+from orbitrx.ui.theme import MUTED
 
 
 def _assets_dir() -> Path:
@@ -168,8 +169,28 @@ if WEBENGINE_AVAILABLE:
             self._ready = False
             self.web.loadFinished.connect(self._on_ready)
 
+            # S1: centred label shown over the map when live spots are on but the
+            # current replay window has nothing to plot.
+            self._empty_overlay = QLabel("", self)
+            self._empty_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._empty_overlay.setWordWrap(True)
+            self._empty_overlay.setStyleSheet(f"color: {MUTED}; font-size: 13px; background: transparent;")
+            self._empty_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            self._empty_overlay.hide()
+
         def _on_ready(self, ok: bool) -> None:
             self._ready = ok
+
+        def set_empty_overlay(self, text: str) -> None:
+            self._empty_overlay.setText(text)
+            self._empty_overlay.setGeometry(self.rect())
+            self._empty_overlay.setVisible(bool(text))
+            if text:
+                self._empty_overlay.raise_()
+
+        def resizeEvent(self, event) -> None:
+            super().resizeEvent(event)
+            self._empty_overlay.setGeometry(self.rect())
 
         def _emit_map_click(self, lat: float, lon: float) -> None:
             x, y = self.renderer.world_to_map(lat, lon)

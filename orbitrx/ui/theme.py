@@ -52,9 +52,9 @@ QGroupBox {{ border: 1px solid {BORDER}; border-radius: 6px; margin-top: 10px; p
 QGroupBox::title {{ subcontrol-origin: margin; left: 8px; color: {MUTED}; font-size: {FONT_CAPTION}px; }}
 QLineEdit, QComboBox, QAbstractSpinBox {{ background: {SURFACE}; border: 1px solid {CONTROL_BORDER}; border-radius: 4px; padding: 4px 6px; }}
 QLineEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {{ border-color: {ACCENT}; }}
-QAbstractSpinBox {{ padding-right: 18px; }}
+QAbstractSpinBox {{ padding-right: 20px; }}
 QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
-    subcontrol-origin: border; width: 16px; border-left: 1px solid {CONTROL_BORDER}; background: {SURFACE};
+    subcontrol-origin: padding; width: 18px; border-left: 1px solid {CONTROL_BORDER}; background: {SURFACE};
 }}
 QAbstractSpinBox::up-button {{ subcontrol-position: top right; border-top-right-radius: 4px; }}
 QAbstractSpinBox::down-button {{ subcontrol-position: bottom right; border-bottom-right-radius: 4px; }}

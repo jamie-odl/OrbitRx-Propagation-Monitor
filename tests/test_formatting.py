@@ -92,6 +92,17 @@ def test_format_replay_offset_live_or_integer_hours(): # S6
     assert format_replay_offset(48) == "-48 h"
 
 
+def test_format_no_spots_message_plain_when_live(): # S1
+    from orbitrx.ui.formatting import format_no_spots_message
+    assert format_no_spots_message(0) == "No spots in this window"
+
+
+def test_format_no_spots_message_appends_hours_ago(): # S1
+    from orbitrx.ui.formatting import format_no_spots_message
+    assert format_no_spots_message(6) == "No spots in this window (6 h ago)"
+    assert format_no_spots_message(1) == "No spots in this window (1 h ago)"
+
+
 def test_concise_date_offset_formats_use_day_month_year_order(): # N-new-7
     formats = concise_date_offset_formats()
     assert formats[3] == "%d %b %Y"

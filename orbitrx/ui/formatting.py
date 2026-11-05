@@ -73,6 +73,13 @@ def format_replay_offset(hours: float) -> str:
     return "Live" if h == 0 else f"-{h} h"
 
 
+def format_no_spots_message(hours_ago: float = 0) -> str:
+    """Empty-replay-window map overlay text (S1), e.g. 0 -> "No spots in this window",
+    6 -> "No spots in this window (6 h ago)"."""
+    h = int(round(hours_ago))
+    return "No spots in this window" if h == 0 else f"No spots in this window ({h} h ago)"
+
+
 def concise_date_offset_formats() -> list[str]:
     """ConciseDateFormatter offset_formats using "dd MMM yyyy" day order (N-new-7),
     consistent with format_iso_utc elsewhere instead of matplotlib's default "yyyy-MMM-dd".
@@ -120,7 +127,7 @@ def humanize_iso_dates(text: str) -> str:
 
 
 def widen_to_min_span(
-    lo: datetime.datetime, hi: datetime.datetime, minutes: int = 10
+    lo: datetime.datetime, hi: datetime.datetime, minutes: int = 60
 ) -> tuple[datetime.datetime, datetime.datetime]:
     """Widen a short plot range to at least `minutes`, centred, so HH:mm ticks are
     never duplicated (M4)."""

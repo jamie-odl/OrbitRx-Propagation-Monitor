@@ -10,6 +10,27 @@ from orbitrx.cat import CatController, RIG_PROFILES, default_port_fallback
 from orbitrx.config import AppConfig
 from orbitrx.ui.theme import ERR, OK
 
+# N1: distinct from the normal OK colour, this marks a *simulated* connected state
+# (screenshots/tests only) so it is never mistaken for a genuine CAT success.
+SIMULATED_CAT_COLOR = "#3FB950"
+_SIMULATED_PREFIX = "SIMULATED_CONNECTED:"
+
+
+class SimulatedCatController:
+    """Fake CAT backend that always reports a connected rig, for screenshots and
+    tests. Never used by production code: RigWizardDialog defaults to the real
+    CatController, this is only passed in explicitly by callers that want it."""
+
+    def __init__(self, freq_mhz: float = 14.074, port: str = "COM9") -> None:
+        self.freq_mhz = freq_mhz
+        self.port = port
+
+    def list_ports_detailed(self) -> list[tuple[str, str]]:
+        return [(self.port, "Simulated rig (screenshots/tests)")]
+
+    def tune(self, freq_mhz: float | str, confirm=None) -> str:
+        return f"{_SIMULATED_PREFIX}{self.freq_mhz:.3f}"
+
 
 def _port_label(device: str, desc: str) -> str:
     """"COM2 - Communications Port", never "COM2 (Communications Port (COM2))" (S5):
@@ -124,6 +145,12 @@ class RigWizardDialog(QDialog):
         self.cfg.data["cat_rig_profile"] = self.profile_combo.currentText()
         test_freq = 14.200
         result = self.cat.tune(test_freq, confirm=None)
+        if result.startswith(_SIMULATED_PREFIX):
+            freq = result[len(_SIMULATED_PREFIX):]
+            self.status_icon.setText("🟢")
+            self.status_text.setText(f"● Connected: {freq} MHz")
+            self.status_text.setStyleSheet(f"color: {SIMULATED_CAT_COLOR};")
+            return
         ok = "Sent CAT" in result
         self.status_icon.setText("🟢" if ok else "🔴")
         self.status_text.setText(f"{result} (test frequency {test_freq} MHz)" if ok else result)

@@ -9,7 +9,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
 
-EXPECTED_PAGES = ["Station", "Rig", "DX cluster", "Live spots", "Map", "Services"]
+EXPECTED_PAGES = ["Station", "Rig", "DX cluster", "Map & spots", "Services"]
 
 
 @pytest.fixture
@@ -34,10 +34,33 @@ def window(tmp_path, monkeypatch):
     app.processEvents()
 
 
-def test_settings_has_six_pages_in_order(window):
+def test_settings_has_five_pages_in_order(window): # S4: Live spots + Map merged
     dlg = window._build_settings_dialog()
     names = [dlg.page_list.item(i).text() for i in range(dlg.page_list.count())]
     assert names == EXPECTED_PAGES
+    assert len(names) == 5
+
+
+def test_every_settings_page_has_a_non_empty_description(window): # S4
+    from PySide6.QtWidgets import QLabel
+
+    dlg = window._build_settings_dialog()
+    for i in range(dlg.stack.count()):
+        page = dlg.stack.widget(i)
+        descriptions = [
+            lbl for lbl in page.findChildren(QLabel)
+            if lbl.objectName() == "muted" and lbl.wordWrap()
+        ]
+        assert descriptions, EXPECTED_PAGES[i]
+        assert descriptions[0].text().strip() != "", EXPECTED_PAGES[i]
+
+
+def test_map_and_spots_page_keeps_all_merged_controls(window): # S4
+    dlg = window._build_settings_dialog()
+    for key in ("map_backend", "spots_mode", "pskreporter_poll_seconds"):
+        field = dlg.fields[key]
+        page = field.parentWidget()
+        assert dlg.stack.indexOf(page) == EXPECTED_PAGES.index("Map & spots")
 
 
 def test_settings_dialog_fits_release_size_budget(window):
@@ -138,9 +161,9 @@ def test_test_qrz_button_lives_on_services_page_with_the_key(window):
 
 
 def test_initial_page_opens_requested_page(window):
-    dlg = window._build_settings_dialog(initial_page="Map")
-    assert dlg.page_list.currentRow() == EXPECTED_PAGES.index("Map")
-    assert dlg.stack.currentIndex() == EXPECTED_PAGES.index("Map")
+    dlg = window._build_settings_dialog(initial_page="Map & spots")
+    assert dlg.page_list.currentRow() == EXPECTED_PAGES.index("Map & spots")
+    assert dlg.stack.currentIndex() == EXPECTED_PAGES.index("Map & spots")
 
 
 def test_ip_lookup_privacy_text_is_fully_visible(window): # R1
@@ -193,6 +216,53 @@ def test_settings_serial_port_selects_first_real_port_when_saved_missing(window,
     port_combos = [c for c in dlg.findChildren(QComboBox) if c.findData("COM2") >= 0]
     assert len(port_combos) == 1
     assert port_combos[0].currentData() == "COM2"
+
+
+def test_spin_box_border_spans_full_field_width_with_buttons_inside(window): # M3
+    """Every spin box must line up with the QLineEdit/QComboBox fields in the same
+    form: same right edge (within 1px), same width (give or take the 1px border),
+    and the up-button subcontrol rect fully inside the widget's own rect (not
+    overhanging past a detached border)."""
+    from PySide6.QtWidgets import (
+        QAbstractSpinBox, QComboBox, QLineEdit, QStyle, QStyleOptionSpinBox,
+    )
+
+    dlg = window._build_settings_dialog()
+    dlg.show()
+    checked = 0
+    for i in range(dlg.stack.count()):
+        page = dlg.stack.widget(i)
+        form = page.layout()
+        for row in range(form.rowCount()):
+            field_item = form.itemAt(row, form.ItemRole.FieldRole)
+            if not field_item or not field_item.widget():
+                continue
+            field = field_item.widget()
+            if not isinstance(field, (QLineEdit, QComboBox)):
+                continue
+            label_item = form.itemAt(row, form.ItemRole.LabelRole)
+            if not label_item or not label_item.widget():
+                continue
+            for other_row in range(form.rowCount()):
+                other_item = form.itemAt(other_row, form.ItemRole.FieldRole)
+                if not other_item or not other_item.widget():
+                    continue
+                sb = other_item.widget()
+                if not isinstance(sb, QAbstractSpinBox):
+                    continue
+                field_right = field.mapTo(dlg, field.rect().topRight()).x()
+                sb_right = sb.mapTo(dlg, sb.rect().topRight()).x()
+                assert abs(field_right - sb_right) <= 1, (page, field, sb)
+                assert sb.width() >= field.width() - 1
+
+                opt = QStyleOptionSpinBox()
+                sb.initStyleOption(opt)
+                up_rect = sb.style().subControlRect(
+                    QStyle.ComplexControl.CC_SpinBox, opt, QStyle.SubControl.SC_SpinBoxUp, sb
+                )
+                assert sb.rect().contains(up_rect), (page, sb, up_rect, sb.rect())
+                checked += 1
+    assert checked > 0
 
 
 def test_cluster_live_indicator_in_panel_header(window):

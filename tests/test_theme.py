@@ -65,10 +65,17 @@ def test_qss_styles_spinbox_up_down_buttons(): # N-new-2
 def test_qss_spinbox_reserves_room_for_both_arrows(): # M3
     """padding-right makes space for the button column so it never overhangs the field,
     and both buttons sit fully inside the border with a visible separator."""
-    assert "QAbstractSpinBox { padding-right: 18px; }" in QSS
-    assert "subcontrol-origin: border; width: 16px; border-left: 1px solid" in QSS
+    assert "QAbstractSpinBox { padding-right: 20px; }" in QSS
+    assert "subcontrol-origin: padding; width: 18px; border-left: 1px solid" in QSS
     assert "subcontrol-position: top right" in QSS
     assert "subcontrol-position: bottom right" in QSS
+
+
+def test_qss_spinbox_buttons_use_padding_origin_so_border_wraps_whole_control(): # M3
+    """subcontrol-origin: border (the old value) draws the outer frame only around the
+    text content, leaving the button column outside it; "padding" keeps the buttons
+    inside the already-reserved padding-right space, so the single border encloses both."""
+    assert "subcontrol-origin: border" not in QSS
 
 
 def test_type_scale_has_four_distinct_sizes():

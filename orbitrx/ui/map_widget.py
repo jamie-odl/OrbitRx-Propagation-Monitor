@@ -7,7 +7,7 @@ from PIL import Image
 
 from orbitrx.map_renderer import MapLayers, MapRenderer, MapScene
 from orbitrx.ui.formatting import format_hour_offset, format_map_hud_datetime
-from orbitrx.ui.theme import FONT_CAPTION
+from orbitrx.ui.theme import FONT_CAPTION, MUTED
 
 try:
     from PySide6.QtCore import Qt, QRectF, Signal
@@ -91,6 +91,22 @@ class PropagationMapWidget(QWidget):
 
         self._vector_root = self.scene.createItemGroup([])
         self._vector_root.setZValue(10)
+
+        # S1: centred label shown over the map when live spots are on but the
+        # current replay window has nothing to plot.
+        self._empty_overlay = QLabel("", self)
+        self._empty_overlay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_overlay.setWordWrap(True)
+        self._empty_overlay.setStyleSheet(f"color: {MUTED}; font-size: 13px; background: transparent;")
+        self._empty_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._empty_overlay.hide()
+
+    def set_empty_overlay(self, text: str) -> None:
+        self._empty_overlay.setText(text)
+        self._empty_overlay.setGeometry(self.rect())
+        self._empty_overlay.setVisible(bool(text))
+        if text:
+            self._empty_overlay.raise_()
 
     def set_layers(self, layers: MapLayers) -> None:
         if (
@@ -282,6 +298,7 @@ class PropagationMapWidget(QWidget):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._fit_map_view()
+        self._empty_overlay.setGeometry(self.rect())
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
