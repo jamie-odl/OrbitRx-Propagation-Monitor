@@ -122,29 +122,13 @@ jobs:
           $exe = (Resolve-Path dist\OrbitRxMonitor.exe).Path
           New-Item -ItemType Directory -Force -Path release-shots\100, release-shots\150 | Out-Null
 
-          function Hide-RunnerConsoles {
-            # N2: keep PowerShell/cmd consoles from covering the release captures.
-            Add-Type @"
-using System;
-using System.Runtime.InteropServices;
-public static class WinMin {
-  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-  [DllImport("kernel32.dll")] public static extern IntPtr GetConsoleWindow();
-}
-"@
-            $hwnd = [WinMin]::GetConsoleWindow()
-            if ($hwnd -ne [IntPtr]::Zero) { [WinMin]::ShowWindow($hwnd, 6) | Out-Null } # SW_MINIMIZE
-            Get-Process | Where-Object { $_.MainWindowTitle -match 'GitHub|Host|PowerShell|cmd' } |
-              ForEach-Object { try { $_.CloseMainWindow() | Out-Null } catch {} }
-          }
           function Invoke-ReleaseCapture([string]$CaptureDir, [string]$ScaleFactor) {
             Remove-Item Env:ORBITRX_TEST_SIMULATED_RIG -ErrorAction SilentlyContinue
             Remove-Item Env:QT_SCALE_FACTOR -ErrorAction SilentlyContinue
             $env:ORBITRX_CAPTURE_DIR = (Resolve-Path $CaptureDir).Path
             $env:ORBITRX_COMMIT_SHA = $env:GITHUB_SHA.Substring(0,7)
             if ($ScaleFactor) { $env:QT_SCALE_FACTOR = $ScaleFactor }
-            Hide-RunnerConsoles
-            $proc = Start-Process -FilePath $exe -WindowStyle Normal -PassThru
+            $proc = Start-Process -FilePath $exe -PassThru
             if (-not $proc.WaitForExit(120000)) {
               Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
               throw "OrbitRxMonitor.exe did not exit within 120s for $CaptureDir"
