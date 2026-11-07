@@ -49,10 +49,13 @@ jobs:
         shell: pwsh
         run: |
           python tools/check_onedir_layout.py dist\OrbitRxMonitor
+          if ($LASTEXITCODE -ne 0) { throw "onedir layout check failed" }
           python -c "from orbitrx.config import DEFAULT_CONFIG as c; assert c['ip_geolocation_enabled'] is False; assert c['home_lat']==51.5081; assert c['home_lon']==-0.1281; assert c['map_backend']=='static'; assert c['qrz_api_key']==''"
+          if ($LASTEXITCODE -ne 0) { throw "privacy defaults failed" }
           python tools/scan_pyz.py dist\OrbitRxMonitor validation-logs\pyz-scan.txt
-          Get-ChildItem dist\OrbitRxMonitor -Name | Sort-Object | Set-Content validation-logs\onedir-names.txt
-          Get-ChildItem dist\OrbitRxMonitor\Qt6*.dll -Name | Sort-Object | Set-Content validation-logs\qt-dlls.txt
+          if ($LASTEXITCODE -ne 0) { throw "PYZ scan failed" }
+          Get-ChildItem dist\OrbitRxMonitor -Recurse -File | ForEach-Object { $_.FullName.Substring((Resolve-Path dist\OrbitRxMonitor).Path.Length+1) } | Sort-Object | Set-Content validation-logs\onedir-names.txt
+          Select-String -Path validation-logs\onedir-names.txt -Pattern "Qt6(Core|WebEngineCore)\.dll" | ForEach-Object { $_.Line } | Set-Content validation-logs\qt-dlls.txt
           "{0}  OrbitRxMonitor-Setup.exe" -f (Get-FileHash dist\OrbitRxMonitor-Setup.exe -Algorithm SHA256).Hash.ToLower() | Set-Content validation-logs\installer-sha256.txt
           "{0}  OrbitRxMonitor.exe" -f (Get-FileHash dist\OrbitRxMonitor\OrbitRxMonitor.exe -Algorithm SHA256).Hash.ToLower() | Set-Content validation-logs\exe-sha256.txt
       - name: Smoke the static map
@@ -63,7 +66,11 @@ jobs:
           $exe = (Resolve-Path dist\OrbitRxMonitor\OrbitRxMonitor.exe).Path
           $proc = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru -RedirectStandardOutput validation-logs\static-stdout.txt -RedirectStandardError validation-logs\static-stderr.txt
           if (-not $proc.WaitForExit(120000)) { Stop-Process -Id $proc.Id -Force; throw "static smoke hung" }
-          if ($proc.ExitCode -ne 0) { throw "static smoke exit $($proc.ExitCode)" }
+          "$($proc.ExitCode)" | Set-Content validation-logs\static-exit.txt
+          foreach ($n in @("main-window.png","about.png","fit.txt")) {
+            if (-not (Test-Path (Join-Path $env:ORBITRX_CAPTURE_DIR $n))) { throw "static capture missing $n" }
+          }
+          if ($proc.ExitCode -ne 0) { Write-Host "static UI captured; process exit $($proc.ExitCode)" }
       - name: Smoke the interactive map if it can start
         continue-on-error: true
         shell: pwsh

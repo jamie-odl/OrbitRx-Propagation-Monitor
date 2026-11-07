@@ -134,22 +134,19 @@ def test_onedir_layout_checker_accepts_sibling_dlls(tmp_path):
     from tools.check_onedir_layout import check_layout
 
     root = tmp_path / "OrbitRxMonitor"
-    root.mkdir()
-    for rel in (
-        "OrbitRxMonitor.exe",
-        "Qt6Core.dll",
-        "Qt6WebEngineCore.dll",
-        "ne_110m_dark.png",
-        "LICENSE",
-        "NOTICE",
-        "PRIVACY.md",
-    ):
-        (root / rel).write_bytes(b"x")
-    (root / "third_party" / "qt" / "LICENSES").mkdir(parents=True)
-    (root / "third_party" / "qt" / "LICENSES" / "LGPL-3.0-only.txt").write_text("lgpl", encoding="utf-8")
-    (root / "third_party" / "qt" / "LICENSE.Chromium").write_text("bsd", encoding="utf-8")
-    (root / "third_party" / "natural_earth").mkdir()
-    (root / "third_party" / "natural_earth" / "TERMS_OF_USE.txt").write_text("pd", encoding="utf-8")
+    (root / "_internal" / "PySide6").mkdir(parents=True)
+    (root / "OrbitRxMonitor.exe").write_bytes(b"x")
+    (root / "_internal" / "PySide6" / "Qt6Core.dll").write_bytes(b"x")
+    (root / "_internal" / "PySide6" / "Qt6WebEngineCore.dll").write_bytes(b"x")
+    (root / "_internal" / "ne_110m_dark.png").write_bytes(b"x")
+    (root / "_internal" / "LICENSE").write_bytes(b"x")
+    (root / "_internal" / "NOTICE").write_bytes(b"x")
+    (root / "_internal" / "PRIVACY.md").write_bytes(b"x")
+    (root / "_internal" / "third_party" / "qt" / "LICENSES").mkdir(parents=True)
+    (root / "_internal" / "third_party" / "qt" / "LICENSES" / "LGPL-3.0-only.txt").write_text("lgpl", encoding="utf-8")
+    (root / "_internal" / "third_party" / "qt" / "LICENSE.Chromium").write_text("bsd", encoding="utf-8")
+    (root / "_internal" / "third_party" / "natural_earth").mkdir(parents=True)
+    (root / "_internal" / "third_party" / "natural_earth" / "TERMS_OF_USE.txt").write_text("pd", encoding="utf-8")
     assert check_layout(root) == []
     (root / "world_map.jpg").write_bytes(b"nope")
     assert any("world_map" in item for item in check_layout(root))

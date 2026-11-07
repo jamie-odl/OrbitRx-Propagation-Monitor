@@ -2,12 +2,13 @@
 
 This describes the unpublished onedir layout. It is not a record of the 5 Nov 2026 one-file exe, and it has not been executed on Windows.
 
-PyInstaller `COLLECT` writes `dist/OrbitRxMonitor/`. The executable is `OrbitRxMonitor.exe` on Windows or `OrbitRxMonitor` on Linux. Qt shared libraries are files in that same directory, not packed inside the executable:
+PyInstaller 6 writes `dist/OrbitRxMonitor/OrbitRxMonitor.exe` and puts collected files in `dist/OrbitRxMonitor/_internal/`. A Windows run of commit `ef8ebd6` (Actions run 42357631996) compressed these separate files, which are not inside the exe:
 
-- Windows: `Qt6Core.dll`, `Qt6WebEngineCore.dll`, and the other `Qt6*.dll` files the build collects.
-- Linux: `libQt6Core.so.6`, `libQt6WebEngineCore.so.6`, and the other `libQt6*.so*` files.
+- `_internal/PySide6/Qt6Core.dll`
+- `_internal/PySide6/Qt6WebEngineCore.dll`
+- `_internal/ne_110m_dark.png`
 
-To use a different build of a Qt library, replace that file with a build of the same Qt module version (6.12.0 for the libraries PySide6 6.12.0 / PySide6-WebEngine 6.12.0.140 were built against) and start the executable again. Do not rename the executable's folder. The basemap file `ne_110m_dark.png` in that folder is not a Qt library.
+Replace a Qt DLL in `_internal/PySide6/` with a build of the same module from Qt 6.12.0 / PySide6 6.12.0 and PySide6-WebEngine 6.12.0.140, then start `OrbitRxMonitor.exe` again. Do not rename the folder. `ne_110m_dark.png` is the map, not a Qt library. Linux library names were not produced by that Windows run.
 
 The interactive map needs Qt WebEngine. The default map is the static Natural Earth image and does not. Removing WebEngine would drop the interactive backend, so this packaging keeps it.
 

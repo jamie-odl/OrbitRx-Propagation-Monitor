@@ -6,23 +6,27 @@ import argparse
 import sys
 from pathlib import Path
 
+# PyInstaller 6 onedir, observed on windows-latest for commit ef8ebd6:
+# the launcher is OrbitRxMonitor.exe and collected files live in _internal.
 REQUIRED = (
     "OrbitRxMonitor.exe",
-    "Qt6Core.dll",
-    "Qt6WebEngineCore.dll",
-    "ne_110m_dark.png",
-    "LICENSE",
-    "NOTICE",
-    "PRIVACY.md",
-    "third_party/qt/LICENSES/LGPL-3.0-only.txt",
-    "third_party/qt/LICENSE.Chromium",
-    "third_party/natural_earth/TERMS_OF_USE.txt",
+    "_internal/PySide6/Qt6Core.dll",
+    "_internal/PySide6/Qt6WebEngineCore.dll",
+    "_internal/ne_110m_dark.png",
+    "_internal/LICENSE",
+    "_internal/NOTICE",
+    "_internal/PRIVACY.md",
+    "_internal/third_party/qt/LICENSES/LGPL-3.0-only.txt",
+    "_internal/third_party/qt/LICENSE.Chromium",
+    "_internal/third_party/natural_earth/TERMS_OF_USE.txt",
 )
 FORBIDDEN = (
     "world_map.jpg",
     "static_basemap_v2.png",
     "static_basemap_v2.webp",
-    "basemap/ne_110m_dark.png",
+    "_internal/world_map.jpg",
+    "_internal/static_basemap_v2.png",
+    "_internal/static_basemap_v2.webp",
 )
 
 
