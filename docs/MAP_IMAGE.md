@@ -1,6 +1,14 @@
 # Basemap images on this commit
 
-This note is about `static_basemap_v2.png`, `static_basemap_v2.webp`, and the separate fallback `world_map.jpg` at commit `304db03d99604af20da0b49ee2f3894ab17e2cc9` and the documentation fixes on top of it. It does not add a licence.
+This note does not add a licence and does not say the shipped app loads the v2 images.
+
+## What the frozen build loads
+
+`OrbitRxMonitor.spec` datas, `installer/OrbitRxMonitor.iss`, the Inno log for Actions run `42004653668` (it compresses `world_map.jpg` and does not name either v2 file), and the resulting exe archive all contain `world_map.jpg` only. `orbitrx/paths.py` still searches the v2 PNG, then the WebP, then the JPEG, and uses the first file that exists. Inside that frozen exe the v2 files are absent, so the app displays the JPEG. A source checkout that still has the PNG uses the PNG. Those are different files.
+
+## Commons file versus the committed JPEG
+
+`generate_map.py` can download `https://upload.wikimedia.org/wikipedia/commons/f/f2/Large_World_Map_bright.jpg`. The Commons imageinfo API on 7 November 2026 reports that original as SHA-1 `959a972de3f4faa78af35b486cf2e4921b3505be`, 78,654,642 bytes, 21600×10800, MIME image/jpeg. `extmetadata` names the licence `CC BY-SA 4.0` and the artist MTBlack. The committed `world_map.jpg` is SHA-256 `13e99d0a8fe7bc6e0eaac39aaf1358d2613370cc5d89ff1d6e6c989310324695`, 685,828 bytes, 1600×800, with no copyright field. Different pixel size means it is not that original file. No resize of the original was hashed against the committed JPEG, so this note does not say the JPEG is a derivative of that Commons file.
 
 ## What is in the files
 
@@ -35,8 +43,12 @@ The repository has no script, download URL, or commit message that names the fil
 
 `world_map.jpg` was not shown to be that render. A crude land mask on the photographic JPEG, resized to 2400×1200, had IoU about 0.81 against the PNG mask. That comparison used a colour rule, not the polygon raster, and is not an origin finding.
 
+## Optional candidate, not the default
+
+`tools/render_natural_earth_candidate.py` rasterizes `third_party/natural_earth/ne_110m_land.geojson` (SHA-256 `9e0729ee253ca7d7a5c4ae9395fb1902264c5377c52e224d13dd85010e2835d9`, natural-earth-vector tag `v5.1.2`). The terms copied from https://www.naturalearthdata.com/about/terms-of-use/ are in `third_party/natural_earth/TERMS_OF_USE.txt`. The script refuses to write `world_map.jpg` or either v2 file. It is not called by the app or by the spec. Running it does not change the packaged artwork.
+
 ## Not done
 
-Replacing the PNG and WebP with a new raster drawn from Natural Earth polygons would make the public-domain source explicit. It would also change pixels, so it was not done. The images shipped in the 5.1.0 installer inputs stay as they are.
+Replacing the PNG, the WebP, or the JPEG with that candidate would change pixels. That was not done. The images in git are unchanged.
 
 The MIT text in `LICENSE` is unchanged. It licenses "this software and associated documentation files". It does not name these images. This note does not extend that grant to them.

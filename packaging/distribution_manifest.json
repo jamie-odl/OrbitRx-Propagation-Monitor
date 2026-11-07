@@ -1,0 +1,32 @@
+{
+  "packaged_basemap": "world_map.jpg",
+  "source_basemap_search": [
+    "static_basemap_v2.png",
+    "static_basemap_v2.webp",
+    "world_map.jpg"
+  ],
+  "not_in_frozen_exe": ["pystray", "static_basemap_v2.png", "static_basemap_v2.webp"],
+  "present_texts": {
+    "third_party/qt/LICENSES/LGPL-3.0-only.txt": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+    "third_party/qt/LICENSES/GPL-2.0-only.txt": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
+    "third_party/qt/LICENSES/GPL-3.0-only.txt": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+    "third_party/qt/LICENSES/LGPL-2.1-or-later.txt": "1ccf09bf2f598308df4bed9cd8e9657dc5cd0973d2800318f2e241486e2edf3f",
+    "third_party/qt/LICENSES/Qt-GPL-exception-1.0.txt": "40678d338ce53cd93f8b22b281a2ecbcaa3ee65ce60b25ffb0c462b0530846b2",
+    "third_party/qt/qtcoreglobal.h.SPDX.txt": "00eacf8f3cfa338722ee3faa65ed8820cac7837acfef65bdbd7aaf0004d835f0",
+    "third_party/win10toast/LICENSE": "70849267b734d1170fc0af40b9eec056bb45e2ef59478cddd1984dc32183f5f4",
+    "third_party/pillow/LICENSE": "15181e7363dca9aed78b79bebebc7fde7f1814b8bd311ea3b87ae8ccadfc185b",
+    "third_party/matplotlib/LICENSE": "5a1a81ea301728c8bba2933da832c0cd62229daf20893a024ab3d53244468dbc",
+    "third_party/pyserial/LICENSE.txt": "f91cb9813de6a5b142b8f7f2dede630b5134160aedaeaf55f4d6a7e2593ca3f3",
+    "third_party/pywin32/License.txt": "ae254460373deef5dff3e08104f4c1f03a045c2ae1b34760b5c30f7efcef9078",
+    "third_party/pyinstaller/COPYING.txt": "0598064c7d2718e38d7914a7d08343b2fa008e3bea9ebba2aa7a6ffa5900dd64",
+    "orbitrx/ui/assets/leaflet/LICENSE-leaflet.txt": null
+  },
+  "release_blockers": [
+    "qt-licence-election",
+    "qt-corresponding-source-or-written-offer",
+    "qt-user-product-installation-information",
+    "qtwebengine-chromium-third-party-credits-file",
+    "world-map-jpeg-provenance",
+    "static-basemap-v2-licence"
+  ]
+}

@@ -115,11 +115,11 @@ https://buymeacoffee.com/thevenom
 
 ## Map image
 
-`static_basemap_v2.png` (SHA-256 `3046203ae0ade8be43cf9bd647ced5621ab1ee3cdfc95da5269f931b54ab2f1b`) and `static_basemap_v2.webp` (SHA-256 `2704a5d7c6819859c9d42b2659c23a879658724acd2755ca85ca41b33b252e67`) are the offline basemap. Neither file contains a licence, copyright, or EXIF field. They were added together in commit `39d5f1b` with no generator script. The WebP is a lossy copy of the same 2400×1200 picture.
+A source checkout searches `static_basemap_v2.png` (SHA-256 `3046203ae0ade8be43cf9bd647ced5621ab1ee3cdfc95da5269f931b54ab2f1b`), then `static_basemap_v2.webp` (SHA-256 `2704a5d7c6819859c9d42b2659c23a879658724acd2755ca85ca41b33b252e67`), then `world_map.jpg`. Those v2 files have no embedded licence. They are not what the frozen app loads.
 
-A plate-carrée raster of Natural Earth 1:110m land (vector tag v5.1.2) agrees with the lighter pixels of the PNG at intersection-over-union 0.937. That is a measurement, not a stored source file. Natural Earth's published terms say that dataset is in the public domain. This README does not assert that those polygons were the input, and it does not add a licence to the images. The measurement, what it does not prove, and the alternative that was not applied are in [docs/MAP_IMAGE.md](docs/MAP_IMAGE.md).
+`OrbitRxMonitor.spec`, `installer/OrbitRxMonitor.iss`, the 5 Nov 2026 build log, and the exe archive include `world_map.jpg` and do not include either v2 file. The shipped frozen app therefore displays the JPEG. That JPEG has no copyright field. It is not proven to be the Commons file `generate_map.py` can download. See [docs/MAP_IMAGE.md](docs/MAP_IMAGE.md).
 
-`world_map.jpg` is a different, photographic file used only if the v2 images are missing. `generate_map.py` can download a Wikimedia JPEG into that name. That download is not how the v2 images were produced.
+An optional Natural Earth renderer lives in `tools/render_natural_earth_candidate.py`. It is not the default and it does not replace either existing image.
 
 The default station pin remains London (`51.5081`, `-0.1281`). IP geolocation stays off unless the user turns it on. There is no paid map key.
 

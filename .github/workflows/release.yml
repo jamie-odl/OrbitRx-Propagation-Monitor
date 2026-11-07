@@ -1,6 +1,7 @@
 name: Release
 
-# Manual-only for now. Publishing a release is Jamie's decision; nothing runs on tags.
+# Manual-only. Publishing is not enabled. The gate refuses while Qt
+# distribution materials are still unresolved, and this workflow never uploads.
 on:
   workflow_dispatch:
 
@@ -8,7 +9,11 @@ permissions:
   contents: read
 
 jobs:
-  placeholder:
+  gate:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Release publishing is intentionally disabled until signing and the release decision are made."
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python tools/check_distribution_manifest.py --release

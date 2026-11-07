@@ -17,9 +17,16 @@ def bundled_root() -> Path | None:
     return Path(meipass) if meipass else None
 
 
+# Source checkouts search in this order. OrbitRxMonitor.spec and the Inno
+# script package only PACKAGED_BASEMAP_NAME, so the frozen exe never sees
+# the v2 files and resolves the JPEG. Do not treat that as a licence finding.
+SOURCE_BASEMAP_NAMES = ("static_basemap_v2.png", "static_basemap_v2.webp", "world_map.jpg")
+PACKAGED_BASEMAP_NAME = "world_map.jpg"
+
+
 def resolve_map_path() -> Path:
-    """Find the static basemap (v2 first, legacy JPG fallback)."""
-    names = ["static_basemap_v2.png", "static_basemap_v2.webp", "world_map.jpg"]
+    """Find a local basemap. v2 is preferred only when that file is present."""
+    names = SOURCE_BASEMAP_NAMES
     search: list[Path] = []
     bundle = bundled_root()
     if bundle:

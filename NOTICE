@@ -31,10 +31,13 @@ MAPS AND LIBRARIES
 ------------------
 Leaflet 1.9.4, https://leafletjs.com/ (BSD 2-Clause). Bundled locally in
   orbitrx/ui/assets/leaflet/ with its LICENSE-leaflet.txt.
-Map: both backends use the local basemap (static_basemap_v2.png, then the
-  WebP, then world_map.jpg). The interactive page is a file:// image overlay.
-  It does not request OpenStreetMap Foundation or CARTO tile servers.
-  See README "Map image" and docs/MAP_IMAGE.md.
+Map code searches static_basemap_v2.png, then the WebP, then world_map.jpg.
+  A source checkout that still has the v2 files uses the PNG.
+  OrbitRxMonitor.spec, installer/OrbitRxMonitor.iss, the 5 Nov 2026 Inno log,
+  and the frozen exe archive include world_map.jpg and do not include either
+  v2 file, so that frozen app displays the JPEG. The interactive page is a
+  local file overlay. It does not request a tile server. Neither image has an
+  established licence. See README "Map image" and docs/MAP_IMAGE.md.
 
 Ported code: the live spots, analytics, watchlist, rotor and OmniRig modules
 in orbitrx/spots/ come from the author's earlier project "WSPR / FT8 Global
@@ -47,13 +50,20 @@ Details and the files that were read are in docs/DEPENDENCY_LICENCES.md.
   Pillow 13.0.0: MIT-CMU (Pillow LICENSE).
   matplotlib 3.11.2: the Matplotlib licence agreement, not the PSF licence.
   pyserial 3.5: BSD-3-Clause (LICENSE.txt).
-  pywin32 b312: BSD-3-Clause in win32/License.txt (Mark Hammond). Not PSF.
-  pystray 0.19.5: LGPL-3.0-or-later (pystray/__init__.py). The wheel also
-    ships COPYING (GPL-3) and COPYING.LGPL.
-  win10toast 0.9: upstream LICENSE is MIT, copyright Jithu R Jacob, added
-    2017-07-21 (commit 76d491638b). The 0.9 wheel's METADATA says BSD and
-    does not contain that file.
-  PyInstaller 6.22.3: GPL-2.0-or-later with the Bootloader Exception.
-    Run-time hooks and fake-modules in that file are Apache-2.0.
-    Build tool only.
-customtkinter is not a dependency of this commit.
+  pywin32 b312: BSD-3-Clause in third_party/pywin32/License.txt (Mark Hammond). Not PSF.
+    win10toast imports it, so it is inside the frozen exe.
+  win10toast 0.9: exact MIT text in third_party/win10toast/LICENSE, from
+    repository commit 76d491638b (2017-07-21). The 0.9 wheel has no licence
+    file and its METADATA says BSD. The module is imported by alerts.py and
+    is in the frozen PYZ.
+  PyInstaller 6.22.3 bootloader: third_party/pyinstaller/COPYING.txt
+    (GPL-2.0-or-later plus the Bootloader Exception). The bootloader is
+    embedded in the exe. Copying that file is not a grant for OrbitRx.
+  Qt texts copied from qtbase v6.12.0 LICENSES are under third_party/qt.
+    Copying them does not choose LicenseRef-Qt-Commercial, LGPL, or GPL,
+    and it is not a source offer or a Chromium credits file.
+    See docs/DISTRIBUTION.md.
+pystray is not imported and is not in the frozen exe. It is not an
+  obligation of that binary. customtkinter is not a dependency of this commit.
+The MIT sentence in LICENSE covers the OrbitRx application source named
+  there. It does not cover Qt, Qt WebEngine, Chromium, or the map images.

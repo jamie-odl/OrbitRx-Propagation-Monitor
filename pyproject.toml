@@ -18,7 +18,6 @@ dependencies = [
 cat = ["pyserial>=3.5"]
 ui = ["win10toast>=0.9; sys_platform == 'win32'"]
 omnirig = ["pywin32>=306; sys_platform == 'win32'"]
-tray = ["pystray>=0.19"]
 dev = ["pytest>=8.0", "mypy>=1.8"]
 build = ["pyinstaller>=6.0"]
 map = ["PySide6-Addons>=6.6"]

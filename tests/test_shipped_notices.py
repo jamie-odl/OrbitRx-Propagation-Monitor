@@ -63,7 +63,8 @@ def test_broken_osm_notice_is_corrected_and_map_section_exists():
     assert "file://" in PRIVACY
     about = (ROOT / "orbitrx" / "ui" / "about.py").read_text(encoding="utf-8")
     assert "OpenStreetMap credits" not in about
-    assert "Released under the MIT License." in about
+    assert "application source is under the MIT License" in about
+    assert "does not cover Qt" in about
     qt = (ROOT / "orbitrx" / "ui" / "qt_app.py").read_text(encoding="utf-8")
     assert "Interactive map · OpenStreetMap" not in qt
     assert "Interactive map · offline basemap" in qt

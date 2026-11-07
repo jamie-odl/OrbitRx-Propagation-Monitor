@@ -14,13 +14,15 @@ Two different facts. The installer bytes have a recorded build. The zip around t
 
 The release workflow on this commit does not publish. The changelog still says 5.1.0 is not yet released. Nothing in this branch uploads a release or replaces that exe.
 
-## Published zip, reconstructed from the installer
+## Published digest, and what was actually hashed
 
-The downloaded zip SHA-256 is `bb8f087e041c13f868e6bb2ceb77c197760901aa478b3ee4ac9f9509efb2498b` (257,486,082 bytes). One member, `OrbitRxMonitor-Setup.exe`, deflate, no extra field, no comment. Version needed 20. Version made by `0x0314` (Unix, ZIP 2.0). External attributes `0x81A40000` (mode `0100644`). DOS time `20601`, DOS date `23909`, which is 2026-11-05 10:03:50.
+These are separate checks.
 
-The deflate stream is exactly `zlib.compressobj(9, zlib.DEFLATED, -15)` of the installer bytes (raw deflate, level 9). Building a ZIP with those headers around that stream produces the published digest. That check was run on the downloaded installer and matched `bb8f087e041c13f868e6bb2ceb77c197760901aa478b3ee4ac9f9509efb2498b`.
+- `https://thevenom.dev/downloads/orbitrx/SHA256SUMS.txt` was fetched on 7 November 2026 (HTTP 200). Its checksum line is `bb8f087e041c13f868e6bb2ceb77c197760901aa478b3ee4ac9f9509efb2498b  OrbitRx-Setup-5.1.0.zip` (two spaces before the filename). That is a text file on the website. It is not the zip bytes.
+- `tools/pack_setup_zip.py --historical-observed`, given the Actions artifact `OrbitRxMonitor-Setup.exe`, writes a zip whose SHA-256 is that same digest. The deflate stream is `zlib.compressobj(9, zlib.DEFLATED, -15)` of those installer bytes. Observed headers: one member `OrbitRxMonitor-Setup.exe`, method 8, flag 0, no extra field, no comment, version needed 20, version made by `0x0314`, external attributes `0x81A40000`, DOS time `20601`, DOS date `23909` (2026-11-05 10:03:50), 257,486,082 bytes. This reconstruction does not download `downloads.thevenom.dev`.
+- A later read of `https://downloads.thevenom.dev/orbitrx/OrbitRx-Setup-5.1.0.zip` received a Cloudflare challenge and did not hash the live object. Do not treat the reconstruction as a fresh hash of that URL.
 
-`tools/pack_setup_zip.py --historical-observed` implements that reconstruction. It is not a command found in git, in the Actions workflow, or in a release script. No step in this repository writes `OrbitRx-Setup-5.1.0.zip` or uploads it to `downloads.thevenom.dev`. The CI `SHA256SUMS.txt` hashes the two exes and does not contain the zip digest. The product page says a `SHA256SUMS.txt` also carries the zip hash; that website file was not retrieved.
+The reconstruction is not a command found in git. No command in git or in the Actions workflow writes `OrbitRx-Setup-5.1.0.zip`. The CI `SHA256SUMS.txt` hashes the two exes and does not contain the zip digest.
 
 ## Future packs
 

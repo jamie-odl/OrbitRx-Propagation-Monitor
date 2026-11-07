@@ -27,5 +27,8 @@ _debug_map.png
 .pytest_cache/
 config.json
 
+# Optional Natural Earth render. Not the packaged basemap.
+/candidates/
+
 # Spot cache
 /data/

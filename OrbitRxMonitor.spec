@@ -35,7 +35,26 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    datas=[('world_map.jpg', '.'), ('orbitrx/ui/assets', 'orbitrx/ui/assets'), ('assets/orbitrx.ico', 'assets'), ('LICENSE', '.'), ('NOTICE', '.'), ('PRIVACY.md', '.')],
+    # Packaged basemap is world_map.jpg only. The v2 PNG and WebP stay in the
+    # source tree and are not datas, matching the 5 Nov 2026 exe archive.
+    # third_party holds upstream licence texts. Copying them into the exe does
+    # not choose a Qt licence or supply Qt source or Chromium credits.
+    datas=[
+        ('world_map.jpg', '.'),
+        ('orbitrx/ui/assets', 'orbitrx/ui/assets'),
+        ('assets/orbitrx.ico', 'assets'),
+        ('LICENSE', '.'),
+        ('NOTICE', '.'),
+        ('PRIVACY.md', '.'),
+        ('third_party/qt/LICENSES', 'third_party/qt/LICENSES'),
+        ('third_party/qt/qtcoreglobal.h.SPDX.txt', 'third_party/qt'),
+        ('third_party/win10toast/LICENSE', 'third_party/win10toast'),
+        ('third_party/pillow/LICENSE', 'third_party/pillow'),
+        ('third_party/matplotlib/LICENSE', 'third_party/matplotlib'),
+        ('third_party/pyserial/LICENSE.txt', 'third_party/pyserial'),
+        ('third_party/pywin32/License.txt', 'third_party/pywin32'),
+        ('third_party/pyinstaller/COPYING.txt', 'third_party/pyinstaller'),
+    ],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},

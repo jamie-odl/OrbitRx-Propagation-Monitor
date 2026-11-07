@@ -117,7 +117,10 @@ def _build_about_dialog(parent=None) -> QDialog:
     body.setStyleSheet(f"color: {TEXT}; font-size: 13px;")
     lay.addWidget(body)
 
-    copy = QLabel("Copyright © 2026 thevenom. Released under the MIT License.")
+    copy = QLabel(
+        "Copyright © 2026 thevenom. The OrbitRx application source is under the MIT License. "
+        "That grant does not cover Qt, Qt WebEngine, Chromium, or the map image."
+    )
     copy.setWordWrap(True)
     copy.setStyleSheet(f"color: {MUTED}; font-size: {FONT_CAPTION}px;")
     lay.addWidget(copy)
@@ -184,7 +187,7 @@ def _about_html() -> str:
 <h2 style="margin-bottom:4px">OrbitRx Propagation Monitor</h2>
 <p style="color:#6B7A90;margin-top:0;margin-bottom:12px" id="version-line">{_version_line()}</p>
 <p style="margin-bottom:12px">HF propagation, space weather, DX cluster and live PSKReporter spots in one free desktop app.</p>
-<p style="margin-bottom:12px">Copyright &copy; 2026 thevenom. Released under the MIT License.</p>
+<p style="margin-bottom:12px">Copyright &copy; 2026 thevenom. The OrbitRx application source is under the MIT License. That grant does not cover Qt, Qt WebEngine, Chromium, or the map image.</p>
 <p style="margin-bottom:12px"><b>Data sources:</b> NOAA SWPC, HamQSL (N0NBH), PSKReporter (Philip Gladstone),
 DX cluster nodes, Leaflet + OrbitRx dark basemap. See <a href="{_notice_url()}">NOTICE</a> for full credits.</p>
 <p style="margin-bottom:12px">This build is unsigned. <a href="{RELEASES_URL}">Verify download</a>
