@@ -112,9 +112,10 @@ def test_ci_release_build_self_captures_and_checks_for_simulated_rig(): # M3
     assert "Simulated" in text
     assert "measure_field_edges.py" in text
     assert "release-exe-captures" in text
-    # The signed/unsigned exe artifact must still contain only the three release files.
-    unsigned_block = text.split("name: OrbitRx-windows-unsigned")[1].split("retention-days:")[0]
-    assert "release-shots" not in unsigned_block
+    assert "OrbitRx-windows-unsigned" not in text
+    evidence = text.split("name: release-exe-captures")[1].split("retention-days:")[0]
+    assert "release-shots/" in evidence
+    assert "dist/" not in evidence
 
 
 def test_write_version_info_reads_version_file(tmp_path):

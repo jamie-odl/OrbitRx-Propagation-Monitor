@@ -57,6 +57,53 @@ def test_source_checkout_does_not_fall_back_to_legacy_files(tmp_path, monkeypatc
     assert not chosen.is_file()
 
 
+def test_docs_and_ci_match_the_present_map_and_stay_unpublished():
+    map_doc = (ROOT / "docs" / "MAP_IMAGE.md").read_text(encoding="utf-8")
+    notice = (ROOT / "NOTICE").read_text(encoding="utf-8")
+    deps = (ROOT / "docs" / "DEPENDENCY_LICENCES.md").read_text(encoding="utf-8")
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    draft = (ROOT / "docs" / "QT_SOURCE_OFFER_DRAFT.md").read_text(encoding="utf-8")
+    spec = (ROOT / "OrbitRxMonitor.spec").read_text(encoding="utf-8")
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+
+    assert "ensure_map_image" in map_doc
+    assert "is not called by the app" not in map_doc
+    assert "That was not done" not in map_doc
+    assert "Historical `orbitrx/paths.py`" in map_doc
+    assert "does not choose one" not in deps
+    assert "does not choose LicenseRef-Qt-Commercial, LGPL, or GPL" not in notice
+    assert "private prospective packaging route is LGPL-3.0-only" in notice
+    assert "not a commercial grant" in notice
+    assert "win10toast imports it" not in notice
+    assert "omnirig.py" in notice and "win32com.client" in notice
+    assert "alerts.py" in notice
+    assert "140.0.7339.264" in draft and "151.0.7922.108" in draft
+    assert draft.startswith("# DRAFT")
+    assert not (ROOT / "third_party" / "qt" / "LICENSES" / "LicenseRef-Qt-Commercial.txt").exists()
+    assert "('basemap/ne_110m_dark.png', '.')" in spec
+    assert "next to the executable" in readme
+    assert "OrbitRx-windows-unsigned" not in ci
+    assert "dist/OrbitRxMonitor/" not in ci
+    assert "release-exe-captures" in ci
+    assert "upload-artifact" not in release
+    assert "check_distribution_manifest.py --release" in release
+
+
+def test_scan_pyz_resolves_an_onedir_folder(tmp_path):
+    from tools.scan_pyz import resolve_scan_target
+
+    folder = tmp_path / "OrbitRxMonitor"
+    folder.mkdir()
+    exe = folder / "OrbitRxMonitor.exe"
+    exe.write_bytes(b"MZ")
+    assert resolve_scan_target(folder) == exe
+    assert resolve_scan_target(exe) == exe
+    text = (ROOT / "tools" / "scan_pyz.py").read_text(encoding="utf-8")
+    assert "exclude_binaries=True" in text
+    assert "One-file archives are not what OrbitRxMonitor.spec builds" in text
+
+
 def test_renderer_matches_the_committed_png_and_refuses_legacy_names():
     image = render_land(load_dataset(), WIDTH, HEIGHT)
     committed = Image.open(ROOT / "basemap" / "ne_110m_dark.png")

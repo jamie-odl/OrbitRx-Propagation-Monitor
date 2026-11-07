@@ -115,7 +115,7 @@ https://buymeacoffee.com/thevenom
 
 ## Map image
 
-Development and the unpublished onedir both load `basemap/ne_110m_dark.png` (SHA-256 `552ba27ce43dcb838ed13fe59df8b5305d92d40702f33ceadf038392135db183`). It is a deterministic render of Natural Earth 1:110m land, dataset SHA-256 `9e0729ee253ca7d7a5c4ae9395fb1902264c5377c52e224d13dd85010e2835d9`. Preview: [docs/basemap_ne_110m_preview.png](docs/basemap_ne_110m_preview.png).
+A source checkout loads `basemap/ne_110m_dark.png` (SHA-256 `552ba27ce43dcb838ed13fe59df8b5305d92d40702f33ceadf038392135db183`). The spec entry is `('basemap/ne_110m_dark.png', '.')`, so the onedir folder has `ne_110m_dark.png` next to the executable, not inside a `basemap` directory. `resolve_map_path` checks both places. It is a deterministic render of Natural Earth 1:110m land, dataset SHA-256 `9e0729ee253ca7d7a5c4ae9395fb1902264c5377c52e224d13dd85010e2835d9`. Preview: [docs/basemap_ne_110m_preview.png](docs/basemap_ne_110m_preview.png).
 
 `static_basemap_v2.png` (SHA-256 `3046203ae0ade8be43cf9bd647ced5621ab1ee3cdfc95da5269f931b54ab2f1b`) and `static_basemap_v2.webp` (SHA-256 `2704a5d7c6819859c9d42b2659c23a879658724acd2755ca85ca41b33b252e67`) stay in the tree and are not selected. The 5 Nov 2026 exe packaged `world_map.jpg` instead. That published exe is unchanged. See [docs/MAP_IMAGE.md](docs/MAP_IMAGE.md).
 

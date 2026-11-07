@@ -1,13 +1,14 @@
-"""Scan a PyInstaller one-file exe's bundled PYZ for the simulated-rig gate.
+"""Scan the PYZ inside an OrbitRx PyInstaller executable.
 
-Usage: scan_pyz.py <exe> <out.txt>
+Usage: scan_pyz.py <exe-or-onedir> <out.txt>
 
-Opens the exe's CArchive, finds the PYZ, and decompresses the raw marshalled
-module data for orbitrx.ui.rig_wizard (no unmarshal, so it works with any
-host Python version). Asserts the module contains the gate's environment
-variable name and its refusal message, i.e. the gate logic is bundled and the
-simulated rig is refused unless ORBITRX_TEST_SIMULATED_RIG=1 is set. Also
-reports every bundled module whose code mentions "Simulated rig".
+The onedir spec passes the PYZ to EXE() and sets exclude_binaries=True.
+The PYZ stays in the executable's CArchive. Qt DLLs and datas, including
+ne_110m_dark.png, sit beside that executable and are not inside it.
+Pass either dist/OrbitRxMonitor/OrbitRxMonitor.exe or the onedir folder.
+
+One-file archives are not what OrbitRxMonitor.spec builds. This scanner
+does not look for a sibling PYZ-00.pyz.
 """
 from __future__ import annotations
 
@@ -15,13 +16,24 @@ import sys
 import zlib
 from pathlib import Path
 
-from PyInstaller.archive.readers import CArchiveReader
-
 GATE_MODULE = "orbitrx.ui.rig_wizard"
 REQUIRED = [b"ORBITRX_TEST_SIMULATED_RIG", b"is for screenshots/tests only"]
 
 
+def resolve_scan_target(path: Path) -> Path:
+    """Return the executable whose CArchive holds the PYZ."""
+    if path.is_dir():
+        for name in ("OrbitRxMonitor.exe", "OrbitRxMonitor"):
+            candidate = path / name
+            if candidate.is_file():
+                return candidate
+        raise FileNotFoundError(f"{path} is an onedir folder without OrbitRxMonitor.exe")
+    return path
+
+
 def _raw_pyz_modules(exe: Path):
+    from PyInstaller.archive.readers import CArchiveReader
+
     car = CArchiveReader(str(exe))
     pyz_name = next(n for n, e in car.toc.items() if n.endswith(".pyz") or e[-1] == "z")
     data = car.extract(pyz_name)
@@ -41,7 +53,7 @@ def _raw_pyz_modules(exe: Path):
 
 
 def main(argv: list[str]) -> int:
-    exe, out = Path(argv[1]), Path(argv[2])
+    exe, out = resolve_scan_target(Path(argv[1])), Path(argv[2])
     lines, found_gate, mentions = [], False, []
     for name, raw in _raw_pyz_modules(exe):
         if b"Simulated rig" in raw:

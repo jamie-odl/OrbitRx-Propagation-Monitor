@@ -108,14 +108,9 @@ jobs:
       - name: Checksums
         shell: pwsh
         run: Get-FileHash dist\OrbitRxMonitor\OrbitRxMonitor.exe, dist\OrbitRxMonitor-Setup.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Out-File dist\SHA256SUMS.txt -Encoding ascii
-      - uses: actions/upload-artifact@v4
-        with:
-          name: OrbitRx-windows-unsigned
-          path: |
-            dist/OrbitRxMonitor/
-            dist/OrbitRxMonitor-Setup.exe
-            dist/SHA256SUMS.txt
-          retention-days: 30
+      # Distributable upload stays off while packaging/distribution_manifest.json
+      # lists release_blockers. release.yml runs that gate and uploads nothing.
+      # release-shots later in this job are screenshots and text, not the exe.
       - name: Self-capture the release exe at 100% and 150% scale (M3 evidence)
         shell: pwsh
         run: |

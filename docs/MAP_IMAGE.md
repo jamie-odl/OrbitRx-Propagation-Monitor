@@ -22,7 +22,7 @@ Mean absolute per-channel difference between the PNG and the WebP, after decodin
 
 Git history: both v2 files were added in commit `39d5f1b` and not modified after that, through `304db03`. That commit does not add a generator. No later commit adds one. `generate_map.py` writes `world_map.jpg` only. Its download URL is `https://upload.wikimedia.org/wikipedia/commons/f/f2/Large_World_Map_bright.jpg`. The Commons page for that file says the author is MTBlack and the licence is Creative Commons Attribution-ShareAlike. That download is not a record of how the v2 files were made. The module docstring used to say Natural Earth; the code never downloaded Natural Earth. The docstring is corrected to match the URL.
 
-`orbitrx/paths.py` prefers the PNG, then the WebP, then `world_map.jpg`. `orbitrx/ui/leaflet_map.py` builds the interactive page from bundled Leaflet and `L.imageOverlay` of a `file://` URL. It does not load a slippy-tile template.
+Historical `orbitrx/paths.py`, before the Natural Earth file was wired in, preferred the v2 PNG, then the WebP, then `world_map.jpg`. That is not what the file does now. `orbitrx/ui/leaflet_map.py` still builds the interactive page from bundled Leaflet and `L.imageOverlay` of a `file://` URL. It does not load a slippy-tile template.
 
 ## Mask measurement
 
@@ -37,18 +37,14 @@ Interior land (away from that boundary) is not one flat colour: 41 distinct RGB 
 
 Natural Earth's terms page (https://www.naturalearthdata.com/about/terms-of-use/, fetched 7 November 2026) says: "All versions of Natural Earth raster + vector map data found on this website are in the public domain. You may use the maps in any manner, including modifying the content and design, electronic dissemination, and offset printing." It also says no permission is needed and crediting is unnecessary.
 
-## What this does not prove
+## What the v2 measurement does not prove
 
-The repository has no script, download URL, or commit message that names the file which was rasterized. Agreement with Natural Earth 1:110m land is strong and the leftover error is mostly on the coastline, which is what a styled raster of those polygons would look like. A different land polygon set with the same simplified coast could score in the same range. 1:50m and 1:10m were not compared. Byte identity with any Natural Earth file was not claimed and does not hold: the committed file is a shaded 2400×1200 image.
+This section is about `static_basemap_v2.png` only. It is not a description of `basemap/ne_110m_dark.png`.
 
-`world_map.jpg` was not shown to be that render. A crude land mask on the photographic JPEG, resized to 2400×1200, had IoU about 0.81 against the PNG mask. That comparison used a colour rule, not the polygon raster, and is not an origin finding.
+No commit message names a file that was rasterized into the v2 PNG. Agreement with Natural Earth 1:110m land is strong and the leftover error is mostly on the coastline. A different land polygon set with the same simplified coast could score in the same range. 1:50m and 1:10m were not compared. Byte identity with any Natural Earth file does not hold: the v2 file is a shaded 2400×1200 image. `world_map.jpg` was not shown to be that render. A crude land mask on the photographic JPEG, resized to 2400×1200, had IoU about 0.81 against the v2 mask. That comparison used a colour rule, not the polygon raster.
 
-## Optional candidate, not the default
+## Present map
 
-`tools/render_natural_earth_candidate.py` rasterizes `third_party/natural_earth/ne_110m_land.geojson` (SHA-256 `9e0729ee253ca7d7a5c4ae9395fb1902264c5377c52e224d13dd85010e2835d9`, natural-earth-vector tag `v5.1.2`). The terms copied from https://www.naturalearthdata.com/about/terms-of-use/ are in `third_party/natural_earth/TERMS_OF_USE.txt`. The script refuses to write `world_map.jpg` or either v2 file. It is not called by the app or by the spec. Running it does not change the packaged artwork.
-
-## Not done
-
-Replacing the PNG, the WebP, or the JPEG with that candidate would change pixels. That was not done. The images in git are unchanged.
+`tools/render_natural_earth_candidate.py` writes `basemap/ne_110m_dark.png` from `third_party/natural_earth/ne_110m_land.geojson` (SHA-256 `9e0729ee253ca7d7a5c4ae9395fb1902264c5377c52e224d13dd85010e2835d9`, natural-earth-vector tag `v5.1.2`). Terms are in `third_party/natural_earth/TERMS_OF_USE.txt`. The script still refuses to overwrite `world_map.jpg` or either v2 file, so those historical bytes stay. `ensure_map_image` calls that renderer when `ne_110m_dark.png` is missing. The spec packages the committed PNG. Source checkouts read `basemap/ne_110m_dark.png`. The onedir datas destination is `.`, so a frozen folder has `ne_110m_dark.png` next to the executable. `resolve_map_path` checks both of those locations and does not select the historical images.
 
 The MIT text in `LICENSE` is unchanged. It licenses "this software and associated documentation files". It does not name these images. This note does not extend that grant to them.
