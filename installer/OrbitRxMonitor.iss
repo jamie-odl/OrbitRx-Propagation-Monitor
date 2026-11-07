@@ -1,6 +1,10 @@
-; Inno Setup script for OrbitRx Monitor (item 50)
+; Inno Setup script for this 5.0.0 tree.
+; The GitHub v5.0.0 workflow does not compile this script.
+; The thevenom.dev 5.1.0 installer was not produced from this copy:
+; that build used commit 304db03 and AppPublisher=thevenom.
 ; Build exe first: build.bat
 ; Then compile this script with Inno Setup 6+
+; This script does not sign the installer.
 
 [Setup]
 AppName=OrbitRx Propagation Monitor

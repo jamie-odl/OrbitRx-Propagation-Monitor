@@ -2,6 +2,8 @@
 
 A professional-grade desktop dashboard for HAM radio operators. Monitors real-time space weather, visualises the greyline, plots live DX cluster contacts on a world map, controls your physical radio via CAT, and forecasts propagation up to 24 hours into the future.
 
+This tree is application version **5.0.0**. It is not the source of the 5.1.0 installer on thevenom.dev. Published files, digests, signing, and the commit that actually matches the 5.1.0 installer are in [docs/RELEASE_CHANNELS.md](docs/RELEASE_CHANNELS.md). Third-party terms, and the fact that this branch has no licence grant, are in [docs/NOTICES.md](docs/NOTICES.md).
+
 ---
 
 ## Feature Summary
@@ -32,7 +34,7 @@ A professional-grade desktop dashboard for HAM radio operators. Monitors real-ti
 - Sends Kenwood/Icom-compatible `FA...;` string over the configured COM port.
 - Propagation alarm popup includes a **"Tune to 28.074 FT8"** one-click button.
 - Gracefully degrades if `pyserial` is not installed.
-- Configure `CAT_PORT` and `CAT_BAUD` constants at the top of `app.py`.
+- Set `cat_port` and `cat_baud` in `config.json` (see `config.example.json`).
 
 #### 2. Live DX Cluster (socket / Telnet)
 - Connects to **dxc.ve7cc.net:23** (VE7CC DX cluster) over a persistent background thread.
@@ -59,8 +61,8 @@ A professional-grade desktop dashboard for HAM radio operators. Monitors real-ti
 
 ### Requirements
 - Python 3.11+
-- Windows / macOS / Linux
-- Internet connection (real-time data)
+- Source runs where those dependencies install. The only published GitHub artifact is a Windows exe, and the thevenom.dev 5.1.0 download is a Windows installer. Neither is built from a lockfile in this tree.
+- Internet connection for live NOAA, cluster, and optional lookups. The default map is the vendored raster and does not need a map API key.
 
 ### Install dependencies
 ```
@@ -93,6 +95,8 @@ or
 py build_exe.py
 ```
 Output: `dist\OrbitRxMonitor.exe`
+
+`build.bat` is not what GitHub ran for tag `v5.0.0`. That release used `pyinstaller OrbitRxMonitor.spec` and did not sign the exe. Rebuilding from these ranges does not reproduce the published digest. Details are in [docs/RELEASE_CHANNELS.md](docs/RELEASE_CHANNELS.md).
 
 ---
 
@@ -171,7 +175,7 @@ The **orange line** on the map shows where sunrise and sunset occur. This termin
 | `propagation_log.csv` | Timestamped Kp / Solar Flux / MUF readings (auto-appended) |
 | `dx_spots_log.csv` | DX cluster spots — spotter, target, frequency, timestamp |
 | `export.json` | One-shot JSON snapshot of current readings |
-| `world_map.jpg` | Downloaded from Wikimedia on first run |
+| `world_map.jpg` | Vendored raster used by the default map. A missing file is fetched by `generate_map.py` (see [docs/NOTICES.md](docs/NOTICES.md)) |
 
 ---
 
@@ -180,18 +184,22 @@ The **orange line** on the map shows where sunrise and sunset occur. This termin
 | Problem | Fix |
 |---------|-----|
 | "Location unknown" | Check internet; click Refresh Location |
-| Map not showing | Ensure `world_map.jpg` is in the same folder; delete & restart to re-download |
+| Map not showing | Keep `world_map.jpg` next to the app. If it is absent, restart so `ensure_map_image()` can try the Wikimedia download |
 | No data | Click Refresh Space Weather; check https://www.swpc.noaa.gov/ |
 | DX arcs not appearing | Cluster connection in progress (may take 10–30 s); check console |
-| CAT not working | Verify `CAT_PORT` in app.py matches Device Manager COM port |
+| CAT not working | Set `cat_port` in `config.json` to the COM port shown in Device Manager |
 
 ---
 
 ## Data Sources
 - **NOAA SWPC** — Kp, solar flux, sunspots, alerts, forecasts
-- **ipinfo.io** — IP-based geolocation
-- **VE7CC DX cluster** — Live DX spot feed (Telnet)
-- **Wikimedia** — High-resolution world map base image
+- **HamQSL** — optional solar XML blended into path MUF
+- **ipinfo.io** — IP geolocation when Refresh Location runs. This tree has no London default and no saved home coordinates
+- **VE7CC and NC7J** — DX cluster nodes in `config.example.json`
+- **QRZ** — only if `qrz_api_key` is set
+- **Vendored `world_map.jpg`** — default offline raster, no map API key
+- **Wikimedia** — download used only when that JPEG is missing
+- **CARTO / unpkg Leaflet** — only when `map_backend` is `leaflet`
 
 ---
 
@@ -201,7 +209,7 @@ The **orange line** on the map shows where sunrise and sunset occur. This termin
 OrbitRx-Propagation-Monitor/
 ├── app.py                      # Entry point
 ├── config.json                 # User settings (editable in-app)
-├── orbitrx/                    # Application package (v4)
+├── orbitrx/                    # Application package
 │   ├── main.py                 # CLI entry
 │   ├── config.py               # Config loader
 │   ├── state.py                # AppState dataclass
@@ -211,8 +219,8 @@ OrbitRx-Propagation-Monitor/
 │   ├── cat.py                  # Multi-rig CAT control
 │   ├── map_renderer.py         # Cached greyline / aurora / great-circle
 │   ├── storage.py              # SQLite + CSV + log rotation
-│   └── ui/qt_app.py            # Main window (PySide6 — default)
-│   └── ui/tk_app.py            # Tkinter fallback
+│   ├── ui/qt_app.py            # Main window (PySide6 — default)
+│   ├── ui/tk_app.py            # Tkinter fallback
 │   └── ui/map_widget.py        # QGraphicsView propagation map
 ├── tests/                      # pytest unit tests
 ├── installer/OrbitRxMonitor.iss# Inno Setup installer script
@@ -234,5 +242,5 @@ OrbitRx-Propagation-Monitor/
 
 ---
 
-**Version**: 5.0  |  **Updated**: June 2026
-**Tested On**: Windows 10/11, Python 3.11+
+**Version in this tree**: 5.0.0. Published 5.0.0 and 5.1.0 files are a different record: [docs/RELEASE_CHANNELS.md](docs/RELEASE_CHANNELS.md).
+**Notices**: [docs/NOTICES.md](docs/NOTICES.md). This repository has no `LICENSE` file.
