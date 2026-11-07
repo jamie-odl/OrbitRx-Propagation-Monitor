@@ -189,7 +189,7 @@ def _about_html() -> str:
 <p style="margin-bottom:12px">HF propagation, space weather, DX cluster and live PSKReporter spots in one free desktop app.</p>
 <p style="margin-bottom:12px">Copyright &copy; 2026 thevenom. The OrbitRx application source is under the MIT License. That grant does not cover Qt, Qt WebEngine, Chromium, or the map image.</p>
 <p style="margin-bottom:12px"><b>Data sources:</b> NOAA SWPC, HamQSL (N0NBH), PSKReporter (Philip Gladstone),
-DX cluster nodes, Leaflet + OrbitRx dark basemap. See <a href="{_notice_url()}">NOTICE</a> for full credits.</p>
+DX cluster nodes, offline basemap (NOTICE), Leaflet. See <a href="{_notice_url()}">NOTICE</a> for full credits.</p>
 <p style="margin-bottom:12px">This build is unsigned. <a href="{RELEASES_URL}">Verify download</a>
 (compare the file's SHA256 with SHA256SUMS.txt on the release page).</p>
 {coffee}

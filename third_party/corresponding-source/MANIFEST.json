@@ -1,0 +1,32 @@
+{
+  "purpose": "Private copies of upstream source for the unpublished packaging review. Not a published source offer.",
+  "files": [
+    {
+      "name": "pyside-setup-everywhere-src-6.12.0.tar.xz",
+      "bytes": 18211772,
+      "sha256": "099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751",
+      "origin": "https://download.qt.io/official_releases/QtForPython/pyside6/PySide6-6.12.0-src/pyside-setup-everywhere-src-6.12.0.tar.xz"
+    },
+    {
+      "name": "qtbase-everywhere-src-6.12.0.tar.xz",
+      "bytes": 51220268,
+      "sha256": "a951bd163c7b80fc6b8c88d7668fb56abf91c152373e13c10666763238131307",
+      "origin": "https://download.qt.io/official_releases/qt/6.12/6.12.0/submodules/qtbase-everywhere-src-6.12.0.tar.xz"
+    },
+    {
+      "name": "qtwebengine-6.12-d4735ce.tar.xz",
+      "bytes": 3019064,
+      "sha256": "d5dc0bbbd0d753c8944a537189dc2739f297446016d6af1bc44d5d7fbb886e28",
+      "origin": "git archive of https://github.com/qt/qtwebengine branch 6.12 at d4735ce2f841ffbe7cbac9ee7fd954f00514825f, without the chromium submodule"
+    }
+  ],
+  "qtwebengine": {
+    "commit": "d4735ce2f841ffbe7cbac9ee7fd954f00514825f",
+    "branch": "6.12",
+    "chromium_submodule": "71a2fa55e2e2f5a5d6567aac93bda8775fc7b084",
+    "chromium_version_base": "140.0.7339.264",
+    "chromium_security_patches_through": "151.0.7922.108",
+    "credits_tool": "src/3rdparty/chromium/tools/licenses/licenses.py credits, invoked by cmake/QtGnCredits.cmake with a gn out directory",
+    "credits_status": "not generated; the gn out directory from a WebEngine build is not available, and the PySide6-WebEngine 6.12.0.140 wheel does not contain the generated file"
+  }
+}

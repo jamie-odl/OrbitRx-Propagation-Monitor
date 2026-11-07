@@ -1,0 +1,95 @@
+name: Private Windows validation
+
+# Scoped to this review branch. Builds an onedir and an installer on the
+# GitHub-hosted windows-latest runner, then deletes those binaries.
+# It does not upload them, open a release, or publish a source offer.
+on:
+  push:
+    branches:
+      - cursor/shipped-5-1-0-notices-2d8d
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-private-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows-onedir:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+      - name: Record the commit under test
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path validation-logs | Out-Null
+          git rev-parse HEAD | Set-Content validation-logs\HEAD.txt
+          python -c "import sys; print(sys.version)" | Set-Content validation-logs\python.txt
+      - name: Pytest
+        shell: pwsh
+        run: python -m pytest -q -rA --junitxml=validation-logs\pytest-windows.xml
+      - name: Build onedir
+        run: pyinstaller OrbitRxMonitor.spec --noconfirm
+      - name: Build installer locally and do not upload it
+        shell: pwsh
+        run: |
+          $ver = (Get-Content VERSION).Trim()
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc "/DAppVer=$ver" installer\OrbitRxMonitor.iss
+          if (!(Test-Path dist\OrbitRxMonitor-Setup.exe)) { throw "installer missing" }
+      - name: Layout, notices, privacy, and PYZ scan
+        shell: pwsh
+        run: |
+          python tools/check_onedir_layout.py dist\OrbitRxMonitor
+          python -c "from orbitrx.config import DEFAULT_CONFIG as c; assert c['ip_geolocation_enabled'] is False; assert c['home_lat']==51.5081; assert c['home_lon']==-0.1281; assert c['map_backend']=='static'; assert c['qrz_api_key']==''"
+          python tools/scan_pyz.py dist\OrbitRxMonitor validation-logs\pyz-scan.txt
+          Get-ChildItem dist\OrbitRxMonitor -Name | Sort-Object | Set-Content validation-logs\onedir-names.txt
+          Get-ChildItem dist\OrbitRxMonitor\Qt6*.dll -Name | Sort-Object | Set-Content validation-logs\qt-dlls.txt
+          "{0}  OrbitRxMonitor-Setup.exe" -f (Get-FileHash dist\OrbitRxMonitor-Setup.exe -Algorithm SHA256).Hash.ToLower() | Set-Content validation-logs\installer-sha256.txt
+          "{0}  OrbitRxMonitor.exe" -f (Get-FileHash dist\OrbitRxMonitor\OrbitRxMonitor.exe -Algorithm SHA256).Hash.ToLower() | Set-Content validation-logs\exe-sha256.txt
+      - name: Smoke the static map
+        shell: pwsh
+        run: |
+          $env:ORBITRX_CAPTURE_DIR = (Resolve-Path .).Path + "\capture-static"
+          New-Item -ItemType Directory -Force -Path $env:ORBITRX_CAPTURE_DIR | Out-Null
+          $exe = (Resolve-Path dist\OrbitRxMonitor\OrbitRxMonitor.exe).Path
+          $proc = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru -RedirectStandardOutput validation-logs\static-stdout.txt -RedirectStandardError validation-logs\static-stderr.txt
+          if (-not $proc.WaitForExit(120000)) { Stop-Process -Id $proc.Id -Force; throw "static smoke hung" }
+          if ($proc.ExitCode -ne 0) { throw "static smoke exit $($proc.ExitCode)" }
+      - name: Smoke the interactive map if it can start
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          $dir = (Resolve-Path dist\OrbitRxMonitor).Path
+          '{"map_backend":"leaflet","ip_geolocation_enabled":false,"home_lat":51.5081,"home_lon":-0.1281,"qrz_api_key":""}' | Set-Content (Join-Path $dir config.json) -Encoding ascii
+          $env:ORBITRX_CAPTURE_DIR = (Resolve-Path .).Path + "\capture-leaflet"
+          New-Item -ItemType Directory -Force -Path $env:ORBITRX_CAPTURE_DIR | Out-Null
+          $exe = Join-Path $dir OrbitRxMonitor.exe
+          $proc = Start-Process -FilePath $exe -WorkingDirectory $dir -PassThru -RedirectStandardOutput validation-logs\leaflet-stdout.txt -RedirectStandardError validation-logs\leaflet-stderr.txt
+          if (-not $proc.WaitForExit(120000)) { Stop-Process -Id $proc.Id -Force; throw "leaflet smoke hung" }
+          if ($proc.ExitCode -ne 0) { throw "leaflet smoke exit $($proc.ExitCode)" }
+      - name: Upload logs and screenshots only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-private-validation-logs
+          path: |
+            validation-logs/**
+            capture-static/**
+            capture-leaflet/**
+          retention-days: 14
+          if-no-files-found: warn
+      - name: Delete local distributables before the job ends
+        if: always()
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
+          if (Test-Path dist) { throw "dist was not removed" }

@@ -90,6 +90,64 @@ def test_docs_and_ci_match_the_present_map_and_stay_unpublished():
     assert "check_distribution_manifest.py --release" in release
 
 
+def test_corresponding_source_archives_match_their_manifest():
+    manifest = json.loads(
+        (ROOT / "third_party" / "corresponding-source" / "MANIFEST.json").read_text(encoding="utf-8")
+    )
+    assert manifest["qtwebengine"]["chromium_version_base"] == "140.0.7339.264"
+    assert manifest["qtwebengine"]["chromium_security_patches_through"] == "151.0.7922.108"
+    assert "Not a published source offer" in manifest["purpose"] or "Not a published source offer" in manifest["purpose"]
+    assert "not a published source offer" in manifest["purpose"].lower()
+    for item in manifest["files"]:
+        path = ROOT / "third_party" / "corresponding-source" / item["name"]
+        assert path.is_file()
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == item["sha256"]
+        assert path.stat().st_size == item["bytes"]
+
+
+def test_about_snapshot_matches_the_offline_basemap_wording():
+    html = (ROOT / "orbitrx" / "ui" / "about.py").read_text(encoding="utf-8")
+    assert "offline basemap (NOTICE), Leaflet" in html
+    assert "OrbitRx dark basemap" not in html
+
+
+def test_private_windows_workflow_does_not_upload_distributables():
+    text = (ROOT / ".github" / "workflows" / "windows-private-validation.yml").read_text(encoding="utf-8")
+    assert "cursor/shipped-5-1-0-notices-2d8d" in text
+    assert "runs-on: windows-latest" in text
+    assert "windows-private-validation-logs" in text
+    assert "OrbitRx-windows-unsigned" not in text
+    assert "dist/" not in text.split("name: windows-private-validation-logs")[1].split("retention-days:")[0]
+    assert "Remove-Item -Recurse -Force dist" in text
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "upload-artifact" not in release
+
+
+def test_onedir_layout_checker_accepts_sibling_dlls(tmp_path):
+    from tools.check_onedir_layout import check_layout
+
+    root = tmp_path / "OrbitRxMonitor"
+    root.mkdir()
+    for rel in (
+        "OrbitRxMonitor.exe",
+        "Qt6Core.dll",
+        "Qt6WebEngineCore.dll",
+        "ne_110m_dark.png",
+        "LICENSE",
+        "NOTICE",
+        "PRIVACY.md",
+    ):
+        (root / rel).write_bytes(b"x")
+    (root / "third_party" / "qt" / "LICENSES").mkdir(parents=True)
+    (root / "third_party" / "qt" / "LICENSES" / "LGPL-3.0-only.txt").write_text("lgpl", encoding="utf-8")
+    (root / "third_party" / "qt" / "LICENSE.Chromium").write_text("bsd", encoding="utf-8")
+    (root / "third_party" / "natural_earth").mkdir()
+    (root / "third_party" / "natural_earth" / "TERMS_OF_USE.txt").write_text("pd", encoding="utf-8")
+    assert check_layout(root) == []
+    (root / "world_map.jpg").write_bytes(b"nope")
+    assert any("world_map" in item for item in check_layout(root))
+
+
 def test_scan_pyz_resolves_an_onedir_folder(tmp_path):
     from tools.scan_pyz import resolve_scan_target
 

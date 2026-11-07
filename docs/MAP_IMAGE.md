@@ -1,6 +1,6 @@
 # Basemap images
 
-The unpublished tree loads only `basemap/ne_110m_dark.png`. The 5 Nov 2026 installer is a different, already published file and still contains `world_map.jpg`. This note does not add a licence for the old images.
+A source checkout loads `basemap/ne_110m_dark.png`. The onedir spec copies that file to `.`, so the frozen folder has `ne_110m_dark.png` beside the executable. `ensure_map_image` regenerates `basemap/ne_110m_dark.png` from the pinned Natural Earth dataset when that file is missing. The 5 Nov 2026 installer is a different, already published file and still contains `world_map.jpg`. This note does not add a licence for the old images.
 
 ## What the 5 Nov 2026 build loaded
 
