@@ -111,6 +111,13 @@ def test_about_snapshot_matches_the_offline_basemap_wording():
     assert "OrbitRx dark basemap" not in html
 
 
+def test_text_files_stay_lf_so_windows_hashes_match():
+    attributes = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "eol=lf" in attributes
+    for rel in ("LICENSE", "third_party/natural_earth/ne_110m_land.geojson"):
+        assert b"\r" not in (ROOT / rel).read_bytes()
+
+
 def test_private_windows_workflow_does_not_upload_distributables():
     text = (ROOT / ".github" / "workflows" / "windows-private-validation.yml").read_text(encoding="utf-8")
     assert "cursor/shipped-5-1-0-notices-2d8d" in text
