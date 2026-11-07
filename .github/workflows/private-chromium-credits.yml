@@ -1,0 +1,51 @@
+name: Private Chromium credits attempt
+
+# Bounded hosted-runner attempt. It does not publish a source offer and it
+# does not upload the Chromium tree. A failure here is the record that gn
+# credits were not produced.
+on:
+  push:
+    branches:
+      - cursor/shipped-5-1-0-notices-2d8d
+
+permissions:
+  contents: read
+
+jobs:
+  credits:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record runner bounds and the missing gn out directory
+        run: |
+          set -u
+          mkdir -p validation-logs
+          df -h | tee validation-logs/df.txt
+          free -h | tee validation-logs/free.txt
+          AVAIL_KB=$(df -Pk / | awk 'NR==2 {print $4}')
+          {
+            echo "runner_free_kb=$AVAIL_KB"
+            echo "chromium_submodule=71a2fa55e2e2f5a5d6567aac93bda8775fc7b084"
+            echo "chromium_base=140.0.7339.264"
+            echo "chromium_security_patches_through=151.0.7922.108"
+            echo "required_command=licenses.py --gn-binary <gn> --gn-target :QtWebEngineCore --gn-out-dir <args.gn directory> credits <output>"
+            echo "required_predecessor=Qt WebEngine run_core_GnDone, which runs gn gen for :QtWebEngineCore"
+            echo "archive_qtwebengine-6.12-d4735ce.tar.xz omits that submodule"
+          } | tee validation-logs/result.txt
+          # A working Chromium tree plus gn gen does not fit a small hosted disk.
+          # 40 GiB free is the floor used here; below it, stop before cloning.
+          if [ "$AVAIL_KB" -lt 41943040 ]; then
+            echo "stop: free disk ${AVAIL_KB} KB is under 40 GiB, so this runner will not check out submodule 71a2fa55 or run gn gen" | tee -a validation-logs/result.txt
+            exit 2
+          fi
+          echo "disk floor met; still not running gn gen in this job because no Qt WebEngine out directory exists for :QtWebEngineCore" | tee -a validation-logs/result.txt
+          exit 2
+      - name: Upload the credits attempt log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromium-credits-attempt-log
+          path: validation-logs/**
+          retention-days: 14
+          if-no-files-found: warn

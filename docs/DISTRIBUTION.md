@@ -46,12 +46,12 @@ The onedir spec carries `basemap/ne_110m_dark.png` and the `third_party` texts. 
 `qtcoreglobal.h` offers `LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only`. This packaging uses the LGPL-3.0-only alternative for the Qt libraries. That is not a commercial licence and it does not finish the LGPL duties:
 
 1. The copyright holder has not published a source offer. `docs/QT_SOURCE_OFFER_DRAFT.md` is only a draft. `third_party/corresponding-source/` holds the official PySide6 6.12.0 source archive, the official qtbase 6.12.0 source archive, and a git archive of qtwebengine branch `6.12` at `d4735ce` without the Chromium submodule. That is not the WebEngine/Chromium corresponding source and it is not an offer.
-2. Replacement instructions are written for the onedir shape. No Windows build of that shape was run here, so the DLL file names were not observed in a Windows dist folder.
+2. Actions run 42359055614 built the onedir on windows-latest. Qt6Core.dll and Qt6WebEngineCore.dll were separate files under `_internal/PySide6/`. The static capture in that run exited -1073741819 after writing screenshots. A later run has to show exit 0 before that shutdown fault is closed.
 3. `LICENSE.Chromium` from qtwebengine branch `6.12` is included. The gn-generated third-party credits file is not. The PySide6-WebEngine 6.12.0.140 Windows wheel has no such file; `qtwebengine_resources.pak` did not contain an about:credits document; submodule `71a2fa55e2e2f5a5d6567aac93bda8775fc7b084` is the chromium tree the branch points at, and the credits are produced by `cmake/QtGnCredits.cmake` at build time.
 
 ## Other open decisions
 
 - The copyright holder has not published the source offer. The draft is not that publication.
 - The gn-generated Chromium third-party credits file is still absent.
-- A Windows onedir build has not been run here.
+- The Windows onedir build in run 42359055614 did run. Its static capture did not exit 0.
 - `world_map.jpg` and the v2 images are no longer selected. Their old provenance questions remain for those historical files only.

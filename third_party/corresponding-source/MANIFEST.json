@@ -26,7 +26,10 @@
     "chromium_submodule": "71a2fa55e2e2f5a5d6567aac93bda8775fc7b084",
     "chromium_version_base": "140.0.7339.264",
     "chromium_security_patches_through": "151.0.7922.108",
-    "credits_tool": "src/3rdparty/chromium/tools/licenses/licenses.py credits, invoked by cmake/QtGnCredits.cmake with a gn out directory",
-    "credits_status": "not generated; the gn out directory from a WebEngine build is not available, and the PySide6-WebEngine 6.12.0.140 wheel does not contain the generated file"
+    "chromium_bytes_included": false,
+    "github_repo_size_kb": 6337494,
+    "credits_command": "licenses.py --gn-binary <gn built by qtwebengine> --gn-target :QtWebEngineCore --gn-out-dir <directory containing args.gn from gn gen> credits <output>",
+    "credits_tool": "src/3rdparty/chromium/tools/licenses/licenses.py credits, invoked by cmake/QtGnCredits.cmake after run_core_GnDone",
+    "credits_status": "not generated. The official command needs a gn out directory for :QtWebEngineCore. That directory is produced by Qt's gn gen step, which needs submodule 71a2fa55 checked out. This archive does not contain that submodule. LICENSE.Chromium is only the BSD text and is not the credits list."
   }
 }

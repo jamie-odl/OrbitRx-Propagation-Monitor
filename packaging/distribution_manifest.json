@@ -21,9 +21,25 @@
     "third_party/pyinstaller/COPYING.txt": "0598064c7d2718e38d7914a7d08343b2fa008e3bea9ebba2aa7a6ffa5900dd64",
     "orbitrx/ui/assets/leaflet/LICENSE-leaflet.txt": null
   },
+  "windows_onedir_evidence": {
+    "run": "42359055614",
+    "commit": "ae1406d2483d025a006141bc728c48b906cbeb8e",
+    "url": "https://github.com/jamie-odl/OrbitRx-Propagation-Monitor/actions/runs/42359055614",
+    "pytest": "269 passed, 0 failed, 0 skipped",
+    "layout_check": "pass",
+    "pyz_scan": "pass",
+    "qt_dlls": [
+      "_internal/PySide6/Qt6Core.dll",
+      "_internal/PySide6/Qt6WebEngineCore.dll"
+    ],
+    "static_process_exit": -1073741819,
+    "interactive_process_exit": 0,
+    "installer_uploaded": false,
+    "note": "The onedir build ran on windows-latest. The static capture wrote its screenshots and then exited with an access violation. That is not a clean shutdown and not release clearance."
+  },
   "release_blockers": [
     "qt-source-offer-not-published-by-copyright-holder",
-    "qtwebengine-gn-about-credits-not-a-file-in-the-6.12.0.140-wheel",
-    "windows-onedir-build-not-executed"
+    "qtwebengine-gn-about-credits-not-generated-for-submodule-71a2fa55",
+    "windows-static-capture-exit-0xC0000005-on-42359055614"
   ]
 }

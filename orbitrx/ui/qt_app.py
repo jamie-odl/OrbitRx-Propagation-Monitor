@@ -1724,9 +1724,97 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
         stats_lines.append(win._location_hint_lbl.text())
     (out_dir / "stats.txt").write_text("\n".join(stats_lines) + "\n", encoding="utf-8")
 
-    win.ctrl.stop()
-    win.close()
+    # Leave QApplication alive so in-process tests can keep using it. The
+    # process entry point deletes it before exit. See finish note on
+    # exit_after_qapplication_deleted.
+    quiet_capture_shutdown(app, win, out_dir / "shutdown-stage.txt")
     return 0
+
+
+def _stage(stage_log: Path | None, name: str) -> None:
+    if stage_log is None:
+        return
+    stage_log.parent.mkdir(parents=True, exist_ok=True)
+    with stage_log.open("a", encoding="utf-8") as handle:
+        handle.write(name + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _delete_qt_object(obj) -> None:
+    if obj is None:
+        return
+    from PySide6.QtCore import QObject
+    if not isinstance(obj, QObject):
+        return
+    import shiboken6
+
+    if shiboken6.isValid(obj):
+        shiboken6.delete(obj)
+
+
+def quiet_capture_shutdown(app, win, stage_log: Path | None) -> None:
+    """Stop background work and close the window. Does not exit the process.
+
+    closeEvent ignores the close while the tray icon is visible, which is the
+    default. The capture is not a minimize-to-tray. Hide the tray first so the
+    window actually closes. A WebEngine view, if this window created one, is
+    released before that close. The static map does not create a view, but the
+    module import has already loaded Qt WebEngine.
+    """
+    if win is None:
+        _stage(stage_log, "webengine-not-created")
+        return
+    for name in ("_timer", "_cluster_pulse_timer"):
+        timer = getattr(win, name, None)
+        if timer is not None:
+            timer.stop()
+    _stage(stage_log, "timers-stopped")
+    tray = getattr(win, "_tray", None)
+    if tray is not None:
+        tray.hide()
+    if getattr(win, "ctrl", None) is not None:
+        win.ctrl.cfg.set("minimize_to_tray", False)
+        win.ctrl.stop()
+    win._tray = None
+    _stage(stage_log, "tray-hidden")
+    _stage(stage_log, "controller-stopped")
+    web = getattr(getattr(win, "map_widget", None), "web", None)
+    if web is None:
+        _stage(stage_log, "webengine-not-created")
+    else:
+        web.deleteLater()
+        if app is not None:
+            app.processEvents()
+        _stage(stage_log, "webengine-page-released")
+    win.close()
+    if app is not None:
+        app.processEvents()
+    _stage(stage_log, "window-closed")
+
+
+def exit_after_qapplication_deleted(exit_code: int, stage_log: Path | None) -> None:
+    """Delete QApplication, then end the process.
+
+    Actions run 42359055614 wrote the static-map screenshots and then exited
+    -1073741819 (0xC0000005). That capture called os._exit while QApplication
+    still existed. Qt WebEngine is loaded by the leaflet import even for the
+    static map, and ExitProcess faults in Qt6WebEngineCore unless the
+    application object is destroyed first. This does not return.
+    """
+    try:
+        app = QApplication.instance()
+        if app is not None:
+            app.processEvents()
+            _delete_qt_object(app)
+        _stage(stage_log, "qapplication-deleted")
+    except Exception as exc:
+        import sys
+        _stage(stage_log, f"exception:{type(exc).__name__}: {exc}")
+        sys.stderr.write(f"capture shutdown failed: {type(exc).__name__}: {exc}\n")
+        os._exit(4)
+    _stage(stage_log, "process-exit")
+    os._exit(exit_code)
 
 
 def run_qt_app() -> None:
@@ -1739,7 +1827,7 @@ def run_qt_app() -> None:
         watchdog.start()
         code = run_release_capture_hook(capture_dir)
         sys.stdout.flush()
-        os._exit(code)  # background service threads must not keep the capture process alive
+        exit_after_qapplication_deleted(code, Path(capture_dir) / "shutdown-stage.txt")
     app = QApplication(sys.argv)
     apply_theme(app)
     app.setWindowIcon(_app_icon())

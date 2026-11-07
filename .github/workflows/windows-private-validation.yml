@@ -67,12 +67,11 @@ jobs:
           $proc = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru -RedirectStandardOutput validation-logs\static-stdout.txt -RedirectStandardError validation-logs\static-stderr.txt
           if (-not $proc.WaitForExit(120000)) { Stop-Process -Id $proc.Id -Force; throw "static smoke hung" }
           "$($proc.ExitCode)" | Set-Content validation-logs\static-exit.txt
-          foreach ($n in @("main-window.png","about.png","fit.txt")) {
+          foreach ($n in @("main-window.png","about.png","fit.txt","shutdown-stage.txt")) {
             if (-not (Test-Path (Join-Path $env:ORBITRX_CAPTURE_DIR $n))) { throw "static capture missing $n" }
           }
-          if ($proc.ExitCode -ne 0) { Write-Host "static UI captured; process exit $($proc.ExitCode)" }
-      - name: Smoke the interactive map if it can start
-        continue-on-error: true
+          if ($proc.ExitCode -ne 0) { throw "static smoke exit $($proc.ExitCode)" }
+      - name: Smoke the interactive map
         shell: pwsh
         run: |
           $dir = (Resolve-Path dist\OrbitRxMonitor).Path
@@ -82,6 +81,10 @@ jobs:
           $exe = Join-Path $dir OrbitRxMonitor.exe
           $proc = Start-Process -FilePath $exe -WorkingDirectory $dir -PassThru -RedirectStandardOutput validation-logs\leaflet-stdout.txt -RedirectStandardError validation-logs\leaflet-stderr.txt
           if (-not $proc.WaitForExit(120000)) { Stop-Process -Id $proc.Id -Force; throw "leaflet smoke hung" }
+          "$($proc.ExitCode)" | Set-Content validation-logs\leaflet-exit.txt
+          foreach ($n in @("main-window.png","shutdown-stage.txt")) {
+            if (-not (Test-Path (Join-Path $env:ORBITRX_CAPTURE_DIR $n))) { throw "leaflet capture missing $n" }
+          }
           if ($proc.ExitCode -ne 0) { throw "leaflet smoke exit $($proc.ExitCode)" }
       - name: Upload logs and screenshots only
         if: always()

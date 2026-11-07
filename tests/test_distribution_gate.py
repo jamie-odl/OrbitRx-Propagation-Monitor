@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from PIL import Image
@@ -31,7 +34,11 @@ def test_dev_and_gate_use_the_natural_earth_map_only():
     manifest = json.loads((ROOT / "packaging" / "distribution_manifest.json").read_text(encoding="utf-8"))
     assert manifest["packaged_basemap_sha256"] == MAP_SHA256
     assert "qt-source-offer-not-published-by-copyright-holder" in manifest["release_blockers"]
-    assert "windows-onedir-build-not-executed" in manifest["release_blockers"]
+    assert "windows-onedir-build-not-executed" not in manifest["release_blockers"]
+    evidence = manifest["windows_onedir_evidence"]
+    assert evidence["run"] == "42359055614"
+    assert evidence["static_process_exit"] == -1073741819
+    assert "windows-static-capture-exit-0xC0000005-on-42359055614" in manifest["release_blockers"]
 
 
 def test_frozen_bundle_ignores_legacy_art_sitting_beside_the_exe(tmp_path, monkeypatch):
@@ -105,6 +112,27 @@ def test_corresponding_source_archives_match_their_manifest():
         assert path.stat().st_size == item["bytes"]
 
 
+def test_capture_process_exits_zero_for_static_and_webengine_view(tmp_path):
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+    probe = ROOT / "tools" / "capture_shutdown_probe.py"
+    for name, extra in (("static", []), ("webengine", ["--with-view"])):
+        out = tmp_path / name
+        proc = subprocess.run(
+            [sys.executable, str(probe), str(out), *extra],
+            env=env,
+            timeout=90,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert proc.returncode == 0, proc.stderr
+        stage = (out / "shutdown-stage.txt").read_text(encoding="utf-8")
+        assert "qapplication-deleted" in stage
+        assert stage.strip().splitlines()[-1] == "process-exit"
+
+
 def test_about_snapshot_matches_the_offline_basemap_wording():
     html = (ROOT / "orbitrx" / "ui" / "about.py").read_text(encoding="utf-8")
     assert "offline basemap (NOTICE), Leaflet" in html
@@ -126,6 +154,9 @@ def test_private_windows_workflow_does_not_upload_distributables():
     assert "OrbitRx-windows-unsigned" not in text
     assert "dist/" not in text.split("name: windows-private-validation-logs")[1].split("retention-days:")[0]
     assert "Remove-Item -Recurse -Force dist" in text
+    assert 'throw "static smoke exit' in text
+    assert 'throw "leaflet smoke exit' in text
+    assert "continue-on-error: true" not in text
     release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "upload-artifact" not in release
 

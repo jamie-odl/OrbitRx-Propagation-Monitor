@@ -181,16 +181,33 @@ class DxClusterService:
         self.on_band_alert = on_band_alert
         self.store = store
         self._thread: threading.Thread | None = None
+        self._socket: socket.socket | None = None
+        self._socket_lock = threading.Lock()
+        self._wake = threading.Event()
 
     def start(self) -> None:
         if self.state.cluster_active:
             return
+        self._wake.clear()
         self.state.cluster_active = True
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
+        """Unblock a recv or reconnect wait. Does not join the thread."""
         self.state.cluster_active = False
+        self._wake.set()
+        with self._socket_lock:
+            sock = self._socket
+        if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                sock.close()
+            except OSError:
+                pass
 
     def _run(self) -> None:
         while self.state.cluster_active:
@@ -201,6 +218,8 @@ class DxClusterService:
             try:
                 self.on_status("connecting")
                 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                with self._socket_lock:
+                    self._socket = s
                 s.settimeout(10)
                 s.connect((host, port))
                 time.sleep(1.5)
@@ -224,12 +243,15 @@ class DxClusterService:
                 self.on_status("reconnecting")
             finally:
                 if s is not None:
+                    with self._socket_lock:
+                        if self._socket is s:
+                            self._socket = None
                     try:
                         s.close()
                     except OSError:
                         pass
             if self.state.cluster_active:
-                time.sleep(30)
+                self._wake.wait(30)
 
     def _handle_line(self, line: str) -> None:
         parsed = parse_dx_line(line)
