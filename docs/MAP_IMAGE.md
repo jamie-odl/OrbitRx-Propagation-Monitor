@@ -1,10 +1,10 @@
-# Basemap images on this commit
+# Basemap images
 
-This note does not add a licence and does not say the shipped app loads the v2 images.
+The unpublished tree loads only `basemap/ne_110m_dark.png`. The 5 Nov 2026 installer is a different, already published file and still contains `world_map.jpg`. This note does not add a licence for the old images.
 
-## What the frozen build loads
+## What the 5 Nov 2026 build loaded
 
-`OrbitRxMonitor.spec` datas, `installer/OrbitRxMonitor.iss`, the Inno log for Actions run `42004653668` (it compresses `world_map.jpg` and does not name either v2 file), and the resulting exe archive all contain `world_map.jpg` only. `orbitrx/paths.py` still searches the v2 PNG, then the WebP, then the JPEG, and uses the first file that exists. Inside that frozen exe the v2 files are absent, so the app displays the JPEG. A source checkout that still has the PNG uses the PNG. Those are different files.
+That build's spec, Inno script, Inno log, and exe archive contained `world_map.jpg` and not the v2 files. The source at that commit searched the v2 PNG first, so a checkout used the PNG and the frozen exe used the JPEG. The unpublished spec on this head does not do that. It packages only `ne_110m_dark.png`, and `orbitrx/paths.py` refuses the JPEG and the v2 names.
 
 ## Commons file versus the committed JPEG
 

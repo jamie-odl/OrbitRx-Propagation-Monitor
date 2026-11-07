@@ -1,83 +1,73 @@
-"""Packaged map, vendored texts, and the release gate.
-
-The gate must fail while the Qt election and the map-licence decisions
-are open. It does not download a release or hash the public zip URL.
-"""
+"""Packaged Natural Earth map, onedir layout, and the closed release gate."""
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
 from PIL import Image
 
-from orbitrx.paths import PACKAGED_BASEMAP_NAME, SOURCE_BASEMAP_NAMES, resolve_map_path
+from orbitrx.paths import EXCLUDED_BASEMAP_NAMES, PACKAGED_BASEMAP_NAME, resolve_map_path
 from tools.check_distribution_manifest import main as gate_main
-from tools.render_natural_earth_candidate import FORBIDDEN, render_land
+from tools.render_natural_earth_candidate import (
+    DATASET_SHA256,
+    FORBIDDEN,
+    HEIGHT,
+    WIDTH,
+    load_dataset,
+    render_land,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
+MAP_SHA256 = "552ba27ce43dcb838ed13fe59df8b5305d92d40702f33ceadf038392135db183"
 
 
-def test_source_search_and_packaged_name_stay_distinct():
-    assert SOURCE_BASEMAP_NAMES[0] == "static_basemap_v2.png"
-    assert PACKAGED_BASEMAP_NAME == "world_map.jpg"
+def test_dev_and_gate_use_the_natural_earth_map_only():
+    assert PACKAGED_BASEMAP_NAME == "ne_110m_dark.png"
+    assert "world_map.jpg" in EXCLUDED_BASEMAP_NAMES
     assert gate_main([]) == 0
     assert gate_main(["--release"]) == 1
+    manifest = json.loads((ROOT / "packaging" / "distribution_manifest.json").read_text(encoding="utf-8"))
+    assert manifest["packaged_basemap_sha256"] == MAP_SHA256
+    assert "qt-source-offer-not-published-by-copyright-holder" in manifest["release_blockers"]
+    assert "windows-onedir-build-not-executed" in manifest["release_blockers"]
 
 
-def test_frozen_bundle_with_only_jpeg_does_not_select_v2(tmp_path, monkeypatch):
+def test_frozen_bundle_ignores_legacy_art_sitting_beside_the_exe(tmp_path, monkeypatch):
     bundle = tmp_path / "bundle"
     bundle.mkdir()
     (bundle / "world_map.jpg").write_bytes(b"\xff" * 20_000)
-    empty = tmp_path / "empty"
-    empty.mkdir()
+    (bundle / "static_basemap_v2.png").write_bytes(b"\x00" * 20_000)
+    (bundle / PACKAGED_BASEMAP_NAME).write_bytes(Path(ROOT / "basemap" / PACKAGED_BASEMAP_NAME).read_bytes())
     monkeypatch.setattr("orbitrx.paths.bundled_root", lambda: bundle)
-    monkeypatch.setattr("orbitrx.paths.project_root", lambda: empty)
+    monkeypatch.setattr("orbitrx.paths.project_root", lambda: tmp_path / "missing")
     chosen = resolve_map_path()
-    assert chosen.name == "world_map.jpg"
+    assert chosen.name == PACKAGED_BASEMAP_NAME
     assert chosen.parent == bundle
 
 
-def test_source_checkout_still_prefers_v2_when_present(tmp_path, monkeypatch):
-    for name, size in (
-        ("static_basemap_v2.png", 20_000),
-        ("static_basemap_v2.webp", 20_000),
-        ("world_map.jpg", 20_000),
-    ):
-        (tmp_path / name).write_bytes(b"\x00" * size)
+def test_source_checkout_does_not_fall_back_to_legacy_files(tmp_path, monkeypatch):
+    (tmp_path / "world_map.jpg").write_bytes(b"\xff" * 20_000)
+    (tmp_path / "static_basemap_v2.png").write_bytes(b"\x00" * 20_000)
     monkeypatch.setattr("orbitrx.paths.bundled_root", lambda: None)
     monkeypatch.setattr("orbitrx.paths.project_root", lambda: tmp_path)
-    assert resolve_map_path().name == "static_basemap_v2.png"
+    chosen = resolve_map_path()
+    assert chosen.name == PACKAGED_BASEMAP_NAME
+    assert not chosen.is_file()
 
 
-def test_candidate_renderer_is_deterministic_and_cannot_replace_artwork(tmp_path):
-    geojson = {
-        "features": [
-            {
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[
-                        [-10, -10],
-                        [10, -10],
-                        [10, 10],
-                        [-10, 10],
-                        [-10, -10],
-                    ]],
-                }
-            }
-        ]
-    }
-    first = render_land(geojson, 36, 18)
-    second = render_land(geojson, 36, 18)
-    assert first.tobytes() == second.tobytes()
-    assert first.getpixel((18, 9)) == (28, 42, 58)
-    assert first.getpixel((0, 0)) == (10, 22, 40)
+def test_renderer_matches_the_committed_png_and_refuses_legacy_names():
+    image = render_land(load_dataset(), WIDTH, HEIGHT)
+    committed = Image.open(ROOT / "basemap" / "ne_110m_dark.png")
+    assert image.size == committed.size == (2400, 1200)
+    assert image.tobytes() == committed.tobytes()
+    digest = hashlib.sha256((ROOT / "basemap" / "ne_110m_dark.png").read_bytes()).hexdigest()
+    assert digest == MAP_SHA256
+    raw = (ROOT / "third_party" / "natural_earth" / "ne_110m_land.geojson").read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == DATASET_SHA256
     assert "world_map.jpg" in FORBIDDEN
-    script = (ROOT / "tools" / "render_natural_earth_candidate.py").read_text(encoding="utf-8")
-    assert "not the packaged basemap" in script
-    manifest = json.loads((ROOT / "packaging" / "distribution_manifest.json").read_text(encoding="utf-8"))
-    assert "qt-licence-election" in manifest["release_blockers"]
-    assert "qtwebengine-chromium-third-party-credits-file" in manifest["release_blockers"]
-    assert "pystray" in manifest["not_in_frozen_exe"]
-    image = Image.open(ROOT / "static_basemap_v2.png")
-    assert image.size == (2400, 1200)
+    provenance = json.loads((ROOT / "basemap" / "PROVENANCE.json").read_text(encoding="utf-8"))
+    assert provenance["pillow"] == "13.0.0"
+    assert provenance["output_sha256"] == MAP_SHA256
+    assert (ROOT / "docs" / "basemap_ne_110m_preview.png").is_file()

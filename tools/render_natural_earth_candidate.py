@@ -1,13 +1,15 @@
-"""Rasterize a Natural Earth land file to a candidate PNG.
+"""Rasterize pinned Natural Earth land data to the packaged dark basemap.
 
-The candidate is not the packaged basemap. This script refuses to write
-world_map.jpg or either static_basemap_v2 file. Default output is under
-candidates/, which is gitignored.
+Dataset: third_party/natural_earth/ne_110m_land.geojson
+SHA-256 9e0729ee253ca7d7a5c4ae9395fb1902264c5377c52e224d13dd85010e2835d9
+Source: natural-earth-vector tag v5.1.2, geojson/ne_110m_land.geojson
+Terms: third_party/natural_earth/TERMS_OF_USE.txt (public domain statement
+copied from naturalearthdata.com). Those terms cover this dataset. They
+do not relicense OrbitRx and they do not describe world_map.jpg or the v2
+images, which this script refuses to overwrite.
 
-The land file third_party/natural_earth/ne_110m_land.geojson is
-natural-earth-vector tag v5.1.2. Its terms are in TERMS_OF_USE.txt next
-to it. Those terms are Natural Earth's, for that dataset. They are not
-a finding that the JPEG or the v2 images were made from it.
+The packaged file is basemap/ne_110m_dark.png. Development and the frozen
+onedir both load that file and no other basemap.
 """
 
 from __future__ import annotations
@@ -16,10 +18,13 @@ import argparse
 import json
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, PngImagePlugin
 
 ROOT = Path(__file__).resolve().parents[1]
 GEOJSON = ROOT / "third_party" / "natural_earth" / "ne_110m_land.geojson"
+DATASET_SHA256 = "9e0729ee253ca7d7a5c4ae9395fb1902264c5377c52e224d13dd85010e2835d9"
+PACKAGED_NAME = "ne_110m_dark.png"
+PACKAGED_PATH = ROOT / "basemap" / PACKAGED_NAME
 FORBIDDEN = {
     "world_map.jpg",
     "static_basemap_v2.png",
@@ -27,6 +32,8 @@ FORBIDDEN = {
 }
 OCEAN = (10, 22, 40)
 LAND = (28, 42, 58)
+WIDTH = 2400
+HEIGHT = 1200
 
 
 def _rings(geometry: dict):
@@ -55,24 +62,53 @@ def render_land(geojson: dict, width: int, height: int, land=LAND, ocean=OCEAN) 
     return image
 
 
+def png_text() -> PngImagePlugin.PngInfo:
+    info = PngImagePlugin.PngInfo()
+    info.add_text("Software", "OrbitRx tools/render_natural_earth_candidate.py")
+    info.add_text("NaturalEarth-SHA256", DATASET_SHA256)
+    info.add_text("NaturalEarth-Source", "natural-earth-vector v5.1.2 geojson/ne_110m_land.geojson")
+    info.add_text("Terms", "public domain; see third_party/natural_earth/TERMS_OF_USE.txt")
+    return info
+
+
+def save_png(image: Image.Image, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    image.save(path, format="PNG", pnginfo=png_text())
+
+
+def load_dataset() -> dict:
+    raw = GEOJSON.read_bytes()
+    import hashlib
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest != DATASET_SHA256:
+        raise SystemExit(f"dataset hash {digest} != {DATASET_SHA256}")
+    return json.loads(raw)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--out", type=Path, default=PACKAGED_PATH)
+    parser.add_argument("--width", type=int, default=WIDTH)
+    parser.add_argument("--height", type=int, default=HEIGHT)
     parser.add_argument(
-        "--out",
+        "--preview",
         type=Path,
-        default=ROOT / "candidates" / "ne_110m_candidate.png",
+        default=None,
+        help="Also write a nearest-neighbour half-size preview.",
     )
-    parser.add_argument("--width", type=int, default=2400)
-    parser.add_argument("--height", type=int, default=1200)
     args = parser.parse_args(argv)
-    if args.out.name in FORBIDDEN:
-        print(f"refusing to overwrite packaged or v2 artwork: {args.out.name}")
+    if args.out.name in FORBIDDEN or args.out.resolve() in {
+        (ROOT / name).resolve() for name in FORBIDDEN
+    }:
+        print(f"refusing to overwrite unknown-provenance artwork: {args.out}")
         return 2
-    geojson = json.loads(GEOJSON.read_text(encoding="utf-8"))
-    image = render_land(geojson, args.width, args.height)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    image.save(args.out, format="PNG")
-    print(f"wrote candidate {args.out} ({args.width}x{args.height}); not the packaged basemap")
+    image = render_land(load_dataset(), args.width, args.height)
+    save_png(image, args.out)
+    print(f"wrote {args.out} ({args.width}x{args.height})")
+    if args.preview is not None:
+        preview = image.resize((args.width // 2, args.height // 2), Image.Resampling.NEAREST)
+        save_png(preview, args.preview)
+        print(f"wrote preview {args.preview}")
     return 0
 
 

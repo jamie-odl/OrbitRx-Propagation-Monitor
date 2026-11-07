@@ -28,4 +28,4 @@ The reconstruction is not a command found in git. No command in git or in the Ac
 
 The default of `tools/pack_setup_zip.py` also uses raw deflate level 9 and the same header shape, but it takes the DOS time from the input file's modification time. It does not force 2026-11-05 10:03:50. A new installer, or the same installer with a different timestamp, will not come out as `bb8f087e041c13f868e6bb2ceb77c197760901aa478b3ee4ac9f9509efb2498b`. Use the default for a pack you build later. Use `--historical-observed` only to check the 5 November 2026 archive against the known installer bytes.
 
-This branch does not publish either zip.
+This branch does not publish either zip. The onedir spec on this head is an unpublished recipe. It does not alter `bb8f087e041c13f868e6bb2ceb77c197760901aa478b3ee4ac9f9509efb2498b` or the Actions installer `4cb3c4d0774218b0b39e05d9f4ca3dc2609c367349f1383f60d378a0d89642d8`.

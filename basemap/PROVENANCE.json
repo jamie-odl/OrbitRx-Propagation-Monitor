@@ -1,0 +1,18 @@
+{
+  "output": "basemap/ne_110m_dark.png",
+  "output_sha256": "552ba27ce43dcb838ed13fe59df8b5305d92d40702f33ceadf038392135db183",
+  "output_bytes": 42413,
+  "width": 2400,
+  "height": 1200,
+  "land_rgb": [28, 42, 58],
+  "ocean_rgb": [10, 22, 40],
+  "antialiasing": false,
+  "dataset": "third_party/natural_earth/ne_110m_land.geojson",
+  "dataset_sha256": "9e0729ee253ca7d7a5c4ae9395fb1902264c5377c52e224d13dd85010e2835d9",
+  "dataset_source": "https://github.com/nvkelso/natural-earth-vector/blob/v5.1.2/geojson/ne_110m_land.geojson",
+  "terms": "third_party/natural_earth/TERMS_OF_USE.txt",
+  "renderer": "tools/render_natural_earth_candidate.py",
+  "python": "3.12.3",
+  "pillow": "13.0.0",
+  "preview": "docs/basemap_ne_110m_preview.png"
+}

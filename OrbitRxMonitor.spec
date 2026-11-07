@@ -35,19 +35,24 @@ a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
-    # Packaged basemap is world_map.jpg only. The v2 PNG and WebP stay in the
-    # source tree and are not datas, matching the 5 Nov 2026 exe archive.
-    # third_party holds upstream licence texts. Copying them into the exe does
-    # not choose a Qt licence or supply Qt source or Chromium credits.
+    # Onedir: Qt libraries sit next to the exe so they can be replaced.
+    # Basemap is only the Natural Earth render. Legacy JPEG and v2 images
+    # are not datas. Licence texts are copied; they are not a published
+    # source offer and not the gn-generated Chromium about_credits file.
     datas=[
-        ('world_map.jpg', '.'),
+        ('basemap/ne_110m_dark.png', '.'),
+        ('basemap/PROVENANCE.json', '.'),
         ('orbitrx/ui/assets', 'orbitrx/ui/assets'),
         ('assets/orbitrx.ico', 'assets'),
         ('LICENSE', '.'),
         ('NOTICE', '.'),
         ('PRIVACY.md', '.'),
+        ('docs/REPLACING_QT_LIBRARIES.md', '.'),
         ('third_party/qt/LICENSES', 'third_party/qt/LICENSES'),
         ('third_party/qt/qtcoreglobal.h.SPDX.txt', 'third_party/qt'),
+        ('third_party/qt/LICENSE.Chromium', 'third_party/qt'),
+        ('third_party/natural_earth/TERMS_OF_USE.txt', 'third_party/natural_earth'),
+        ('third_party/natural_earth/ne_110m_land.geojson', 'third_party/natural_earth'),
         ('third_party/win10toast/LICENSE', 'third_party/win10toast'),
         ('third_party/pillow/LICENSE', 'third_party/pillow'),
         ('third_party/matplotlib/LICENSE', 'third_party/matplotlib'),
@@ -68,20 +73,13 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='OrbitRxMonitor',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    # I4: UPX-compressing the onefile exe was the likely source of the malformed PE
-    # security directory the installer review flagged (UPX doesn't relocate/clear that
-    # directory correctly in some bootloader builds). Disabled until that's confirmed fixed
-    # upstream. Releases ship unsigned; users verify downloads with SHA256SUMS.txt.
     upx=False,
-    upx_exclude=[],
-    runtime_tmpdir=None,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -90,4 +88,13 @@ exe = EXE(
     entitlements_file=None,
     icon='assets/orbitrx.ico',
     version=str(VERSION_INFO_FILE),
+)
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='OrbitRxMonitor',
 )

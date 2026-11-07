@@ -1,11 +1,10 @@
 {
-  "packaged_basemap": "world_map.jpg",
-  "source_basemap_search": [
-    "static_basemap_v2.png",
-    "static_basemap_v2.webp",
-    "world_map.jpg"
-  ],
-  "not_in_frozen_exe": ["pystray", "static_basemap_v2.png", "static_basemap_v2.webp"],
+  "packaged_basemap": "basemap/ne_110m_dark.png",
+  "packaged_basemap_sha256": "552ba27ce43dcb838ed13fe59df8b5305d92d40702f33ceadf038392135db183",
+  "layout": "pyinstaller-onedir",
+  "qt_library_route": "LGPL-3.0-only for Qt Project libraries, as one alternative in the upstream SPDX line. Not a commercial licence. Not legal clearance.",
+  "source_basemap_search": ["ne_110m_dark.png"],
+  "not_in_frozen_exe": ["pystray", "static_basemap_v2.png", "static_basemap_v2.webp", "world_map.jpg"],
   "present_texts": {
     "third_party/qt/LICENSES/LGPL-3.0-only.txt": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
     "third_party/qt/LICENSES/GPL-2.0-only.txt": "8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643",
@@ -13,6 +12,7 @@
     "third_party/qt/LICENSES/LGPL-2.1-or-later.txt": "1ccf09bf2f598308df4bed9cd8e9657dc5cd0973d2800318f2e241486e2edf3f",
     "third_party/qt/LICENSES/Qt-GPL-exception-1.0.txt": "40678d338ce53cd93f8b22b281a2ecbcaa3ee65ce60b25ffb0c462b0530846b2",
     "third_party/qt/qtcoreglobal.h.SPDX.txt": "00eacf8f3cfa338722ee3faa65ed8820cac7837acfef65bdbd7aaf0004d835f0",
+    "third_party/qt/LICENSE.Chromium": "f34787ef0342c614b667186a6ec2f5d6b9d650e30142a2788a589a89743e88e9",
     "third_party/win10toast/LICENSE": "70849267b734d1170fc0af40b9eec056bb45e2ef59478cddd1984dc32183f5f4",
     "third_party/pillow/LICENSE": "15181e7363dca9aed78b79bebebc7fde7f1814b8bd311ea3b87ae8ccadfc185b",
     "third_party/matplotlib/LICENSE": "5a1a81ea301728c8bba2933da832c0cd62229daf20893a024ab3d53244468dbc",
@@ -22,11 +22,8 @@
     "orbitrx/ui/assets/leaflet/LICENSE-leaflet.txt": null
   },
   "release_blockers": [
-    "qt-licence-election",
-    "qt-corresponding-source-or-written-offer",
-    "qt-user-product-installation-information",
-    "qtwebengine-chromium-third-party-credits-file",
-    "world-map-jpeg-provenance",
-    "static-basemap-v2-licence"
+    "qt-source-offer-not-published-by-copyright-holder",
+    "qtwebengine-gn-about-credits-not-a-file-in-the-6.12.0.140-wheel",
+    "windows-onedir-build-not-executed"
   ]
 }

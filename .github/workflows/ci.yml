@@ -96,7 +96,7 @@ jobs:
       - name: Build executable
         run: |
           pyinstaller OrbitRxMonitor.spec --noconfirm
-          if (!(Test-Path dist\OrbitRxMonitor.exe)) { throw "exe missing" }
+          if (!(Test-Path dist\OrbitRxMonitor\OrbitRxMonitor.exe)) { throw "exe missing" }
       - name: Build installer (Inno Setup)
         shell: pwsh
         run: |
@@ -107,19 +107,19 @@ jobs:
           if (!(Test-Path dist\OrbitRxMonitor-Setup.exe)) { throw "installer missing" }
       - name: Checksums
         shell: pwsh
-        run: Get-FileHash dist\*.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Out-File dist\SHA256SUMS.txt -Encoding ascii
+        run: Get-FileHash dist\OrbitRxMonitor\OrbitRxMonitor.exe, dist\OrbitRxMonitor-Setup.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Out-File dist\SHA256SUMS.txt -Encoding ascii
       - uses: actions/upload-artifact@v4
         with:
           name: OrbitRx-windows-unsigned
           path: |
-            dist/OrbitRxMonitor.exe
+            dist/OrbitRxMonitor/
             dist/OrbitRxMonitor-Setup.exe
             dist/SHA256SUMS.txt
           retention-days: 30
       - name: Self-capture the release exe at 100% and 150% scale (M3 evidence)
         shell: pwsh
         run: |
-          $exe = (Resolve-Path dist\OrbitRxMonitor.exe).Path
+          $exe = (Resolve-Path dist\OrbitRxMonitor\OrbitRxMonitor.exe).Path
           New-Item -ItemType Directory -Force -Path release-shots\100, release-shots\150 | Out-Null
 
           function Invoke-ReleaseCapture([string]$CaptureDir, [string]$ScaleFactor) {
@@ -184,7 +184,7 @@ jobs:
       - name: Publisher check (thevenom, never Obsidian Dynamics)
         shell: pwsh
         run: |
-          foreach ($f in 'dist\OrbitRxMonitor.exe', 'dist\OrbitRxMonitor-Setup.exe') {
+          foreach ($f in 'dist\OrbitRxMonitor\OrbitRxMonitor.exe', 'dist\OrbitRxMonitor-Setup.exe') {
             $v = (Get-Item $f).VersionInfo
             Write-Host "$f : CompanyName='$($v.CompanyName)' LegalCopyright='$($v.LegalCopyright)'"
             if ("$($v.CompanyName) $($v.LegalCopyright)" -match 'Obsidian') { throw "Obsidian Dynamics found in $f version info" }
@@ -194,7 +194,7 @@ jobs:
       - name: PE check (security directory 0/0, publisher strings)
         shell: pwsh
         run: |
-          python tools/pe_check.py release-shots\installer-publisher.txt dist\OrbitRxMonitor.exe dist\OrbitRxMonitor-Setup.exe
+          python tools/pe_check.py release-shots\installer-publisher.txt dist\OrbitRxMonitor\OrbitRxMonitor.exe dist\OrbitRxMonitor-Setup.exe
       - name: Units check (no "n/a <unit>" in rendered Stats text)
         shell: pwsh
         run: |
@@ -207,7 +207,7 @@ jobs:
       - name: Scan the bundled PYZ for the simulated-rig gate
         shell: pwsh
         run: |
-          python tools/scan_pyz.py dist\OrbitRxMonitor.exe release-shots\pyz-scan.txt
+          python tools/scan_pyz.py dist\OrbitRxMonitor\OrbitRxMonitor.exe release-shots\pyz-scan.txt
       - name: Measure DX cluster field edges
         shell: pwsh
         run: |

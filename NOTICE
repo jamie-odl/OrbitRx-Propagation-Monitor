@@ -31,13 +31,13 @@ MAPS AND LIBRARIES
 ------------------
 Leaflet 1.9.4, https://leafletjs.com/ (BSD 2-Clause). Bundled locally in
   orbitrx/ui/assets/leaflet/ with its LICENSE-leaflet.txt.
-Map code searches static_basemap_v2.png, then the WebP, then world_map.jpg.
-  A source checkout that still has the v2 files uses the PNG.
-  OrbitRxMonitor.spec, installer/OrbitRxMonitor.iss, the 5 Nov 2026 Inno log,
-  and the frozen exe archive include world_map.jpg and do not include either
-  v2 file, so that frozen app displays the JPEG. The interactive page is a
-  local file overlay. It does not request a tile server. Neither image has an
-  established licence. See README "Map image" and docs/MAP_IMAGE.md.
+The app loads only basemap/ne_110m_dark.png, a plate-carrée render of
+  Natural Earth 1:110m land (public domain; third_party/natural_earth).
+  world_map.jpg and the v2 PNG/WebP remain in git history and are not
+  searched and not packaged. The 5 Nov 2026 exe was built before this and
+  still contains the JPEG; this tree does not replace that file.
+  The interactive page is a local image overlay. It does not request a tile
+  server. See README "Map image" and docs/MAP_IMAGE.md.
 
 Ported code: the live spots, analytics, watchlist, rotor and OmniRig modules
 in orbitrx/spots/ come from the author's earlier project "WSPR / FT8 Global

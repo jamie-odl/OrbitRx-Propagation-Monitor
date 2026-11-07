@@ -26,26 +26,12 @@ Compression=lzma2
 SolidCompression=yes
 PrivilegesRequired=lowest
 
-; Map file shipped beside the exe is world_map.jpg. The v2 images are not
-; included. Upstream licence texts under third_party are copied for the next
-; build. They do not replace the 5 Nov 2026 installer and they are not a Qt
-; source offer, a relink kit, or a Chromium credits file.
+; Unpublished onedir layout. This is not the 5 Nov 2026 one-file installer.
+; The folder already contains ne_110m_dark.png, Qt DLLs, and third_party texts.
+; world_map.jpg and the v2 images are not inputs.
 
 [Files]
-Source: "..\dist\OrbitRxMonitor.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\world_map.jpg"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\assets\orbitrx.ico"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\NOTICE"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\PRIVACY.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\third_party\qt\LICENSES\*"; DestDir: "{app}\third_party\qt\LICENSES"; Flags: ignoreversion
-Source: "..\third_party\qt\qtcoreglobal.h.SPDX.txt"; DestDir: "{app}\third_party\qt"; Flags: ignoreversion
-Source: "..\third_party\win10toast\LICENSE"; DestDir: "{app}\third_party\win10toast"; Flags: ignoreversion
-Source: "..\third_party\pillow\LICENSE"; DestDir: "{app}\third_party\pillow"; Flags: ignoreversion
-Source: "..\third_party\matplotlib\LICENSE"; DestDir: "{app}\third_party\matplotlib"; Flags: ignoreversion
-Source: "..\third_party\pyserial\LICENSE.txt"; DestDir: "{app}\third_party\pyserial"; Flags: ignoreversion
-Source: "..\third_party\pywin32\License.txt"; DestDir: "{app}\third_party\pywin32"; Flags: ignoreversion
-Source: "..\third_party\pyinstaller\COPYING.txt"; DestDir: "{app}\third_party\pyinstaller"; Flags: ignoreversion
+Source: "..\dist\OrbitRxMonitor\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\OrbitRx Monitor"; Filename: "{app}\OrbitRxMonitor.exe"

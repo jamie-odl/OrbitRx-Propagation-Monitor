@@ -705,7 +705,7 @@ class QtOrbitRxApplication(QMainWindow):
                 return
             map_path = ensure_map_image()
             if not map_path.is_file():
-                raise FileNotFoundError(f"world_map.jpg not found at {map_path}")
+                raise FileNotFoundError(f"{map_path.name} not found at {map_path}")
             img = Image.open(map_path)
             img.load()
             self.renderer.set_base_map(img)

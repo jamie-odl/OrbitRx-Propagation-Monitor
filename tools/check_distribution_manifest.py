@@ -40,16 +40,19 @@ def packaged_map_ok() -> list[str]:
     problems: list[str] = []
     spec = (ROOT / "OrbitRxMonitor.spec").read_text(encoding="utf-8")
     iss = (ROOT / "installer" / "OrbitRxMonitor.iss").read_text(encoding="utf-8")
-    if "('world_map.jpg', '.')" not in spec:
-        problems.append("spec does not package world_map.jpg")
-    if "static_basemap_v2" in spec:
-        problems.append("spec packages a v2 basemap")
-    if 'Source: "..\\world_map.jpg"' not in iss:
-        problems.append("installer does not package world_map.jpg")
-    if "static_basemap_v2" in iss:
-        problems.append("installer packages a v2 basemap")
-    if "third_party\\qt\\LICENSES" not in iss and "third_party/qt/LICENSES" not in iss:
-        problems.append("installer does not copy Qt licence texts")
+    if "('basemap/ne_110m_dark.png', '.')" not in spec:
+        problems.append("spec does not package ne_110m_dark.png")
+    if "('world_map.jpg'" in spec or "static_basemap_v2.png" in spec:
+        problems.append("spec still packages unknown-provenance artwork")
+    if "exclude_binaries=True" not in spec or "COLLECT(" not in spec:
+        problems.append("spec is not an onedir collect")
+    sources = "\n".join(line for line in iss.splitlines() if line.strip().startswith("Source:"))
+    if "world_map" in sources or "static_basemap" in sources:
+        problems.append("installer still names legacy artwork")
+    if "recursesubdirs" not in iss:
+        problems.append("installer does not copy the onedir tree")
+    if "('third_party/qt/LICENSES'" not in spec:
+        problems.append("spec does not package Qt licence texts")
     return problems
 
 
@@ -66,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {item}")
         return 1
     print("vendored licence texts match the manifest")
-    print("packaged basemap is world_map.jpg; v2 images are not in the spec or installer")
+    print("packaged basemap is ne_110m_dark.png in an onedir layout")
     if blockers:
         print("release blockers still open:")
         for item in blockers:
