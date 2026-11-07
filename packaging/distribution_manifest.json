@@ -22,24 +22,27 @@
     "orbitrx/ui/assets/leaflet/LICENSE-leaflet.txt": null
   },
   "windows_onedir_evidence": {
-    "run": "42359055614",
-    "commit": "ae1406d2483d025a006141bc728c48b906cbeb8e",
-    "url": "https://github.com/jamie-odl/OrbitRx-Propagation-Monitor/actions/runs/42359055614",
-    "pytest": "269 passed, 0 failed, 0 skipped",
+    "run": "42362357356",
+    "commit": "3736e29487b9850adbb069de1123d7423a208e4f",
+    "url": "https://github.com/jamie-odl/OrbitRx-Propagation-Monitor/actions/runs/42362357356",
+    "pytest": "271 passed, 0 failed, 0 skipped",
     "layout_check": "pass",
     "pyz_scan": "pass",
     "qt_dlls": [
       "_internal/PySide6/Qt6Core.dll",
       "_internal/PySide6/Qt6WebEngineCore.dll"
     ],
-    "static_process_exit": -1073741819,
+    "static_process_exit": 0,
     "interactive_process_exit": 0,
+    "static_shutdown_stage": "webengine-not-created, window-closed, qapplication-deleted, process-exit",
+    "interactive_shutdown_stage": "webengine-page-released, window-closed, qapplication-deleted, process-exit",
     "installer_uploaded": false,
-    "note": "The onedir build ran on windows-latest. The static capture wrote its screenshots and then exited with an access violation. That is not a clean shutdown and not release clearance."
+    "earlier_static_crash_run": "42359055614",
+    "earlier_static_process_exit": -1073741819,
+    "note": "windows-latest built the onedir and both captures exited 0. This is not release clearance."
   },
   "release_blockers": [
     "qt-source-offer-not-published-by-copyright-holder",
-    "qtwebengine-gn-about-credits-not-generated-for-submodule-71a2fa55",
-    "windows-static-capture-exit-0xC0000005-on-42359055614"
+    "qtwebengine-gn-about-credits-not-generated-for-submodule-71a2fa55"
   ]
 }

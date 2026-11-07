@@ -36,9 +36,11 @@ def test_dev_and_gate_use_the_natural_earth_map_only():
     assert "qt-source-offer-not-published-by-copyright-holder" in manifest["release_blockers"]
     assert "windows-onedir-build-not-executed" not in manifest["release_blockers"]
     evidence = manifest["windows_onedir_evidence"]
-    assert evidence["run"] == "42359055614"
-    assert evidence["static_process_exit"] == -1073741819
-    assert "windows-static-capture-exit-0xC0000005-on-42359055614" in manifest["release_blockers"]
+    assert evidence["run"] == "42362357356"
+    assert evidence["static_process_exit"] == 0
+    assert evidence["interactive_process_exit"] == 0
+    assert "windows-static-capture-exit-0xC0000005-on-42359055614" not in manifest["release_blockers"]
+    assert "qtwebengine-gn-about-credits-not-generated-for-submodule-71a2fa55" in manifest["release_blockers"]
 
 
 def test_frozen_bundle_ignores_legacy_art_sitting_beside_the_exe(tmp_path, monkeypatch):

@@ -14,7 +14,7 @@ permissions:
 jobs:
   credits:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - name: Record runner bounds and the missing gn out directory
@@ -33,13 +33,18 @@ jobs:
             echo "required_predecessor=Qt WebEngine run_core_GnDone, which runs gn gen for :QtWebEngineCore"
             echo "archive_qtwebengine-6.12-d4735ce.tar.xz omits that submodule"
           } | tee validation-logs/result.txt
-          # A working Chromium tree plus gn gen does not fit a small hosted disk.
-          # 40 GiB free is the floor used here; below it, stop before cloning.
           if [ "$AVAIL_KB" -lt 41943040 ]; then
-            echo "stop: free disk ${AVAIL_KB} KB is under 40 GiB, so this runner will not check out submodule 71a2fa55 or run gn gen" | tee -a validation-logs/result.txt
+            echo "stop: free disk ${AVAIL_KB} KB is under 40 GiB, so this runner will not check out submodule 71a2fa55" | tee -a validation-logs/result.txt
             exit 2
           fi
-          echo "disk floor met; still not running gn gen in this job because no Qt WebEngine out directory exists for :QtWebEngineCore" | tee -a validation-logs/result.txt
+          echo "disk floor met; cloning submodule 71a2fa55" | tee -a validation-logs/result.txt
+          git clone --filter=blob:none --depth 1 https://github.com/qt/qtwebengine-chromium.git /tmp/qtwebengine-chromium
+          git -C /tmp/qtwebengine-chromium fetch --filter=blob:none --depth 1 origin 71a2fa55e2e2f5a5d6567aac93bda8775fc7b084
+          git -C /tmp/qtwebengine-chromium checkout --detach 71a2fa55e2e2f5a5d6567aac93bda8775fc7b084
+          git -C /tmp/qtwebengine-chromium rev-parse HEAD | tee -a validation-logs/result.txt
+          du -sh /tmp/qtwebengine-chromium | tee -a validation-logs/result.txt
+          df -h / | tee -a validation-logs/df.txt
+          echo "stop: checkout of 71a2fa55 is not a gn out directory. QtGnGen.cmake still needs a Qt 6.12 configure to write BUILD.gn and args.gn before gn gen --root chromium and licenses.py --gn-target :QtWebEngineCore. This job does not configure Qt and does not emit credits." | tee -a validation-logs/result.txt
           exit 2
       - name: Upload the credits attempt log
         if: always()
