@@ -1,5 +1,9 @@
 """
-Download and use a realistic satellite world map from Natural Earth Data
+Download a Wikimedia JPEG into world_map.jpg when that fallback file is missing.
+
+This module does not write static_basemap_v2.png or static_basemap_v2.webp.
+Those files are documented in docs/MAP_IMAGE.md. The URL below is the Commons
+file Large_World_Map_bright.jpg, not a Natural Earth download.
 """
 
 from PIL import Image

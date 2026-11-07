@@ -18,7 +18,7 @@ reports on one map, so you can see what is open and who is hearing whom.
 
 **Map**
 - Greyline, night shading, aurora oval and optional grid, with a 24 hour time-travel slider
-- Two backends: a static world map (works offline) or an interactive OpenStreetMap map
+- Two backends, both offline: a static world map, or an interactive map that draws the same local basemap (no tile server, no map API key)
 - **Live Spots** (interactive map): PSKReporter reports as band-coloured arcs, plus an activity heatmap
 - **Spot replay**: scrub back through the last 24 hours of cached spots (stored for 7 days)
 
@@ -64,8 +64,9 @@ See [PRIVACY.md](PRIVACY.md) for exactly what is sent where.
 ## Data sources and credits
 
 NOAA SWPC, HamQSL (N0NBH), PSKReporter (Philip Gladstone, N1DQ), DX cluster nodes,
-QRZ.com (optional), WA7BNM Contest Calendar, OpenStreetMap contributors and Leaflet
-(bundled locally). PSKReporter is polled no more than once every 5 minutes.
+QRZ.com (optional), WA7BNM Contest Calendar, and Leaflet (bundled locally).
+The map image is a local file; see [Map image](#map-image). PSKReporter is
+polled no more than once every 5 minutes.
 Full credits and licences are in [NOTICE](NOTICE).
 
 ## Files OrbitRx writes
@@ -112,6 +113,16 @@ installer/ Inno Setup script
 OrbitRx is free. If it helps you make contacts, you can buy me a coffee:
 https://buymeacoffee.com/thevenom
 
+## Map image
+
+`static_basemap_v2.png` (SHA-256 `3046203ae0ade8be43cf9bd647ced5621ab1ee3cdfc95da5269f931b54ab2f1b`) and `static_basemap_v2.webp` (SHA-256 `2704a5d7c6819859c9d42b2659c23a879658724acd2755ca85ca41b33b252e67`) are the offline basemap. Neither file contains a licence, copyright, or EXIF field. They were added together in commit `39d5f1b` with no generator script. The WebP is a lossy copy of the same 2400×1200 picture.
+
+A plate-carrée raster of Natural Earth 1:110m land (vector tag v5.1.2) agrees with the lighter pixels of the PNG at intersection-over-union 0.937. That is a measurement, not a stored source file. Natural Earth's published terms say that dataset is in the public domain. This README does not assert that those polygons were the input, and it does not add a licence to the images. The measurement, what it does not prove, and the alternative that was not applied are in [docs/MAP_IMAGE.md](docs/MAP_IMAGE.md).
+
+`world_map.jpg` is a different, photographic file used only if the v2 images are missing. `generate_map.py` can download a Wikimedia JPEG into that name. That download is not how the v2 images were produced.
+
+The default station pin remains London (`51.5081`, `-0.1281`). IP geolocation stays off unless the user turns it on. There is no paid map key.
+
 ## Licence
 
-MIT, Copyright (C) 2026 thevenom. See [LICENSE](LICENSE).
+MIT, Copyright (C) 2026 thevenom. See [LICENSE](LICENSE). That grant was already on this commit. This documentation does not change it. The basemap files are not named in `LICENSE`.

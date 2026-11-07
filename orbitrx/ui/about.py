@@ -129,7 +129,7 @@ def _build_about_dialog(parent=None) -> QDialog:
 
     sources = QLabel(
         f'<span style="color:{MUTED}">Data sources:</span> NOAA SWPC, HamQSL (N0NBH), '
-        f'PSKReporter, DX cluster, OpenStreetMap credits (NOTICE), Leaflet. '
+        f'PSKReporter, DX cluster, offline basemap (NOTICE), Leaflet. '
         f'See <a href="{_notice_url()}" style="color:{ACCENT}">NOTICE</a> for credits.'
     )
     sources.setTextFormat(Qt.TextFormat.RichText)

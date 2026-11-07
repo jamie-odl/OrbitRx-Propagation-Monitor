@@ -263,7 +263,8 @@ if WEBENGINE_AVAILABLE:
             # M3: 1.0 so device-pixel-ratio scaling (e.g. a 150% display) never
             # doubles up with Qt's own scale factor and renders a blank page.
             self.web.setZoomFactor(1.0)
-            # OSM tile policy asks apps to identify themselves.
+            # Identify the app on any request this page makes. The basemap
+            # itself is a local file, not an OpenStreetMap tile fetch.
             from orbitrx import __version__
             self.web.page().profile().setHttpUserAgent(
                 f"OrbitRx/{__version__} (+https://github.com/jamie-odl/OrbitRx-Propagation-Monitor)"

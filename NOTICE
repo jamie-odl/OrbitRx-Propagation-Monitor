@@ -31,15 +31,29 @@ MAPS AND LIBRARIES
 ------------------
 Leaflet 1.9.4, https://leafletjs.com/ (BSD 2-Clause). Bundled locally in
   orbitrx/ui/assets/leaflet/ with its LICENSE-leaflet.txt.
-Map tiles: (c) OpenStreetMap contributors (ODbL), served by the OpenStreetMap
-  Foundation tile servers under their tile usage policy. Loaded online only when
-  the interactive map backend is selected.
-Static world map image: see README "Map image" note.
+Map: both backends use the local basemap (static_basemap_v2.png, then the
+  WebP, then world_map.jpg). The interactive page is a file:// image overlay.
+  It does not request OpenStreetMap Foundation or CARTO tile servers.
+  See README "Map image" and docs/MAP_IMAGE.md.
 
 Ported code: the live spots, analytics, watchlist, rotor and OmniRig modules
 in orbitrx/spots/ come from the author's earlier project "WSPR / FT8 Global
 Matrix" (same author, relicensed here under MIT).
 
-Python dependencies: PySide6 / Qt (LGPLv3), Pillow (MIT-CMU), matplotlib
-(PSF-based), pyserial (BSD), pywin32 (PSF). PyInstaller (GPL with bootloader
-exception) is used only to build the Windows executable.
+Python dependencies, from the upstream licence files for the versions
+installed by Actions run 42004653668 (not from PyPI classifiers alone).
+Details and the files that were read are in docs/DEPENDENCY_LICENCES.md.
+  PySide6 6.12.0 / Qt: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only (qtbase v6.12.0 qtcoreglobal.h).
+  Pillow 13.0.0: MIT-CMU (Pillow LICENSE).
+  matplotlib 3.11.2: the Matplotlib licence agreement, not the PSF licence.
+  pyserial 3.5: BSD-3-Clause (LICENSE.txt).
+  pywin32 b312: BSD-3-Clause in win32/License.txt (Mark Hammond). Not PSF.
+  pystray 0.19.5: LGPL-3.0-or-later (pystray/__init__.py). The wheel also
+    ships COPYING (GPL-3) and COPYING.LGPL.
+  win10toast 0.9: upstream LICENSE is MIT, copyright Jithu R Jacob, added
+    2017-07-21 (commit 76d491638b). The 0.9 wheel's METADATA says BSD and
+    does not contain that file.
+  PyInstaller 6.22.3: GPL-2.0-or-later with the Bootloader Exception.
+    Run-time hooks and fake-modules in that file are Apache-2.0.
+    Build tool only.
+customtkinter is not a dependency of this commit.

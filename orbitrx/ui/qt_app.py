@@ -253,7 +253,7 @@ class QtOrbitRxApplication(QMainWindow):
         map_pane = QWidget()
         map_layout = QVBoxLayout(map_pane)
         # P1: a bold header ("Static map"/"Interactive map") plus a muted secondary
-        # hint line (file name/dims, or OpenStreetMap credit, or an error) that
+        # hint line (file name/dims, or an error) that
         # elides on the right with the full text always available as a tooltip.
         map_layout.setContentsMargins(16, 16, 16, 8)
         map_layout.setSpacing(8)
@@ -699,7 +699,7 @@ class QtOrbitRxApplication(QMainWindow):
         self.banner_hint.setFullText("loading...")
         try:
             if self._map_backend == "leaflet":
-                self._map_label = "Interactive map · OpenStreetMap"
+                self._map_label = "Interactive map · offline basemap"
                 self.banner.setText("Interactive map")
                 self.banner_hint.setFullText("")
                 return
