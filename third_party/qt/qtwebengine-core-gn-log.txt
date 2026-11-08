@@ -1,0 +1,179 @@
+-- GN arg file:
+D:/src/we-build/src/core/Release/AMD64/args.gn
+-- GN args: 
+angle_enable_swiftshader=false
+blink_symbol_level=0
+build_dawn_tests=false
+build_with_tflite_lib=false
+chrome_pgo_phase=0
+com_init_check_hook_disabled=true
+custom_toolchain="/D:/src/we-build/src/core/target_toolchain:x64"
+dawn_use_built_dxc=false
+dawn_use_swiftshader=false
+dcheck_always_on=false
+device_symbol_level=0
+devtools_skip_typecheck=false
+disable_fieldtrial_testing_config=true
+enable_background_contents=false
+enable_background_mode=false
+enable_bluetooth_emulation=false
+enable_bound_session_credentials=false
+enable_chromium_prelude=false
+enable_compose=false
+enable_constraints=false
+enable_extensions=true
+enable_hangout_services_extension=true
+enable_ipc_fuzzer=false
+enable_ipc_logging=false
+enable_java_templates=false
+enable_library_cdms=true
+enable_media_remoting=false
+enable_message_center=false
+enable_mojom_message_id_scrambling=true
+enable_nocompile_tests=false
+enable_oop_printing=false
+enable_pdf=true
+enable_plugins=true
+enable_precompiled_headers=false
+enable_print_preview=true
+enable_printing=true
+enable_remoting=false
+enable_reporting=false
+enable_resource_allowlist_generation=false
+enable_rust=false
+enable_rust_cxx=false
+enable_rust_png=false
+enable_screen_ai_service=false
+enable_screen_capture=true
+enable_session_service=false
+enable_spellcheck=true
+enable_supervised_users=false
+enable_swiftshader=false
+enable_swiftshader_vulkan=false
+enable_vr=false
+enable_vulkan=true
+enable_web_speech=false
+enable_webenginedriver=true
+enable_webrtc=true
+enable_widevine=true
+fatal_linker_warnings=false
+forbid_non_component_debug_builds=false
+has_native_accessibility=false
+headless_use_policy=false
+heterogeneous_executables=true
+host_toolchain="/D:/src/we-build/src/core/target_toolchain:x64"
+init_stack_vars=false
+is_clang=false
+is_component_build=false
+is_debug=false
+is_gcc=false
+is_mingw=false
+is_msvc=true
+is_official_build=true
+is_qtpdf=false
+is_qtwebengine=true
+is_shared=true
+is_unsafe_developer_build=false
+jumbo_build_excluded=["browser"]
+jumbo_file_merge_limit=8
+optimize_webui=false
+pdf_enable_fontations=false
+pdf_use_skia=true
+proprietary_codecs=false
+qtwebengine_target="D:/src/we-build/src/core/Release/AMD64:QtWebEngineCore"
+rtc_use_h264=false
+rtc_use_pipewire=false
+safe_browsing_mode=0
+setup_toolchain_script="//build/toolchain/win/qwe_setup_toolchain.py"
+skia_use_dawn=false
+strip_absolute_paths_from_debug_symbols=false
+symbol_level=0
+target_cpu="x64"
+toolkit_views=false
+treat_warnings_as_errors=false
+use_allocator_shim=false
+use_browser_spellchecker=false
+use_cups=false
+use_custom_libcxx=false
+use_custom_libcxx_for_host=false
+use_dawn=false
+use_embedded_config=false
+use_gold=false
+use_incremental_linking=false
+use_jumbo_build=true
+use_kerberos=true
+use_lld=false
+use_llvm_libatomic=false
+use_ml=false
+use_mold=false
+use_partition_alloc=true
+use_partition_alloc_as_malloc=false
+use_static_angle=true
+use_sysroot=false
+use_thin_lto=false
+use_v8_context_snapshot=true
+v8_symbol_level=0
+v8_use_external_startup_data=true
+visual_studio_path="C:/Program Files/Microsoft Visual Studio/18/Enterprise"
+visual_studio_version=2022
+wdk_path="C:/Program Files (x86)/Windows Kits/10"
+webnn_use_tflite=false
+webrtc_symbol_level=0
+win_linker_timing=true
+windows_sdk_path="C:/Program Files (x86)/Windows Kits/10"
+windows_sdk_version="10.0.26100.0"
+-- GN Done. Made 26103 targets from 3683 files in 19475ms
+[9/10] Generating chromium_attributions.qdoc
+-- Found Gn: D:/src/we-build/install/bin/gn.exe (found suitable exact version "6.12.0.qtwebengine.qt.io")
+-- License 
+##[group]Run actions/upload-artifact@v4
+with:
+  name: qtwebengine-configure-log
+  path: validation-logs/**
+  retention-days: 14
+  if-no-files-found: warn
+  compression-level: 6
+  overwrite: false
+  include-hidden-files: false
+env:
+  pythonLocation: C:\hostedtoolcache\windows\Python\3.12.10\x64
+  PKG_CONFIG_PATH: C:\hostedtoolcache\windows\Python\3.12.10\x64/lib/pkgconfig
+  Python_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+  Python2_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+  Python3_ROOT_DIR: C:\hostedtoolcache\windows\Python\3.12.10\x64
+##[endgroup]
+(node:3456) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+With the provided path, there will be 6 files uploaded
+Artifact name is valid!
+Root directory input is valid!
+Beginning upload of artifact content to blob storage
+(node:3456) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+Uploaded bytes 93051
+Finished uploading artifact content to blob storage!
+SHA256 digest of uploaded artifact zip is f7b14a8f3c8760c3d13738c82331185c597ae48cf2a51129f345364800ce810d
+Finalizing artifact upload
+Artifact qtwebengine-configure-log.zip successfully finalized. Artifact ID 13615124538
+Artifact qtwebengine-configure-log has been successfully uploaded! Final size is 93051 bytes. Artifact ID is 13615124538
+Artifact download URL: https://github.com/jamie-odl/OrbitRx-Propagation-Monitor/actions/runs/42476475449/artifacts/13615124538
+Post job cleanup.
+(node:8508) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Post job cleanup.
+[command]"C:\Program Files\Git\bin\git.exe" version
+git version 2.56.0.windows.4
+Temporarily overriding HOME='D:\a\_temp\096bf107-c92c-4147-831a-ad8011f40b38' before making global git config changes
+Adding repository directory to the temporary git global config as a safe directory
+[command]"C:\Program Files\Git\bin\git.exe" config --global --add safe.directory D:\a\OrbitRx-Propagation-Monitor\OrbitRx-Propagation-Monitor
+[command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp core\.sshCommand
+[command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\""
+[command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+http.https://github.com/.extraheader
+[command]"C:\Program Files\Git\bin\git.exe" config --local --unset-all http.https://github.com/.extraheader
+[command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "sh -c \"git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\""
+[command]"C:\Program Files\Git\bin\git.exe" config --local --name-only --get-regexp ^includeIf\.gitdir:
+[command]"C:\Program Files\Git\bin\git.exe" submodule foreach --recursive "git config --local --show-origin --name-only --get-regexp remote.origin.url"
+Cleaning up orphan processes
+Terminate orphan process: pid (3780) (vctip)
+Terminate orphan process: pid (604) (mspdbsrv)
+##[warning]Node.js 20 is deprecated. The following actions target Node.js 20 but are being forced to run on Node.js 24: actions/checkout@v4, actions/setup-python@v5, actions/upload-artifact@v4. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/

@@ -47,11 +47,11 @@ The onedir spec carries `basemap/ne_110m_dark.png` and the `third_party` texts. 
 
 1. The copyright holder has not published a source offer. `docs/QT_SOURCE_OFFER_DRAFT.md` is only a draft. `third_party/corresponding-source/` holds the official PySide6 6.12.0 source archive, the official qtbase 6.12.0 source archive, and a git archive of qtwebengine branch `6.12` at `d4735ce` without the Chromium submodule. That is not the WebEngine/Chromium corresponding source and it is not an offer.
 2. Actions run 42362357356, commit `3736e29`, built the onedir on windows-latest. Qt6Core.dll and Qt6WebEngineCore.dll were separate files under `_internal/PySide6/`. Static and interactive captures both exited 0. An earlier run, 42359055614, had exited -1073741819 on the static capture before that shutdown change.
-3. `LICENSE.Chromium` from qtwebengine branch `6.12` is included. The gn-generated third-party credits file is not. The PySide6-WebEngine 6.12.0.140 Windows wheel has no such file; `qtwebengine_resources.pak` did not contain an about:credits document; submodule `71a2fa55e2e2f5a5d6567aac93bda8775fc7b084` is the chromium tree the branch points at, and the credits are produced by `cmake/QtGnCredits.cmake` at build time.
+3. `third_party/qt/chromium_attributions.qdoc` is the file from Qt target `generate_chromium_attributions` on Actions run 42476475449. SHA-256 `b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec`, 707,649 bytes, 120 pages. It starts with the `licenses.py` banner. The inputs were qtwebengine `d4735ce`, Chromium submodule `71a2fa55`, and the official Qt 6.12.0 MSVC SDK. `LICENSE.Chromium` is still only the BSD text. The printed GN args are in `third_party/qt/qtwebengine-core-gn-log.txt`.
 
 ## Other open decisions
 
 - The copyright holder has not published the source offer. The draft is not that publication.
-- The gn-generated Chromium third-party credits file is still absent.
+- The gn-generated Chromium credits file is `third_party/qt/chromium_attributions.qdoc`. The copyright holder has not published a source offer.
 - The Windows onedir build in run 42362357356 exited 0 for both captures. That run is not a release.
 - `world_map.jpg` and the v2 images are no longer selected. Their old provenance questions remain for those historical files only.

@@ -51,6 +51,7 @@ a = Analysis(
         ('third_party/qt/LICENSES', 'third_party/qt/LICENSES'),
         ('third_party/qt/qtcoreglobal.h.SPDX.txt', 'third_party/qt'),
         ('third_party/qt/LICENSE.Chromium', 'third_party/qt'),
+        ('third_party/qt/chromium_attributions.qdoc', 'third_party/qt'),
         ('third_party/natural_earth/TERMS_OF_USE.txt', 'third_party/natural_earth'),
         ('third_party/natural_earth/ne_110m_land.geojson', 'third_party/natural_earth'),
         ('third_party/win10toast/LICENSE', 'third_party/win10toast'),

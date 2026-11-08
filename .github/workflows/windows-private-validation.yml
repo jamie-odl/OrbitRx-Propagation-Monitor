@@ -2,8 +2,9 @@ name: Private Windows validation
 
 # Scoped to this review branch. Builds an onedir and an installer on the
 # GitHub-hosted windows-latest runner, checks them, and deletes dist.
-# The candidate zip from run 42473135935 is already in the agent store.
-# This workflow does not upload that zip again and does not publish a release.
+# A one-day transfer zip is uploaded so the agent store can keep the build
+# that contains chromium_attributions.qdoc. It is not a GitHub Release and
+# not the published 5.1.0 zip. dist is deleted on the runner afterwards.
 on:
   push:
     branches:
@@ -104,6 +105,22 @@ jobs:
             capture-leaflet/**
           retention-days: 14
           if-no-files-found: warn
+      - name: Pack a private candidate zip
+        if: success()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path candidate | Out-Null
+          tar -a -c -f candidate\OrbitRx-windows-onedir-private.zip -C dist OrbitRxMonitor OrbitRxMonitor-Setup.exe
+          "{0}  OrbitRx-windows-onedir-private.zip" -f (Get-FileHash candidate\OrbitRx-windows-onedir-private.zip -Algorithm SHA256).Hash.ToLower() | Set-Content candidate\zip-sha256.txt
+          Copy-Item validation-logs\HEAD.txt,validation-logs\exe-sha256.txt,validation-logs\installer-sha256.txt candidate\
+      - name: Upload the private candidate for agent-store transfer
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-private-candidate
+          path: candidate/**
+          retention-days: 1
+          if-no-files-found: error
       - name: Delete local distributables before the job ends
         if: always()
         shell: pwsh

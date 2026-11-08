@@ -18,6 +18,7 @@ REQUIRED = (
     "_internal/PRIVACY.md",
     "_internal/third_party/qt/LICENSES/LGPL-3.0-only.txt",
     "_internal/third_party/qt/LICENSE.Chromium",
+    "_internal/third_party/qt/chromium_attributions.qdoc",
     "_internal/third_party/natural_earth/TERMS_OF_USE.txt",
 )
 FORBIDDEN = (
