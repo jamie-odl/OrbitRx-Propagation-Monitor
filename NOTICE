@@ -81,12 +81,17 @@ Details and the files that were read are in docs/DEPENDENCY_LICENCES.md.
     libraries is offered under GPL-3.0 section 6(d), as incorporated into
     LGPL-3.0 section 4 for this Combined Work (conveyance by download, not
     the physical-product written-offer clause in section 6(b)); see
-    docs/QT_SOURCE_OFFER_DRAFT.md (DRAFT -- not yet live; a document in the
-    source repository, not included in this download). The Qt DLLs are
-    separate files under _internal/PySide6 and can be replaced there. See
-    _internal/REPLACING_QT_LIBRARIES.md, in the _internal folder beside
-    OrbitRxMonitor.exe. docs/DISTRIBUTION.md has more detail; it is also a
-    source-repository document and is not included in this download.
+    https://downloads.thevenom.dev/orbitrx/pyside-setup-everywhere-src-6.12.0.tar.xz
+    (sha256 099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751),
+    https://downloads.thevenom.dev/orbitrx/qt-everywhere-src-6.12.0.tar.xz
+    (sha256 98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165), and
+    https://downloads.thevenom.dev/orbitrx/qtwebengine-everywhere-src-6.140.0-rc.tar.xz
+    (sha256 61257967afd9803a1db6403e86ea25c4efff8fad479bda365a9d81bfd709f621).
+    The Qt DLLs are separate files under _internal/PySide6 and can be
+    replaced there. See _internal/REPLACING_QT_LIBRARIES.md, in the
+    _internal folder beside OrbitRxMonitor.exe. docs/DISTRIBUTION.md has
+    more detail; it is also a source-repository document and is not
+    included in this download.
 pystray is not imported and is not in the frozen exe. It is not an
   obligation of that binary. customtkinter is not a dependency of this commit.
 The MIT sentence in LICENSE covers the OrbitRx application source named
