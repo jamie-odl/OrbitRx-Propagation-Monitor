@@ -1731,13 +1731,24 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
             app.processEvents()
             time.sleep(0.1)
         measured = win.map_widget.measure_registration(51.5081, -0.1281)
+        if isinstance(measured, str):
+            try:
+                measured = json.loads(measured)
+            except json.JSONDecodeError:
+                measured = {"error": measured}
         (out_dir / "leaflet-geometry.txt").write_text(
             json.dumps(measured) + "\n", encoding="utf-8"
         )
         width = abs(float(measured.get("width", 0))) if isinstance(measured, dict) else 0
         dx = abs(float(measured.get("dx", 99))) if isinstance(measured, dict) else 99
         dy = abs(float(measured.get("dy", 99))) if isinstance(measured, dict) else 99
-        geometry_ok = width >= 50 and dx <= 2 and dy <= 2
+        geometry_ok = (
+            isinstance(measured, dict)
+            and "error" not in measured
+            and width >= 50
+            and dx <= 2
+            and dy <= 2
+        )
 
     # Leave QApplication alive so in-process tests can keep using it. The
     # process entry point deletes it before exit. See finish note on

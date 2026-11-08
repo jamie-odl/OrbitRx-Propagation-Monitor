@@ -465,7 +465,11 @@ if WEBENGINE_AVAILABLE:
                 box["v"] = value
                 loop.quit()
 
-            self.web.page().runJavaScript(f"registrationError({lat}, {lon})", callback)
+            script = (
+                "JSON.stringify((function(){ try { return registrationError(%s, %s); }"
+                " catch (e) { return {error: String(e)}; } })())" % (lat, lon)
+            )
+            self.web.page().runJavaScript(script, callback)
             QTimer.singleShot(int(timeout_s * 1000), loop.quit)
             loop.exec()
             return box.get("v")
