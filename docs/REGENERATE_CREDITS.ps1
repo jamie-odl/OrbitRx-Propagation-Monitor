@@ -165,6 +165,44 @@ if (-not (Test-Path $QtHostInstallDir)) {
     curl.exe -fL --retry 3 -o $UpdatesXmlPath $UpdatesUrl
     [xml]$updates = Get-Content $UpdatesXmlPath
 
+    # -- preflight: resolve every needed archive's URL (base/package/Version+name,
+    # with Version taken from that archive's own <PackageUpdate>, not a shared
+    # guess) and confirm both the .7z and its .sha1 sidecar return HTTP 200
+    # before any download starts. Run 42503203180 404'd on both because the
+    # Version prefix was missing from the URL -- see evidence/log-failed.txt.
+    Write-Host "-- preflight: checking every archive and .sha1 sidecar URL before downloading anything --"
+    $PreflightList = @()
+    foreach ($pkg in $NeededQtPackages) {
+        $packageNode = $updates.Updates.PackageUpdate | Where-Object { $_.Name -eq $pkg.Package }
+        if (-not $packageNode) {
+            throw "Updates.xml ($UpdatesUrl) has no <PackageUpdate> named $($pkg.Package) -- Qt's repository layout may have changed since this script was written. Inspect $UpdatesXmlPath by hand before retrying."
+        }
+        $version = $packageNode.Version
+        $allArchives = @($packageNode.DownloadableArchives -split ",\s*" | Where-Object { $_ })
+
+        foreach ($prefix in $pkg.ArchivePrefixes) {
+            $archiveName = $allArchives | Where-Object { $_ -like "$prefix-*.7z" } | Select-Object -First 1
+            if (-not $archiveName) {
+                throw "Package $($pkg.Package) in Updates.xml has no archive matching '$prefix-*.7z'. Known archives: $($allArchives -join ', ')"
+            }
+            $archiveUrl    = "$QtRepoBaseUrl/$($pkg.Package)/$version$archiveName"
+            $sha1Status    = (curl.exe -s -o NUL -L -w "%{http_code}" "$archiveUrl.sha1")
+            $archiveStatus = (curl.exe -s -o NUL -L --head -w "%{http_code}" $archiveUrl)
+            $PreflightList += [pscustomobject]@{
+                Archive       = $archiveName
+                Version       = $version
+                ArchiveStatus = $archiveStatus
+                Sha1Status    = $sha1Status
+                Url           = $archiveUrl
+            }
+        }
+    }
+    $PreflightList | Format-Table -AutoSize | Out-String | Write-Host
+    $PreflightFailures = $PreflightList | Where-Object { $_.ArchiveStatus -ne "200" -or $_.Sha1Status -ne "200" }
+    if ($PreflightFailures) {
+        throw "Preflight failed: $($PreflightFailures.Count) of $($PreflightList.Count) archive(s) did not return HTTP 200 for both the .7z and its .sha1 sidecar (see table above). Refusing to start any download."
+    }
+
     foreach ($pkg in $NeededQtPackages) {
         $packageNode = $updates.Updates.PackageUpdate | Where-Object { $_.Name -eq $pkg.Package }
         if (-not $packageNode) {
@@ -178,7 +216,8 @@ if (-not (Test-Path $QtHostInstallDir)) {
                 throw "Package $($pkg.Package) in Updates.xml has no archive matching '$prefix-*.7z'. Known archives: $($allArchives -join ', ')"
             }
 
-            $archiveUrl  = "$QtRepoBaseUrl/$($pkg.Package)/$archiveName"
+            $version     = $packageNode.Version
+            $archiveUrl  = "$QtRepoBaseUrl/$($pkg.Package)/$version$archiveName"
             $archivePath = Join-Path $QtHostDir $archiveName
             $sha1Path    = "$archivePath.sha1"
 
