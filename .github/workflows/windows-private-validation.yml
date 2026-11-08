@@ -1,8 +1,9 @@
 name: Private Windows validation
 
 # Scoped to this review branch. Builds an onedir and an installer on the
-# GitHub-hosted windows-latest runner, then deletes those binaries.
-# It does not upload them, open a release, or publish a source offer.
+# GitHub-hosted windows-latest runner. The zip is a one-day transfer artifact
+# for the agent store, not a GitHub Release and not the published 5.1.0 zip.
+# The runner deletes dist after the upload. No source offer is published.
 on:
   push:
     branches:
@@ -86,6 +87,15 @@ jobs:
             if (-not (Test-Path (Join-Path $env:ORBITRX_CAPTURE_DIR $n))) { throw "leaflet capture missing $n" }
           }
           if ($proc.ExitCode -ne 0) { throw "leaflet smoke exit $($proc.ExitCode)" }
+      - name: Pack a private candidate zip
+        if: success()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path candidate | Out-Null
+          tar -a -c -f candidate\OrbitRx-windows-onedir-private.zip -C dist OrbitRxMonitor OrbitRxMonitor-Setup.exe
+          Copy-Item validation-logs\installer-sha256.txt,validation-logs\exe-sha256.txt,validation-logs\HEAD.txt candidate\
+          "{0}  OrbitRx-windows-onedir-private.zip" -f (Get-FileHash candidate\OrbitRx-windows-onedir-private.zip -Algorithm SHA256).Hash.ToLower() | Set-Content candidate\zip-sha256.txt
+          Copy-Item candidate\zip-sha256.txt validation-logs\zip-sha256.txt
       - name: Upload logs and screenshots only
         if: always()
         uses: actions/upload-artifact@v4
@@ -97,6 +107,14 @@ jobs:
             capture-leaflet/**
           retention-days: 14
           if-no-files-found: warn
+      - name: Upload the private candidate for agent-store transfer
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-private-candidate
+          path: candidate/**
+          retention-days: 1
+          if-no-files-found: error
       - name: Delete local distributables before the job ends
         if: always()
         shell: pwsh
