@@ -106,7 +106,8 @@ def test_corresponding_source_archives_match_their_manifest():
     )
     assert manifest["qtwebengine"]["chromium_version_base"] == "140.0.7339.264"
     assert manifest["qtwebengine"]["chromium_security_patches_through"] == "151.0.7922.108"
-    assert manifest["qtwebengine"]["chromium_bytes_included"] is False
+    assert manifest["qtwebengine"]["this_tarball_contains_chromium_tree"] is False
+    assert manifest["qtwebengine"]["chromium_tar_retained_separately"] is True
     chromium = manifest["retained_source"]["qtwebengine_chromium"]
     assert chromium["sha256"] == "d258e5a92def26ba37ebea5463c5ea2a0674fded471bf2b6f5ecaf8771fbe865"
     assert chromium["gitlinks"] == 0
@@ -168,6 +169,7 @@ def test_private_windows_workflow_does_not_upload_distributables():
     assert recorded["role"] == "historical"
     assert "check_pristine_payload.py" in text
     assert "dist-smoke" in text
+    assert "ORBITRX_RECEIPT" in text
     assert "dist/" not in text.split("name: windows-private-validation-logs")[1].split("retention-days:")[0]
     assert "Remove-Item -Recurse -Force dist" in text
     assert 'throw "static smoke exit' in text

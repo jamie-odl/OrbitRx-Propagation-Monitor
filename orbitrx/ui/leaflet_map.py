@@ -114,7 +114,15 @@ new QWebChannel(qt.webChannelTransport, ch => {
   spotBridge = ch.objects.spotBridge;
   if (tilesOk) spotBridge.tilesLoaded(); else if (tilesFailed) spotBridge.tileError();
 });
-const map = L.map('map', {worldCopyJump: true, zoomControl: true, minZoom: 1, maxZoom: 6}).setView([20, 0], 2);
+// The basemap is plate carree (latitude is linear). Leaflet's default
+// EPSG:3857 would pin a London marker on the image pixel for about 30N.
+const map = L.map('map', {
+  crs: L.CRS.EPSG4326,
+  worldCopyJump: false,
+  zoomControl: true,
+  minZoom: 0,
+  maxZoom: 8
+}).setView([20, 0], 2);
 // V11 must-fix 1: offline-first dark equirectangular basemap - never Carto watermarks.
 const basemap = L.imageOverlay('__BASEMAP_URL__', [[-90, -180], [90, 180]], {
   opacity: 1, interactive: false, zIndex: 0
@@ -134,6 +142,15 @@ setTimeout(() => {
   }
 }, 400);
 let userM=null, sunM=null, dxLayer=L.layerGroup().addTo(map), termLine=null, nightPane=[];
+function registrationError(lat, lon) {
+  const b = basemap.getBounds();
+  const nw = map.latLngToContainerPoint(b.getNorthWest());
+  const se = map.latLngToContainerPoint(b.getSouthEast());
+  const ix = nw.x + ((lon + 180) / 360) * (se.x - nw.x);
+  const iy = nw.y + ((90 - lat) / 180) * (se.y - nw.y);
+  const m = map.latLngToContainerPoint([lat, lon]);
+  return {dx: m.x - ix, dy: m.y - iy, width: se.x - nw.x, height: se.y - nw.y};
+}
 function setPayload(p) {
   dxLayer.clearLayers();
   nightPane.forEach(l => map.removeLayer(l)); nightPane=[];
@@ -141,7 +158,7 @@ function setPayload(p) {
   if (p.layers.night) {
     for (let lon=-180; lon<180; lon+=2) {
       if (Math.abs(((lon - p.sun_lon + 180) % 360) - 180) > 90) {
-        const r = L.rectangle([[ -85, lon], [85, lon+2]], {color:'#080E1C', fillColor:'#080E1C', fillOpacity:0.55, weight:0});
+        const r = L.rectangle([[ -90, lon], [90, lon+2]], {color:'#080E1C', fillColor:'#080E1C', fillOpacity:0.55, weight:0});
         r.addTo(map); nightPane.push(r);
       }
     }
@@ -437,6 +454,22 @@ if WEBENGINE_AVAILABLE:
         def set_base_map(self, _base_rgba) -> None:
             pass
 
+        def measure_registration(self, lat: float, lon: float, timeout_s: float = 5.0):
+            """Pixel gap between the marker and the plate-carree image pixel."""
+            from PySide6.QtCore import QEventLoop, QTimer
+
+            box: dict[str, object] = {}
+            loop = QEventLoop()
+
+            def callback(value) -> None:
+                box["v"] = value
+                loop.quit()
+
+            self.web.page().runJavaScript(f"registrationError({lat}, {lon})", callback)
+            QTimer.singleShot(int(timeout_s * 1000), loop.quit)
+            loop.exec()
+            return box.get("v")
+
         def set_live_spots(self, payload: dict[str, Any]) -> None:
             """payload: {"arcs": bool, "heatmap": bool, "spots": [...], "heat": [...]}"""
             if self._ready:
@@ -500,6 +533,7 @@ if WEBENGINE_AVAILABLE:
             if not self._ready:
                 return
             self.web.page().runJavaScript(js)
+            self._last_registration = (user[0], user[1]) if user else None
             offset = state.slider_offset_hours
             now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=offset)
             extra = f"  ({format_hour_offset(offset)})" if offset else ""

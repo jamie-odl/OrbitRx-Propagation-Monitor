@@ -95,7 +95,7 @@ jobs:
           $proc = Start-Process -FilePath $exe -WorkingDirectory $dir -PassThru -RedirectStandardOutput validation-logs\leaflet-stdout.txt -RedirectStandardError validation-logs\leaflet-stderr.txt
           if (-not $proc.WaitForExit(120000)) { Stop-Process -Id $proc.Id -Force; throw "leaflet smoke hung" }
           "$($proc.ExitCode)" | Set-Content validation-logs\leaflet-exit.txt
-          foreach ($n in @("main-window.png","shutdown-stage.txt")) {
+          foreach ($n in @("main-window.png","shutdown-stage.txt","leaflet-geometry.txt")) {
             if (-not (Test-Path (Join-Path $env:ORBITRX_CAPTURE_DIR $n))) { throw "leaflet capture missing $n" }
           }
           if ($proc.ExitCode -ne 0) { throw "leaflet smoke exit $($proc.ExitCode)" }
@@ -124,8 +124,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "refusing to pack runtime state" }
           New-Item -ItemType Directory -Force -Path candidate | Out-Null
           tar -a -c -f candidate\OrbitRx-windows-onedir-private.zip -C dist OrbitRxMonitor OrbitRxMonitor-Setup.exe
-          "{0}  OrbitRx-windows-onedir-private.zip" -f (Get-FileHash candidate\OrbitRx-windows-onedir-private.zip -Algorithm SHA256).Hash.ToLower() | Set-Content candidate\zip-sha256.txt
+          $zipHash = (Get-FileHash candidate\OrbitRx-windows-onedir-private.zip -Algorithm SHA256).Hash.ToLower()
+          $exeHash = (Get-Content validation-logs\exe-sha256.txt).Split(" ")[0]
+          $setupHash = (Get-Content validation-logs\installer-sha256.txt).Split(" ")[0]
+          $head = (Get-Content validation-logs\HEAD.txt -Raw).Trim()
+          "{0}  OrbitRx-windows-onedir-private.zip" -f $zipHash | Set-Content candidate\zip-sha256.txt
           Copy-Item validation-logs\HEAD.txt,validation-logs\exe-sha256.txt,validation-logs\installer-sha256.txt candidate\
+          Write-Host "ORBITRX_RECEIPT commit=$head run=$env:GITHUB_RUN_ID zip_sha256=$zipHash exe_sha256=$exeHash setup_sha256=$setupHash artifact=windows-private-candidate"
       - name: Upload the private candidate for agent-store transfer
         if: success()
         uses: actions/upload-artifact@v4
