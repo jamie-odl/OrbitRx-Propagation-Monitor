@@ -24,6 +24,7 @@ from orbitrx.ui.formatting import decimal_hours_to_hhmm, fmt, format_iso_utc, fo
 from orbitrx.utils import estimate_location, local_time_at_lon, sun_times
 from orbitrx.weather import fetch_space_weather_data
 from orbitrx.alerts import show_toast
+from orbitrx.offline import FIXTURE_WEATHER, offline_fixture
 from orbitrx.spots.service import SpotsService
 
 try:
@@ -84,6 +85,8 @@ class OrbitRxController:
         self._on_status(f"{title}: {message}")
 
     def start(self) -> None:
+        if offline_fixture():
+            return
         self._dx.start()
         self.spots.start()
 
@@ -160,6 +163,9 @@ class OrbitRxController:
         threading.Thread(target=worker, daemon=True).start()
 
     def fetch_weather(self) -> None:
+        if offline_fixture():
+            self._apply_weather(dict(FIXTURE_WEATHER), offline=True)
+            return
         if self.state.weather_fetch_in_progress:
             return
         self.state.weather_fetch_in_progress = True
@@ -206,7 +212,7 @@ class OrbitRxController:
         self.state.muf, self.state.luf = muf, luf
         self.state.band_grid = band_grid(self.state.flux, self.state.kp_index)
         self.state.bands_summary = bands_summary(self.state.flux, self.state.kp_index)
-        hamqsl = fetch_solar_xml()
+        hamqsl = None if offline_fixture() else fetch_solar_xml()
         if hamqsl and hamqsl.get("bands"):
             self.state.hamqsl_band_hint = " | ".join(hamqsl["bands"][:4])
         else:

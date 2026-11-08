@@ -64,8 +64,11 @@ Details and the files that were read are in docs/DEPENDENCY_LICENCES.md.
     clearance, not a published source offer, and not a commercial grant.
     The wheel's LicenseRef-Qt-Commercial pointer is not copied. The
     gn-generated file is third_party/qt/chromium_attributions.qdoc, produced by
-    Qt's generate_chromium_attributions target. LICENSE.Chromium is only the
-    BSD text and is not that credits file. See docs/DISTRIBUTION.md.
+    Qt's generate_chromium_attributions target on a local configure. That
+    configure is not Qt's record of the PySide6-WebEngine 6.12.0.140 wheel.
+    LICENSE.Chromium is only the BSD text and is not that credits file.
+    The Qt DLLs are separate files under _internal/PySide6 and can be replaced
+    there. See docs/REPLACING_QT_LIBRARIES.md and docs/DISTRIBUTION.md.
 pystray is not imported and is not in the frozen exe. It is not an
   obligation of that binary. customtkinter is not a dependency of this commit.
 The MIT sentence in LICENSE covers the OrbitRx application source named

@@ -37,6 +37,11 @@ jobs:
         run: python -m pytest -q -rA --junitxml=validation-logs\pytest-windows.xml
       - name: Build onedir
         run: pyinstaller OrbitRxMonitor.spec --noconfirm
+      - name: Reject runtime state before the installer is built
+        shell: pwsh
+        run: |
+          python tools/check_pristine_payload.py dist\OrbitRxMonitor
+          if ($LASTEXITCODE -ne 0) { throw "pristine check failed before installer" }
       - name: Build installer locally and do not upload it
         shell: pwsh
         run: |
@@ -45,6 +50,12 @@ jobs:
           if (!(Test-Path $iscc)) { choco install innosetup -y --no-progress }
           & $iscc "/DAppVer=$ver" installer\OrbitRxMonitor.iss
           if (!(Test-Path dist\OrbitRxMonitor-Setup.exe)) { throw "installer missing" }
+      - name: Stage a copy for smoke tests
+        shell: pwsh
+        run: |
+          if (Test-Path dist-smoke) { Remove-Item -Recurse -Force dist-smoke }
+          New-Item -ItemType Directory -Force -Path dist-smoke | Out-Null
+          Copy-Item -Recurse dist\OrbitRxMonitor dist-smoke\OrbitRxMonitor
       - name: Layout, notices, privacy, and PYZ scan
         shell: pwsh
         run: |
@@ -61,9 +72,10 @@ jobs:
       - name: Smoke the static map
         shell: pwsh
         run: |
+          $env:ORBITRX_OFFLINE_FIXTURE = "1"
           $env:ORBITRX_CAPTURE_DIR = (Resolve-Path .).Path + "\capture-static"
           New-Item -ItemType Directory -Force -Path $env:ORBITRX_CAPTURE_DIR | Out-Null
-          $exe = (Resolve-Path dist\OrbitRxMonitor\OrbitRxMonitor.exe).Path
+          $exe = (Resolve-Path dist-smoke\OrbitRxMonitor\OrbitRxMonitor.exe).Path
           $proc = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru -RedirectStandardOutput validation-logs\static-stdout.txt -RedirectStandardError validation-logs\static-stderr.txt
           if (-not $proc.WaitForExit(120000)) { Stop-Process -Id $proc.Id -Force; throw "static smoke hung" }
           "$($proc.ExitCode)" | Set-Content validation-logs\static-exit.txt
@@ -74,8 +86,9 @@ jobs:
       - name: Smoke the interactive map
         shell: pwsh
         run: |
-          $dir = (Resolve-Path dist\OrbitRxMonitor).Path
+          $dir = (Resolve-Path dist-smoke\OrbitRxMonitor).Path
           '{"map_backend":"leaflet","ip_geolocation_enabled":false,"home_lat":51.5081,"home_lon":-0.1281,"qrz_api_key":""}' | Set-Content (Join-Path $dir config.json) -Encoding ascii
+          $env:ORBITRX_OFFLINE_FIXTURE = "1"
           $env:ORBITRX_CAPTURE_DIR = (Resolve-Path .).Path + "\capture-leaflet"
           New-Item -ItemType Directory -Force -Path $env:ORBITRX_CAPTURE_DIR | Out-Null
           $exe = Join-Path $dir OrbitRxMonitor.exe
@@ -107,6 +120,8 @@ jobs:
         if: success()
         shell: pwsh
         run: |
+          python tools/check_pristine_payload.py dist\OrbitRxMonitor
+          if ($LASTEXITCODE -ne 0) { throw "refusing to pack runtime state" }
           New-Item -ItemType Directory -Force -Path candidate | Out-Null
           tar -a -c -f candidate\OrbitRx-windows-onedir-private.zip -C dist OrbitRxMonitor OrbitRxMonitor-Setup.exe
           "{0}  OrbitRx-windows-onedir-private.zip" -f (Get-FileHash candidate\OrbitRx-windows-onedir-private.zip -Algorithm SHA256).Hash.ToLower() | Set-Content candidate\zip-sha256.txt
@@ -123,5 +138,5 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force dist,dist-smoke -ErrorAction SilentlyContinue
           if (Test-Path dist) { throw "dist was not removed" }

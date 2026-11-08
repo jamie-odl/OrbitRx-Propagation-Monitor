@@ -249,6 +249,7 @@ if WEBENGINE_AVAILABLE:
             super().__init__(parent)
             self.renderer = renderer
             self._layers = MapLayers()
+            self._pending_payload_js: str | None = None
             layout = QVBoxLayout(self)
             layout.setContentsMargins(0, 0, 0, 0)
             self.hud = QLabel("")
@@ -372,6 +373,8 @@ if WEBENGINE_AVAILABLE:
 
         def _on_ready(self, ok: bool) -> None:
             self._ready = ok
+            if ok and self._pending_payload_js:
+                self.web.page().runJavaScript(self._pending_payload_js)
             if not ok:
                 log.warning("Leaflet map page failed to load")
                 self._show_unavailable_overlay()
@@ -446,8 +449,6 @@ if WEBENGINE_AVAILABLE:
             coordinates: dict[str, tuple[float, float]],
             vectors_only: bool = False,
         ) -> None:
-            if not self._ready:
-                return
             scene = self.renderer.build_scene(state, self._layers, spots, coordinates)
             terminator = []
             import math
@@ -495,6 +496,9 @@ if WEBENGINE_AVAILABLE:
                 "spots": spot_payload,
             }
             js = f"setPayload({json.dumps(payload)});"
+            self._pending_payload_js = js
+            if not self._ready:
+                return
             self.web.page().runJavaScript(js)
             offset = state.slider_offset_hours
             now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=offset)

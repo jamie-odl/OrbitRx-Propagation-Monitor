@@ -30,7 +30,8 @@
     "github_repo_size_kb": 6337494,
     "credits_command": "licenses.py via cmake target generate_chromium_attributions",
     "credits_tool": "src/3rdparty/chromium/tools/licenses/licenses.py credits, invoked by cmake/QtGnCredits.cmake after run_core_GnDone",
-    "credits_status": "generated as third_party/qt/chromium_attributions.qdoc sha256 b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec. This webengine archive still omits the chromium submodule; the complete submodule tar is retained_source.qtwebengine_chromium."
+    "credits_status": "third_party/qt/chromium_attributions.qdoc sha256 b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec was produced by a local Windows configure, not by Qt's wheel build. This webengine archive omits the chromium bytes; those are retained_source.qtwebengine_chromium. chrome/VERSION in that tar is 140.0.7339.225, which matches the wheel DLL. CHROMIUM_VERSION in this webengine archive says based-on 140.0.7339.264 and does not match the DLL.",
+    "provenance": "d4735ce was the 6.12 tip from 2026-08-25 through the PySide v6.12.0 tag on 2026-10-08. No v6.12.0 tag exists on qtwebengine. The wheel does not embed a commit SHA. This is not a vendor GN-args record."
   },
   "retained_source": {
     "note": "Complete corresponding source for the PySide6 6.12.0 / Qt 6.12.0 libraries in the onedir. The two large archives are not in git. Their bytes are the 40000000-byte parts named in the agent store, and each part list reassembles to the sha256 below. No gitlink was present in the chromium commit, so no further submodule bytes are missing from that tar.",
