@@ -10,11 +10,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "packaging" / "distribution_manifest.json"
+
+_SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 
 
 def load_manifest() -> dict:
@@ -34,6 +37,22 @@ def missing_texts(manifest: dict) -> list[str]:
         if digest != expected:
             missing.append(f"hash mismatch {rel}")
     return missing
+
+
+def hosted_corresponding_source_ok(manifest: dict) -> list[str]:
+    problems: list[str] = []
+    entries = manifest.get("corresponding_source", {}).get("entries", [])
+    for entry in entries:
+        name = entry.get("name", "<unnamed>")
+        if not entry.get("url"):
+            problems.append(f"hosted entry {name} is missing url")
+        sha256 = entry.get("sha256")
+        if not sha256 or not _SHA256_RE.match(sha256):
+            problems.append(f"hosted entry {name} sha256 is not 64 hex characters")
+        bytes_ = entry.get("bytes")
+        if not isinstance(bytes_, int) or bytes_ <= 0:
+            problems.append(f"hosted entry {name} is missing bytes")
+    return problems
 
 
 def packaged_map_ok() -> list[str]:
@@ -61,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--release", action="store_true")
     args = parser.parse_args(argv)
     manifest = load_manifest()
-    problems = missing_texts(manifest) + packaged_map_ok()
+    problems = missing_texts(manifest) + packaged_map_ok() + hosted_corresponding_source_ok(manifest)
     blockers = list(manifest["release_blockers"])
     if problems:
         print("distribution manifest files are incomplete:")

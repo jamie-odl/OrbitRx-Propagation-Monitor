@@ -17,7 +17,10 @@
       "name": "qtwebengine-6.12-d4735ce.tar.xz",
       "bytes": 3019064,
       "sha256": "d5dc0bbbd0d753c8944a537189dc2739f297446016d6af1bc44d5d7fbb886e28",
-      "origin": "git archive of https://github.com/qt/qtwebengine branch 6.12 at d4735ce2f841ffbe7cbac9ee7fd954f00514825f, without the chromium submodule"
+      "origin": "git archive of https://github.com/qt/qtwebengine branch 6.12 at d4735ce2f841ffbe7cbac9ee7fd954f00514825f, without the chromium submodule",
+      "status": "superseded",
+      "superseded_by": "qtwebengine-everywhere-src-6.140.0-rc.tar.xz (hosted; see hosted.current_set below)",
+      "superseded_reason": "d4735ce was the 6.12 branch tip, not the tagged v6.140.0-rc (d505fc23640d2bd6345e6483eb73daf4e19f5829) that the shipped binary's DLL identity and vendor SBOM name. Retained locally for history; must not be presented as current source."
     }
   ],
   "qtwebengine": {
@@ -32,7 +35,9 @@
     "credits_command": "licenses.py via cmake target generate_chromium_attributions",
     "credits_tool": "src/3rdparty/chromium/tools/licenses/licenses.py credits, invoked by cmake/QtGnCredits.cmake after run_core_GnDone",
     "credits_status": "third_party/qt/chromium_attributions.qdoc sha256 b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec was produced by a local Windows configure, not by Qt's wheel build. This webengine archive omits the chromium bytes; those are retained_source.qtwebengine_chromium. chrome/VERSION in that tar is 140.0.7339.225, which matches the wheel DLL. CHROMIUM_VERSION in this webengine archive says based-on 140.0.7339.264 and does not match the DLL.",
-    "provenance": "d4735ce was the 6.12 tip from 2026-08-25 through the PySide v6.12.0 tag on 2026-10-08. No v6.12.0 tag exists on qtwebengine. The wheel does not embed a commit SHA. This is not a vendor GN-args record."
+    "provenance": "d4735ce was the 6.12 tip from 2026-08-25 through the PySide v6.12.0 tag on 2026-10-08. No v6.12.0 tag exists on qtwebengine. The wheel does not embed a commit SHA. This is not a vendor GN-args record.",
+    "superseded": true,
+    "superseded_reason": "Wrong commit for the shipped build. The shipped Qt6WebEngineCore.dll is proven (identical PDB GUID/age/timestamp) to be the qtwebengine d505fc23640d2bd6345e6483eb73daf4e19f5829 (tag v6.140.0-rc) / chromium 39352427a3245a19fb395547b3aa38be9d091ec4 build, hosted as qtwebengine-everywhere-src-6.140.0-rc.tar.xz -- see hosted.current_set below."
   },
   "retained_source": {
     "note": "Complete corresponding source for the PySide6 6.12.0 / Qt 6.12.0 libraries in the onedir. The two large archives are not in git. Their bytes are the 40000000-byte parts named in the agent store, and each part list reassembles to the sha256 below. No gitlink was present in the chromium commit, so no further submodule bytes are missing from that tar.",
@@ -54,7 +59,46 @@
       "checkout": "git fetch --depth 1 of that commit, not a blob filter",
       "gitlinks": 0,
       "working_tree_bytes_including_git": "5.2G",
-      "file_count_in_tar": 295988
+      "file_count_in_tar": 295988,
+      "superseded": true,
+      "superseded_reason": "Wrong chromium submodule commit for the actual qtwebengine commit pin -- the correct pin is 39352427a3245a19fb395547b3aa38be9d091ec4. Superseded by qtwebengine-everywhere-src-6.140.0-rc.tar.xz, hosted; see hosted.current_set below."
     }
+  },
+  "hosted": {
+    "base_url": "https://downloads.thevenom.dev/orbitrx/",
+    "verified_by": "public HTTPS GET 2026-11-08",
+    "current_set": [
+      {
+        "name": "pyside-setup-everywhere-src-6.12.0.tar.xz",
+        "url": "https://downloads.thevenom.dev/orbitrx/pyside-setup-everywhere-src-6.12.0.tar.xz",
+        "bytes": 18211772,
+        "sha256": "099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751"
+      },
+      {
+        "name": "qt-everywhere-src-6.12.0.tar.xz",
+        "url": "https://downloads.thevenom.dev/orbitrx/qt-everywhere-src-6.12.0.tar.xz",
+        "bytes": 443394020,
+        "sha256": "98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165"
+      },
+      {
+        "name": "qtwebengine-everywhere-src-6.140.0-rc.tar.xz",
+        "url": "https://downloads.thevenom.dev/orbitrx/qtwebengine-everywhere-src-6.140.0-rc.tar.xz",
+        "bytes": 580351144,
+        "sha256": "61257967afd9803a1db6403e86ea25c4efff8fad479bda365a9d81bfd709f621",
+        "commit": "d505fc23640d2bd6345e6483eb73daf4e19f5829",
+        "chromium_submodule": "39352427a3245a19fb395547b3aa38be9d091ec4"
+      },
+      {
+        "name": "THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt",
+        "url": "https://downloads.thevenom.dev/orbitrx/THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt",
+        "bytes": 1026119,
+        "sha256": "acde5959267a8afbd29c04f776f228ef6d208fa8a632bf356204174de5c460ca"
+      }
+    ],
+    "superseded_not_hosted": [
+      "qtwebengine-6.12-d4735ce.tar.xz (retained locally above, see files)",
+      "qtwebengine-chromium-71a2fa55.tar (retained_source.qtwebengine_chromium above)"
+    ],
+    "note": "Hosting and byte identity are verified by the public GET above. Not a statement of legal clearance; see packaging/distribution_manifest.json release_blockers."
   }
 }

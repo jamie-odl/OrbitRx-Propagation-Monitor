@@ -61,7 +61,49 @@
     },
     "note": "Supersedes third_party/qt/chromium_attributions.qdoc (stale sha256 b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec) and its regeneration path, docs/REGENERATE_CREDITS.ps1; that script and the regenerate-credits workflow are superseded and must not be run. Vendor-SBOM inference is not a GN-identity proof that the generated graph matches this build's configure. Not a published source offer, not legal clearance."
   },
+  "corresponding_source": {
+    "hosted": true,
+    "base_url": "https://downloads.thevenom.dev/orbitrx/",
+    "verified_by": "public HTTPS GET 2026-11-08",
+    "entries": [
+      {
+        "name": "pyside-setup-everywhere-src-6.12.0.tar.xz",
+        "url": "https://downloads.thevenom.dev/orbitrx/pyside-setup-everywhere-src-6.12.0.tar.xz",
+        "bytes": 18211772,
+        "sha256": "099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751",
+        "verified_by": "public HTTPS GET 2026-11-08"
+      },
+      {
+        "name": "qt-everywhere-src-6.12.0.tar.xz",
+        "url": "https://downloads.thevenom.dev/orbitrx/qt-everywhere-src-6.12.0.tar.xz",
+        "bytes": 443394020,
+        "sha256": "98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165",
+        "verified_by": "public HTTPS GET 2026-11-08"
+      },
+      {
+        "name": "qtwebengine-everywhere-src-6.140.0-rc.tar.xz",
+        "url": "https://downloads.thevenom.dev/orbitrx/qtwebengine-everywhere-src-6.140.0-rc.tar.xz",
+        "bytes": 580351144,
+        "sha256": "61257967afd9803a1db6403e86ea25c4efff8fad479bda365a9d81bfd709f621",
+        "verified_by": "public HTTPS GET 2026-11-08",
+        "qtwebengine_commit": "d505fc23640d2bd6345e6483eb73daf4e19f5829",
+        "chromium_submodule": "39352427a3245a19fb395547b3aa38be9d091ec4"
+      },
+      {
+        "name": "THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt",
+        "url": "https://downloads.thevenom.dev/orbitrx/THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt",
+        "bytes": 1026119,
+        "sha256": "acde5959267a8afbd29c04f776f228ef6d208fa8a632bf356204174de5c460ca",
+        "verified_by": "public HTTPS GET 2026-11-08"
+      }
+    ],
+    "superseded": [
+      "qtwebengine-6.12-d4735ce.tar.xz",
+      "qtwebengine-chromium-71a2fa55.tar"
+    ],
+    "note": "Hosting and byte identity are verified by the public GET above. That is not a statement of legal clearance; see release_blockers."
+  },
   "release_blockers": [
-    "corresponding-source-archive-not-publicly-hosted"
+    "final-public-candidate-gate-pending"
   ]
 }

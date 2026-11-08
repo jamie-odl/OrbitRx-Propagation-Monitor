@@ -33,8 +33,30 @@ def test_dev_and_gate_use_the_natural_earth_map_only():
     assert gate_main(["--release"]) == 1
     manifest = json.loads((ROOT / "packaging" / "distribution_manifest.json").read_text(encoding="utf-8"))
     assert manifest["packaged_basemap_sha256"] == MAP_SHA256
-    assert "corresponding-source-archive-not-publicly-hosted" in manifest["release_blockers"]
+    assert "final-public-candidate-gate-pending" in manifest["release_blockers"]
+    assert "corresponding-source-archive-not-publicly-hosted" not in manifest["release_blockers"]
     assert "windows-onedir-build-not-executed" not in manifest["release_blockers"]
+    hosted = manifest["corresponding_source"]["entries"]
+    hosted_names = {item["name"] for item in hosted}
+    assert hosted_names == {
+        "pyside-setup-everywhere-src-6.12.0.tar.xz",
+        "qt-everywhere-src-6.12.0.tar.xz",
+        "qtwebengine-everywhere-src-6.140.0-rc.tar.xz",
+        "THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt",
+    }
+    hosted_sha256 = {item["name"]: item["sha256"] for item in hosted}
+    assert hosted_sha256["pyside-setup-everywhere-src-6.12.0.tar.xz"] == (
+        "099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751"
+    )
+    assert hosted_sha256["qt-everywhere-src-6.12.0.tar.xz"] == (
+        "98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165"
+    )
+    assert hosted_sha256["qtwebengine-everywhere-src-6.140.0-rc.tar.xz"] == (
+        "61257967afd9803a1db6403e86ea25c4efff8fad479bda365a9d81bfd709f621"
+    )
+    assert hosted_sha256["THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt"] == (
+        "acde5959267a8afbd29c04f776f228ef6d208fa8a632bf356204174de5c460ca"
+    )
     evidence = manifest["windows_onedir_evidence"]
     assert evidence["run"] == "42362357356"
     assert evidence["static_process_exit"] == 0
@@ -91,7 +113,7 @@ def test_docs_and_ci_match_the_present_map_and_stay_unpublished():
     assert "omnirig.py" in notice and "win32com.client" in notice
     assert "alerts.py" in notice
     assert "140.0.7339.264" in draft and "151.0.7922.108" in draft
-    assert draft.startswith("# DRAFT")
+    assert draft.startswith("# Verified corresponding source offer")
     assert not (ROOT / "third_party" / "qt" / "LICENSES" / "LicenseRef-Qt-Commercial.txt").exists()
     assert "('basemap/ne_110m_dark.png', '.')" in spec
     assert "next to the executable" in readme

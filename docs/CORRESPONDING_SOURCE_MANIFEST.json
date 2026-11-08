@@ -69,8 +69,40 @@
       "disposition": "delete or relabel as superseded; do not publish"
     }
   ],
+  "hosted": {
+    "base_url": "https://downloads.thevenom.dev/orbitrx/",
+    "verified_by": "public HTTPS GET 2026-11-08",
+    "current_set": [
+      {
+        "name": "pyside-setup-everywhere-src-6.12.0.tar.xz",
+        "url": "https://downloads.thevenom.dev/orbitrx/pyside-setup-everywhere-src-6.12.0.tar.xz",
+        "bytes": 18211772,
+        "sha256": "099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751"
+      },
+      {
+        "name": "qt-everywhere-src-6.12.0.tar.xz",
+        "url": "https://downloads.thevenom.dev/orbitrx/qt-everywhere-src-6.12.0.tar.xz",
+        "bytes": 443394020,
+        "sha256": "98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165"
+      },
+      {
+        "name": "qtwebengine-everywhere-src-6.140.0-rc.tar.xz",
+        "url": "https://downloads.thevenom.dev/orbitrx/qtwebengine-everywhere-src-6.140.0-rc.tar.xz",
+        "bytes": 580351144,
+        "sha256": "61257967afd9803a1db6403e86ea25c4efff8fad479bda365a9d81bfd709f621"
+      },
+      {
+        "name": "THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt",
+        "url": "https://downloads.thevenom.dev/orbitrx/THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt",
+        "bytes": 1026119,
+        "sha256": "acde5959267a8afbd29c04f776f228ef6d208fa8a632bf356204174de5c460ca"
+      }
+    ],
+    "superseded_not_hosted": ["qtwebengine-6.12-d4735ce.tar.xz", "qtwebengine-chromium-71a2fa55.tar"],
+    "note": "Hosting and byte identity are verified by the public GET above. Not a statement of legal clearance; see packaging/distribution_manifest.json release_blockers."
+  },
   "not_attempted_this_pass": {
     "credits_regeneration": "Not executed in this pass -- this sandbox has no Windows/CMake/MSVC/licenses.py toolchain. docs/REGENERATE_CREDITS.sh / .ps1 are deterministic, bounded scripts for a remote runner to execute; see docs/REMOTE_APPLY.md for the fill-in-placeholders step once they are run.",
-    "hosting": "Not attempted -- coordinator step, out of scope for this sandbox (see STAGE1_GATE.md)."
+    "hosting": "Verified by public HTTPS GET on 2026-11-08 for the three archives and the notices file; see the hosted key above and packaging/distribution_manifest.json."
   }
 }
