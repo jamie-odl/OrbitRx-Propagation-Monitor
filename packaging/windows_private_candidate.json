@@ -1,0 +1,16 @@
+{
+  "note": "Private onedir candidate from the hosted Windows runner. Not a GitHub Release and not the published 5.1.0 zip. The Actions zip could not be deleted (HTTP 403) and expires after the one-day retention set on that upload.",
+  "run": "42473135935",
+  "url": "https://github.com/jamie-odl/OrbitRx-Propagation-Monitor/actions/runs/42473135935",
+  "commit": "8d346e2979a8d2dc7276f52d34f0e821b304fe2e",
+  "pytest": "271 passed, 0 failed, 0 skipped",
+  "static_process_exit": 0,
+  "interactive_process_exit": 0,
+  "exe_sha256": "7be25eb03457e67914ec26f0161fa1c0b1bcf38965a4580d3d2018edbd69a7d1",
+  "installer_sha256": "2e0795347f2e9bf14a35324dff3c968d819339534d4e8ecff789610655e0035f",
+  "zip_name": "OrbitRx-windows-onedir-private.zip",
+  "zip_bytes": 434579505,
+  "zip_sha256": "8e2edf6084cfcf015b01021ed9261b7a238b083b80784973f3ff33746660ad63",
+  "store_parts": "40 MiB parts under the agent store windows/ directory, reassembled to zip_sha256",
+  "unsigned": true
+}

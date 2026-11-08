@@ -25,37 +25,54 @@ jobs:
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path validation-logs | Out-Null
           Get-PSDrive -PSProvider FileSystem | Format-Table -AutoSize | Out-String | Set-Content validation-logs\disk.txt
-          $free = (Get-PSDrive C).Free
-          "free_bytes=$free" | Set-Content validation-logs\result.txt
-          if ($free -lt 30GB) {
-            "stop: C: has $free bytes free, under 30 GiB. Not checking out submodule 71a2fa55 or running gn gen." | Add-Content validation-logs\result.txt
+          $free = (Get-PSDrive D).Free
+          "D_free_bytes=$free" | Set-Content validation-logs\result.txt
+          if ($free -lt 40GB) {
+            "stop: D: has $free bytes free, under 40 GiB. Not checking out submodule 71a2fa55 or running gn gen." | Add-Content validation-logs\result.txt
             exit 2
           }
-          python -m pip install --upgrade pip aqtinstall
-          aqt install-qt windows desktop 6.12.0 win64_msvc2022_64 -O C:\Qt -m qtwebchannel qtpositioning qtserialport
-          if (!(Test-Path C:\Qt\6.12.0\msvc2022_64\bin\qt-cmake.bat)) { throw "qt-cmake missing" }
-          git clone --depth 1 --branch 6.12 https://github.com/qt/qtwebengine.git C:\src\qtwebengine
-          git -C C:\src\qtwebengine rev-parse HEAD | Set-Content validation-logs\qtwebengine-head.txt
-          New-Item -ItemType Directory -Force -Path C:\src\qtwebengine\src\3rdparty | Out-Null
-          git clone --filter=blob:none --depth 1 https://github.com/qt/qtwebengine-chromium.git C:\src\qtwebengine\src\3rdparty
-          git -C C:\src\qtwebengine\src\3rdparty fetch --filter=blob:none --depth 1 origin 71a2fa55e2e2f5a5d6567aac93bda8775fc7b084
-          git -C C:\src\qtwebengine\src\3rdparty checkout --detach 71a2fa55e2e2f5a5d6567aac93bda8775fc7b084
-          git -C C:\src\qtwebengine\src\3rdparty rev-parse HEAD | Set-Content validation-logs\chromium-head.txt
+          python -m pip install --upgrade pip py7zr
+          $base = "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6120/qt6_6120_msvc2022_64"
+          $prefix = "6.12.0-0-202609280346"
+          $qt = "D:\Qt\6.12.0\msvc2022_64"
+          New-Item -ItemType Directory -Force -Path $qt | Out-Null
+          $packs = @(
+            "$base/qt.qt6.6120.win64_msvc2022_64/${prefix}qtbase-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+            "$base/qt.qt6.6120.win64_msvc2022_64/${prefix}qtdeclarative-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+            "$base/qt.qt6.6120.addons.qtwebchannel.win64_msvc2022_64/${prefix}qtwebchannel-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z",
+            "$base/qt.qt6.6120.addons.qtpositioning.win64_msvc2022_64/${prefix}qtpositioning-Windows-Windows_11_24H2-MSVC2022-Windows-Windows_11_24H2-X86_64.7z"
+          )
+          $i = 0
+          foreach ($url in $packs) {
+            $i++
+            $out = "D:\qtpack-$i.7z"
+            curl.exe -fL --retry 3 -o $out $url
+            python -c "import py7zr,sys; py7zr.SevenZipFile(sys.argv[1]).extractall(sys.argv[2])" $out $qt
+            Remove-Item $out
+          }
+          if (!(Test-Path "$qt\bin\qt-cmake.bat")) { throw "qt-cmake missing after extracting the official 6.12.0 MSVC archives" }
+          git clone --depth 1 --branch 6.12 https://github.com/qt/qtwebengine.git D:\src\qtwebengine
+          git -C D:\src\qtwebengine rev-parse HEAD | Set-Content validation-logs\qtwebengine-head.txt
+          if (Test-Path D:\src\qtwebengine\src\3rdparty) { Remove-Item -Recurse -Force D:\src\qtwebengine\src\3rdparty }
+          git clone --filter=blob:none --depth 1 https://github.com/qt/qtwebengine-chromium.git D:\src\qtwebengine\src\3rdparty
+          git -C D:\src\qtwebengine\src\3rdparty fetch --filter=blob:none --depth 1 origin 71a2fa55e2e2f5a5d6567aac93bda8775fc7b084
+          git -C D:\src\qtwebengine\src\3rdparty checkout --detach 71a2fa55e2e2f5a5d6567aac93bda8775fc7b084
+          git -C D:\src\qtwebengine\src\3rdparty rev-parse HEAD | Set-Content validation-logs\chromium-head.txt
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
           if (!(Test-Path $vs)) { throw "vswhere found no Visual Studio" }
           $vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvars64.bat"
-          $qtcmake = "C:\Qt\6.12.0\msvc2022_64\bin\qt-cmake.bat"
-          cmd /c "call `"$vcvars`" && `"$qtcmake`" -S C:\src\qtwebengine -B C:\src\we-build -G Ninja -DCMAKE_BUILD_TYPE=Release" 
+          $qtcmake = "$qt\bin\qt-cmake.bat"
+          cmd /c "call `"$vcvars`" && `"$qtcmake`" -S D:\src\qtwebengine -B D:\src\we-build -G Ninja -DCMAKE_BUILD_TYPE=Release"
           if ($LASTEXITCODE -ne 0) { "stop: qt-cmake configure failed $LASTEXITCODE" | Add-Content validation-logs\result.txt; exit $LASTEXITCODE }
-          cmd /c "call `"$vcvars`" && cmake --build C:\src\we-build --target generate_chromium_attributions"
+          cmd /c "call `"$vcvars`" && cmake --build D:\src\we-build --target generate_chromium_attributions"
           if ($LASTEXITCODE -ne 0) { "stop: generate_chromium_attributions failed $LASTEXITCODE" | Add-Content validation-logs\result.txt; exit $LASTEXITCODE }
-          $credits = Get-ChildItem -Path C:\src\we-build -Recurse -Filter chromium_attributions.qdoc -ErrorAction SilentlyContinue | Select-Object -First 1
+          $credits = Get-ChildItem -Path D:\src\we-build -Recurse -Filter chromium_attributions.qdoc -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($null -eq $credits) { "stop: configure finished but chromium_attributions.qdoc was not produced" | Add-Content validation-logs\result.txt; exit 2 }
           Copy-Item $credits.FullName validation-logs\chromium_attributions.qdoc
           $hash = (Get-FileHash validation-logs\chromium_attributions.qdoc -Algorithm SHA256).Hash.ToLower()
           "credits_sha256=$hash" | Add-Content validation-logs\result.txt
           "credits_bytes=$((Get-Item validation-logs\chromium_attributions.qdoc).Length)" | Add-Content validation-logs\result.txt
-          Get-ChildItem C:\src\we-build -Recurse -Filter args.gn | ForEach-Object { Copy-Item $_.FullName "validation-logs\args-$($_.Directory.Name).gn" }
+          Get-ChildItem D:\src\we-build -Recurse -Filter args.gn | ForEach-Object { Copy-Item $_.FullName "validation-logs\args-$($_.Directory.Name).gn" }
       - name: Upload configure log and credits if produced
         if: always()
         uses: actions/upload-artifact@v4
