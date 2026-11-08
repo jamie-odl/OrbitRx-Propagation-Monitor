@@ -164,11 +164,10 @@ def test_private_windows_workflow_does_not_upload_distributables():
     assert "OrbitRx-windows-unsigned" not in text
     assert "OrbitRx-Setup-5.1.0" not in text
     recorded = json.loads((ROOT / "packaging" / "windows_private_candidate.json").read_text(encoding="utf-8"))
-    assert recorded["run"] == "42478170093"
-    assert recorded["zip_sha256"] == "51ed248efab1d50d6017806eff551b67e804834d4d33d8e6f56e93d8ecf3d79e"
-    assert recorded["credits_inside_zip_sha256"] == "b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec"
-    assert recorded["static_process_exit"] == 0
-    assert recorded["interactive_process_exit"] == 0
+    assert recorded["not_a_receipt_for_the_current_tip"] is True
+    assert recorded["role"] == "historical"
+    assert "check_pristine_payload.py" in text
+    assert "dist-smoke" in text
     assert "dist/" not in text.split("name: windows-private-validation-logs")[1].split("retention-days:")[0]
     assert "Remove-Item -Recurse -Force dist" in text
     assert 'throw "static smoke exit' in text
