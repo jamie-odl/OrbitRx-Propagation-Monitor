@@ -81,9 +81,12 @@ Details and the files that were read are in docs/DEPENDENCY_LICENCES.md.
     libraries is offered under GPL-3.0 section 6(d), as incorporated into
     LGPL-3.0 section 4 for this Combined Work (conveyance by download, not
     the physical-product written-offer clause in section 6(b)); see
-    docs/QT_SOURCE_OFFER_DRAFT.md (DRAFT -- not yet live). The Qt DLLs are
+    docs/QT_SOURCE_OFFER_DRAFT.md (DRAFT -- not yet live; a document in the
+    source repository, not included in this download). The Qt DLLs are
     separate files under _internal/PySide6 and can be replaced there. See
-    docs/REPLACING_QT_LIBRARIES.md and docs/DISTRIBUTION.md.
+    _internal/REPLACING_QT_LIBRARIES.md, in the _internal folder beside
+    OrbitRxMonitor.exe. docs/DISTRIBUTION.md has more detail; it is also a
+    source-repository document and is not included in this download.
 pystray is not imported and is not in the frozen exe. It is not an
   obligation of that binary. customtkinter is not a dependency of this commit.
 The MIT sentence in LICENSE covers the OrbitRx application source named

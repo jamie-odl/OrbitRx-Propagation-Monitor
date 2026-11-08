@@ -116,3 +116,9 @@ def test_historical_wrapper_matches_published_zip_when_installer_present():
     data = Path(exe).read_bytes()
     assert hashlib.sha256(data).hexdigest() == HISTORICAL_EXE_SHA256
     assert hashlib.sha256(historical_observed_zip(data)).hexdigest() == HISTORICAL_ZIP_SHA256
+
+
+def test_qt_replacement_notice_points_to_shipped_internal_doc():
+    assert "_internal/REPLACING_QT_LIBRARIES.md" in NOTICE
+    assert "See\n    docs/REPLACING_QT_LIBRARIES.md" not in NOTICE
+    assert "See docs/REPLACING_QT_LIBRARIES.md" not in NOTICE
