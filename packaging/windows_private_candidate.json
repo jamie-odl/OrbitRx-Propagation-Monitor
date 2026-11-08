@@ -23,6 +23,14 @@
       "commit": "8d346e2979a8d2dc7276f52d34f0e821b304fe2e",
       "zip_sha256": "8e2edf6084cfcf015b01021ed9261b7a238b083b80784973f3ff33746660ad63",
       "problem": "Superseded. Not the current tip."
+    },
+    {
+      "commit": "46d9b08fe56fa41149879a7abf5d7b8a227a346a",
+      "run": "42485203534",
+      "zip_sha256": "231d309ecdc9aef9330e3fc075a1309309ba74f82cd9999cfe4205c4cf53aa5b",
+      "exe_sha256": "f88724925bfaaf4039d4d589324cb83ef2d7670807ccd4a55851ac05bc9c729a",
+      "installer_sha256": "2f22258d366651d335836873d15e4378805b9e283188bd857bc5e66926153ba0",
+      "problem": "Payload was clean, but the Leaflet map used EPSG:3857 over the plate carree basemap. The London marker rendered near 30N. Superseded."
     }
   ]
 }
