@@ -8,3 +8,4 @@
 *.whl binary
 *.exe binary
 *.dll binary
+third_party/qt/chromium_attributions.qdoc -text
