@@ -62,13 +62,28 @@ Details and the files that were read are in docs/DEPENDENCY_LICENCES.md.
   Qt: the private prospective packaging route is LGPL-3.0-only for the Qt
     libraries, one alternative in the qtcoreglobal.h SPDX line. That is not
     clearance, not a published source offer, and not a commercial grant.
-    The wheel's LicenseRef-Qt-Commercial pointer is not copied. The
-    gn-generated file is third_party/qt/chromium_attributions.qdoc, produced by
-    Qt's generate_chromium_attributions target on a local configure. That
-    configure is not Qt's record of the PySide6-WebEngine 6.12.0.140 wheel.
-    LICENSE.Chromium is only the BSD text and is not that credits file.
-    The Qt DLLs are separate files under _internal/PySide6 and can be replaced
-    there. See docs/REPLACING_QT_LIBRARIES.md and docs/DISTRIBUTION.md.
+    The wheel's LicenseRef-Qt-Commercial pointer is not copied. PySide6-
+    WebEngine 6.12.0.140 packages Qt WebEngine 6.140.0, built from
+    qtwebengine.git commit d505fc23640d2bd6345e6483eb73daf4e19f5829 (tag
+    v6.140.0-rc), whose src/3rdparty (Chromium) submodule is pinned to
+    qtwebengine-chromium.git commit 39352427a3245a19fb395547b3aa38be9d091ec4.
+    Third-party notices for this QtWebEngine build are in
+    third_party/qt/THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt (1,026,119
+    bytes, sha256 acde5959267a8afbd29c04f776f228ef6d208fa8a632bf356204174de5c460ca),
+    generated offline by gen_notices.py from the vendor's own SPDX SBOMs
+    shipped with the official Qt WebEngine 6.140.0-rc package; that is a
+    vendor-SBOM inference, not a GN-identity proof that the generated graph
+    matches this build's own configure. That file supersedes
+    third_party/qt/chromium_attributions.qdoc and its regeneration path,
+    docs/REGENERATE_CREDITS.ps1 (the regenerate-credits workflow); both are
+    superseded and must not be run. LICENSE.Chromium is only the BSD text
+    and is not the notices file either. Corresponding source for these
+    libraries is offered under GPL-3.0 section 6(d), as incorporated into
+    LGPL-3.0 section 4 for this Combined Work (conveyance by download, not
+    the physical-product written-offer clause in section 6(b)); see
+    docs/QT_SOURCE_OFFER_DRAFT.md (DRAFT -- not yet live). The Qt DLLs are
+    separate files under _internal/PySide6 and can be replaced there. See
+    docs/REPLACING_QT_LIBRARIES.md and docs/DISTRIBUTION.md.
 pystray is not imported and is not in the frozen exe. It is not an
   obligation of that binary. customtkinter is not a dependency of this commit.
 The MIT sentence in LICENSE covers the OrbitRx application source named

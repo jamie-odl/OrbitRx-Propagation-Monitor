@@ -14,7 +14,9 @@ These hashes were computed on the bytes. Reassemble 40,000,000-byte parts with `
 | `qt-everywhere-src-6.12.0.tar.xz` | 443,394,020 | `98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165` |
 | `qtwebengine-6.12-d4735ce.tar.xz` | 3,019,064 | `d5dc0bbbd0d753c8944a537189dc2739f297446016d6af1bc44d5d7fbb886e28` |
 | `qtwebengine-chromium-71a2fa55.tar` | 3,819,509,760 | `d258e5a92def26ba37ebea5463c5ea2a0674fded471bf2b6f5ecaf8771fbe865` |
-| `chromium_attributions.qdoc` | 707,649 | `b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec` |
+| `THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt` | 1,026,119 | `acde5959267a8afbd29c04f776f228ef6d208fa8a632bf356204174de5c460ca` |
+
+`THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt` supersedes the former gn-generated `chromium_attributions.qdoc` (stale SHA-256 `b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec`) and that file's regeneration path, `REGENERATE_CREDITS.ps1` (the regenerate-credits workflow); both are superseded and must not be run. It is a vendor-SBOM-derived notices document, not a GN-identity proof.
 
 `qt-everywhere-src-6.12.0.tar.xz` is the official single source archive. Its `.tag` is SHA-1 `ef25002ed292b132d1ed3246bfcee1d24a9cd966`. It contains the Qt modules whose DLLs are in the onedir, including Qt State Machine under `qtscxml/src/statemachine` and Qt Labs StyleKit under `qtdeclarative/src/labs/stylekit`. It does not contain Qt WebEngine.
 
@@ -45,19 +47,33 @@ d5dc0bbbd0d753c8944a537189dc2739f297446016d6af1bc44d5d7fbb886e28  qtwebengine-6.
 d258e5a92def26ba37ebea5463c5ea2a0674fded471bf2b6f5ecaf8771fbe865  qtwebengine-chromium-71a2fa55.tar
 
 The Qt libraries are conveyed under LGPL-3.0-only, one alternative in the
-qtcoreglobal.h SPDX line. Chromium code keeps the licences in
-chromium_attributions.qdoc. This offer lasts three years from the day the
-binary is conveyed, which is the period in LGPL-3.0 section 6. Shipping these
-archives next to the installer satisfies that section without a separate offer.
+qtcoreglobal.h SPDX line. Chromium code keeps its third-party licenses
+inside the corresponding source archive itself (chromium/ tree, LICENSE and
+README.chromium per component), supplemented by
+third_party/qt/THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt (1,026,119 bytes,
+sha256 acde5959267a8afbd29c04f776f228ef6d208fa8a632bf356204174de5c460ca), a
+vendor-SBOM-derived notices file generated offline by gen_notices.py from
+Qt's own SPDX SBOMs for this build (vendor-SBOM inference, not a
+GN-identity proof). It supersedes the former gn-generated
+chromium_attributions.qdoc and that file's regeneration path,
+REGENERATE_CREDITS.ps1 (the regenerate-credits workflow); both are
+superseded and must not be run. This offer is made under GPL-3.0 section
+6(d), as incorporated into LGPL-3.0 section 4 for this Combined Work: the
+object code is conveyed by offering access from a download location, so the
+Corresponding Source above is hosted at that same location and stays
+available for as long as the binary continues to be offered. That is not
+the physical-product written-offer clause in GPL-3.0 section 6(b), which
+carries its own fixed three-year minimum; no such fixed figure applies
+under 6(d) itself.
 ```
 
-## Hosting action
+## Hosting action (DRAFT — not yet live)
 
 The bytes are already in the agent store under `orbitrx-candidate/corresponding-source/`. Reassemble, check the four hashes, and upload those four files to the existing download host as:
 
-- `https://downloads.thevenom.dev/orbitrx/pyside-setup-everywhere-src-6.12.0.tar.xz`
-- `https://downloads.thevenom.dev/orbitrx/qt-everywhere-src-6.12.0.tar.xz`
-- `https://downloads.thevenom.dev/orbitrx/qtwebengine-6.12-d4735ce.tar.xz`
-- `https://downloads.thevenom.dev/orbitrx/qtwebengine-chromium-71a2fa55.tar`
+- `https://downloads.thevenom.dev/orbitrx/pyside-setup-everywhere-src-6.12.0.tar.xz` (DRAFT — not yet live)
+- `https://downloads.thevenom.dev/orbitrx/qt-everywhere-src-6.12.0.tar.xz` (DRAFT — not yet live)
+- `https://downloads.thevenom.dev/orbitrx/qtwebengine-6.12-d4735ce.tar.xz` (DRAFT — not yet live)
+- `https://downloads.thevenom.dev/orbitrx/qtwebengine-chromium-71a2fa55.tar` (DRAFT — not yet live)
 
 Then set `SOURCE_URL` to `https://downloads.thevenom.dev/orbitrx/` and publish the paragraph. This repository does not perform that upload. The public 5.1.0 zip is a different, already published file and is not replaced by this draft.

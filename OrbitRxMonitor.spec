@@ -38,7 +38,10 @@ a = Analysis(
     # Onedir: Qt libraries sit next to the exe so they can be replaced.
     # Basemap is only the Natural Earth render. Legacy JPEG and v2 images
     # are not datas. Licence texts are copied; they are not a published
-    # source offer and not the gn-generated Chromium about_credits file.
+    # source offer. The bundled third-party notices file is vendor-SBOM-
+    # derived (gen_notices.py from Qt vendor SPDX SBOMs); it supersedes the
+    # former gn-generated chromium_attributions.qdoc, which is no longer
+    # packaged.
     datas=[
         ('basemap/ne_110m_dark.png', '.'),
         ('basemap/PROVENANCE.json', '.'),
@@ -51,7 +54,7 @@ a = Analysis(
         ('third_party/qt/LICENSES', 'third_party/qt/LICENSES'),
         ('third_party/qt/qtcoreglobal.h.SPDX.txt', 'third_party/qt'),
         ('third_party/qt/LICENSE.Chromium', 'third_party/qt'),
-        ('third_party/qt/chromium_attributions.qdoc', 'third_party/qt'),
+        ('third_party/qt/THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt', 'third_party/qt'),
         ('third_party/natural_earth/TERMS_OF_USE.txt', 'third_party/natural_earth'),
         ('third_party/natural_earth/ne_110m_land.geojson', 'third_party/natural_earth'),
         ('third_party/win10toast/LICENSE', 'third_party/win10toast'),

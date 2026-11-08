@@ -41,7 +41,9 @@ def test_dev_and_gate_use_the_natural_earth_map_only():
     assert evidence["interactive_process_exit"] == 0
     assert "windows-static-capture-exit-0xC0000005-on-42359055614" not in manifest["release_blockers"]
     assert "qtwebengine-gn-about-credits-not-generated-for-submodule-71a2fa55" not in manifest["release_blockers"]
-    assert manifest["chromium_credits"]["sha256"] == "b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec"
+    assert manifest["chromium_credits"]["file"] == "third_party/qt/THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt"
+    assert manifest["chromium_credits"]["sha256"] == "acde5959267a8afbd29c04f776f228ef6d208fa8a632bf356204174de5c460ca"
+    assert manifest["chromium_credits"]["bytes"] == 1026119
 
 
 def test_frozen_bundle_ignores_legacy_art_sitting_beside_the_exe(tmp_path, monkeypatch):
@@ -194,7 +196,7 @@ def test_onedir_layout_checker_accepts_sibling_dlls(tmp_path):
     (root / "_internal" / "third_party" / "qt" / "LICENSES").mkdir(parents=True)
     (root / "_internal" / "third_party" / "qt" / "LICENSES" / "LGPL-3.0-only.txt").write_text("lgpl", encoding="utf-8")
     (root / "_internal" / "third_party" / "qt" / "LICENSE.Chromium").write_text("bsd", encoding="utf-8")
-    (root / "_internal" / "third_party" / "qt" / "chromium_attributions.qdoc").write_text("credits", encoding="utf-8")
+    (root / "_internal" / "third_party" / "qt" / "THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt").write_text("notices", encoding="utf-8")
     (root / "_internal" / "third_party" / "natural_earth").mkdir(parents=True)
     (root / "_internal" / "third_party" / "natural_earth" / "TERMS_OF_USE.txt").write_text("pd", encoding="utf-8")
     assert check_layout(root) == []

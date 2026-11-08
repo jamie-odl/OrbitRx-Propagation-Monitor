@@ -13,7 +13,7 @@
     "third_party/qt/LICENSES/Qt-GPL-exception-1.0.txt": "40678d338ce53cd93f8b22b281a2ecbcaa3ee65ce60b25ffb0c462b0530846b2",
     "third_party/qt/qtcoreglobal.h.SPDX.txt": "00eacf8f3cfa338722ee3faa65ed8820cac7837acfef65bdbd7aaf0004d835f0",
     "third_party/qt/LICENSE.Chromium": "f34787ef0342c614b667186a6ec2f5d6b9d650e30142a2788a589a89743e88e9",
-    "third_party/qt/chromium_attributions.qdoc": "b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec",
+    "third_party/qt/THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt": "acde5959267a8afbd29c04f776f228ef6d208fa8a632bf356204174de5c460ca",
     "third_party/win10toast/LICENSE": "70849267b734d1170fc0af40b9eec056bb45e2ef59478cddd1984dc32183f5f4",
     "third_party/pillow/LICENSE": "15181e7363dca9aed78b79bebebc7fde7f1814b8bd311ea3b87ae8ccadfc185b",
     "third_party/matplotlib/LICENSE": "5a1a81ea301728c8bba2933da832c0cd62229daf20893a024ab3d53244468dbc",
@@ -47,18 +47,19 @@
     "receipt": "A build receipt is not stored in this file. It is written outside git after the build, because this commit cannot name the hash of its own zip."
   },
   "chromium_credits": {
-    "file": "third_party/qt/chromium_attributions.qdoc",
-    "bytes": 707649,
-    "sha256": "b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec",
-    "pages": 120,
-    "generator": "licenses.py via Qt target generate_chromium_attributions",
-    "run": "42476475449",
-    "url": "https://github.com/jamie-odl/OrbitRx-Propagation-Monitor/actions/runs/42476475449",
-    "qtwebengine_commit": "d4735ce2f841ffbe7cbac9ee7fd954f00514825f",
-    "chromium_submodule": "71a2fa55e2e2f5a5d6567aac93bda8775fc7b084",
-    "qt_sdk": "official 6.12.0 MSVC 2022 64-bit archives, not aqt",
-    "gn_args_log": "third_party/qt/qtwebengine-core-gn-log.txt",
-    "note": "Generated on windows-latest. The first entry is the licenses.py banner. This is not a published source offer."
+    "file": "third_party/qt/THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt",
+    "bytes": 1026119,
+    "sha256": "acde5959267a8afbd29c04f776f228ef6d208fa8a632bf356204174de5c460ca",
+    "generator": "gen_notices.py from Qt vendor SPDX SBOMs, vendor-SBOM inference, not GN-identity proof",
+    "qtwebengine_commit": "d505fc23640d2bd6345e6483eb73daf4e19f5829",
+    "qtwebengine_tag": "v6.140.0-rc",
+    "chromium_submodule": "39352427a3245a19fb395547b3aa38be9d091ec4",
+    "current_source_archive": {
+      "file": "qtwebengine-everywhere-src-6.140.0-rc.tar.xz",
+      "bytes": 580351144,
+      "sha256": "61257967afd9803a1db6403e86ea25c4efff8fad479bda365a9d81bfd709f621"
+    },
+    "note": "Supersedes third_party/qt/chromium_attributions.qdoc (stale sha256 b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec) and its regeneration path, docs/REGENERATE_CREDITS.ps1; that script and the regenerate-credits workflow are superseded and must not be run. Vendor-SBOM inference is not a GN-identity proof that the generated graph matches this build's configure. Not a published source offer, not legal clearance."
   },
   "release_blockers": [
     "corresponding-source-archive-not-publicly-hosted"
