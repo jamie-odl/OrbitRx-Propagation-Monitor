@@ -1,0 +1,68 @@
+name: Regenerate Chromium credits
+
+# Runs docs/REGENERATE_CREDITS.ps1 unchanged. No upload to a public host.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  regenerate:
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: MSVC prompt, then the authored script
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path D:\credits-out | Out-Null
+          $free = (Get-PSDrive D).Free
+          "D_free_bytes=$free" | Set-Content D:\credits-out\preflight.txt
+          if ($free -lt 15GB) { throw "D: has $free bytes free. The script asks for 15-20GB." }
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) { throw "vswhere found no MSVC installation" }
+          $vcvars = Join-Path $vs "VC\Auxiliary\Build\vcvars64.bat"
+          if (-not (Test-Path $vcvars)) { throw "vcvars64.bat missing: $vcvars" }
+          "vcvars=$vcvars" | Add-Content D:\credits-out\preflight.txt
+          cmd /c "`"$vcvars`" >nul && set" | ForEach-Object {
+            if ($_ -match '^(.*?)=(.*)$') {
+              [System.Environment]::SetEnvironmentVariable($matches[1], $matches[2], "Process")
+            }
+          }
+          if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) { throw "cl.exe not on PATH after vcvars64.bat" }
+          $env:WORKDIR = "D:\qtwebengine-credits-regen"
+          $env:PRODUCTION_GN_ARGS_FILE = (Resolve-Path "third_party\qt\qtwebengine-core-gn-log.txt").Path
+          $env:OLD_CREDITS_FILE = (Resolve-Path "third_party\qt\chromium_attributions.qdoc").Path
+          Start-Transcript -Path D:\credits-out\transcript.txt | Out-Null
+          try {
+            & .\docs\REGENERATE_CREDITS.ps1
+          } finally {
+            Stop-Transcript | Out-Null
+          }
+      - name: Collect credits, args.gn, and cmake logs
+        if: always()
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path credits-result | Out-Null
+          if (Test-Path D:\credits-out) { Copy-Item D:\credits-out\* credits-result\ -ErrorAction SilentlyContinue }
+          $wd = "D:\qtwebengine-credits-regen"
+          if (Test-Path $wd) {
+            Get-ChildItem $wd -Recurse -Include chromium_attributions.qdoc,args.gn,CMakeError.log,CMakeOutput.log -ErrorAction SilentlyContinue | ForEach-Object {
+              $dest = Join-Path "credits-result" ($_.FullName.Substring($wd.Length).TrimStart('\') -replace '[\\:]','_')
+              New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
+              Copy-Item $_.FullName $dest
+            }
+          }
+      - name: Upload the regeneration outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chromium-credits-regen
+          path: credits-result/**
+          retention-days: 14
+          if-no-files-found: warn
