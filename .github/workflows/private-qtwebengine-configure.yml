@@ -31,7 +31,9 @@ jobs:
             "stop: D: has $free bytes free, under 40 GiB. Not checking out submodule 71a2fa55 or running gn gen." | Add-Content validation-logs\result.txt
             exit 2
           }
-          python -m pip install --upgrade pip py7zr
+          python -m pip install --upgrade pip py7zr html5lib
+          choco install -y winflexbison3 gperf
+          $env:Path = "C:\ProgramData\chocolatey\bin;" + $env:Path
           $base = "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6120/qt6_6120_msvc2022_64"
           $prefix = "6.12.0-0-202609280346"
           $qt = "D:\Qt\6.12.0\msvc2022_64"
