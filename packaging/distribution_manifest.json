@@ -41,9 +41,9 @@
     "earlier_static_crash_run": "42359055614",
     "earlier_static_process_exit": -1073741819,
     "note": "windows-latest built the onedir and both captures exited 0. This is not release clearance.",
-    "private_candidate_run": "42473135935",
-    "private_candidate_commit": "8d346e2979a8d2dc7276f52d34f0e821b304fe2e",
-    "private_candidate_zip_sha256": "8e2edf6084cfcf015b01021ed9261b7a238b083b80784973f3ff33746660ad63"
+    "private_candidate_run": "42478170093",
+    "private_candidate_commit": "15e0979e7cd74227db922bc9a9ebf2defb5a7006",
+    "private_candidate_zip_sha256": "51ed248efab1d50d6017806eff551b67e804834d4d33d8e6f56e93d8ecf3d79e"
   },
   "chromium_credits": {
     "file": "third_party/qt/chromium_attributions.qdoc",
