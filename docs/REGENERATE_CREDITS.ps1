@@ -1,3 +1,4 @@
+
 # REGENERATE_CREDITS.ps1 -- canonical regeneration path for
 # chromium_attributions.qdoc, matching the Windows/MSVC build that
 # actually produced OrbitRx's shipped PySide6-WebEngine binaries.
@@ -19,19 +20,35 @@
 #   full mechanism writeup (cmake/QtGnCredits.cmake -> licenses.py credits
 #   mode, requires a real `gn gen`'d out dir for :QtWebEngineCore).
 #
+# WHY THE QT HOST TOOLCHAIN IS A DIRECT, SHA1-VERIFIED DOWNLOAD (NOT aqt):
+#   aqtinstall's module/arch arguments do not map onto a single fixed
+#   Updates.xml path -- for Qt 6.12.0 desktop MSVC2022/64 the real listing
+#   lives at
+#     https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6120/qt6_6120_msvc2022_64/Updates.xml
+#   not .../qt6_6120/qt6_6120/Updates.xml (the path aqtinstall 3.3.0 guessed
+#   in run 42500822771, which 404s -- see evidence/desktop-sub.txt and
+#   evidence/credits-regen-42500822771.json). Rather than pin another
+#   guessed aqt invocation, this script downloads that same Updates.xml,
+#   reads the real archive names and their per-archive .sha1 sidecars out
+#   of it, and extracts only the archives qtwebengine's configure actually
+#   needs with 7z (preinstalled on GitHub's windows-latest runners).
+#
 # EXPECTED RUNTIME / DISK (Windows runner with Visual Studio Build Tools
 # + Windows SDK already installed -- if not, add 15-30 min and ~8-15GB
 # for that install):
 #   - Download tarball (580,351,144 bytes):                     2-10 min
 #   - Extract (298,124 entries):                                 3-10 min
-#   - aqtinstall prebuilt Qt 6.12.0 host (win64_msvc2022_64):     3-10 min
+#   - Official Qt 6.12.0 host archives (win64_msvc2022_64,
+#     qtbase+qtdeclarative+qttools+qtshadertools+qtwebchannel+
+#     qtpositioning, sha1-verified, 7z-extracted):                2-6 min
 #   - Bootstrap vendored `gn` tool under MSVC:                    3-8 min
 #   - qt-configure-module + `gn gen` for :QtWebEngineCore
 #     (graph evaluation only, no chromium compile):               8-25 min
 #   - licenses.py credits scan:                                   1-4 min
-#   Total: roughly 20-65 minutes (plus toolchain install if needed).
-#   Disk: tarball + extracted tree (~6-8GB) + gn tool build (~1GB) +
-#   GN-generated files for GnDone only (~1-2GB). Budget 15-20GB free.
+#   Total: roughly 20-55 minutes (plus toolchain install if needed).
+#   Disk: tarball + extracted tree (~6-8GB) + Qt host archives (~1GB) +
+#   gn tool build (~1GB) + GN-generated files for GnDone only (~1-2GB).
+#   Budget 15-20GB free.
 #
 # EXIT CRITERIA: script exits with non-zero only if chromium_attributions.qdoc
 # was not produced or is empty. The args.gn fidelity check (Step 7) is
@@ -53,6 +70,37 @@ $OldCreditsSha256 = "b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf75
 $QtHostVersion = "6.12.0"
 $SrcTopDir     = "qtwebengine-everywhere-src-6.140.0"
 
+# Qt's official repository layout for this host toolchain (verified against
+# https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/qt6_6120/qt6_6120_msvc2022_64/Updates.xml,
+# see evidence/Updates-qt6_6120_msvc2022_64.xml). This is NOT the layout
+# aqtinstall 3.3.0 guessed (qt6_6120/qt6_6120/Updates.xml, which 404s).
+$QtRepoVersionTag = "qt6_6120"
+$QtRepoArchDir    = "msvc2022_64"
+$QtPackagePrefix  = "qt.qt6.6120"
+$QtPackageArch    = "win64_msvc2022_64"
+$QtRepoBaseUrl    = "https://download.qt.io/online/qtsdkrepository/windows_x86/desktop/$QtRepoVersionTag/${QtRepoVersionTag}_$QtRepoArchDir"
+
+# Which packages/archives of that repository this script needs, and why.
+# qtbase/qtdeclarative/qttools are bundled together as DownloadableArchives
+# of the single "win64_msvc2022_64" PackageUpdate (Qt's top-level qtwebengine
+# CMakeLists.txt add_subdirectory()s core, tools and declarative-facing
+# pieces, so configuring the module at all needs all three, not just
+# qtbase). qtshadertools is Qt's separate shader-compiler module, needed
+# because QtWebEngine's Quick integration compiles .qsb shaders at
+# configure/build time. qtwebchannel and qtpositioning are addons needed
+# only because Step 6 below turns on FEATURE_webengine_webchannel and
+# FEATURE_webengine_geolocation -- see the QT_FEATURE_webengine_webchannel
+# and QT_FEATURE_webengine_geolocation extend_gn_target() conditions in
+# qtwebengine's src/core/CMakeLists.txt, which only pull in
+# renderer/web_channel_ipc_transport.* and location_provider_qt.* when
+# those two features are enabled.
+$NeededQtPackages = @(
+    @{ Package = "$QtPackagePrefix.$QtPackageArch"; ArchivePrefixes = @("qtbase", "qtdeclarative", "qttools") },
+    @{ Package = "$QtPackagePrefix.addons.qtshadertools.$QtPackageArch"; ArchivePrefixes = @("qtshadertools") },
+    @{ Package = "$QtPackagePrefix.addons.qtwebchannel.$QtPackageArch"; ArchivePrefixes = @("qtwebchannel") },
+    @{ Package = "$QtPackagePrefix.addons.qtpositioning.$QtPackageArch"; ArchivePrefixes = @("qtpositioning") }
+)
+
 # ---------------------------------------------------------------------------
 # Operator-supplied, optional inputs
 # ---------------------------------------------------------------------------
@@ -71,7 +119,7 @@ New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 Set-Location $WorkDir
 
 Write-Host "== Step 1/9: preflight tool check =="
-foreach ($tool in @("curl.exe", "tar.exe", "python", "cmake", "ninja", "pip")) {
+foreach ($tool in @("curl.exe", "tar.exe", "7z.exe", "node.exe", "python", "cmake", "ninja")) {
     if (-not (Get-Command $tool -ErrorAction SilentlyContinue)) {
         throw "MISSING REQUIRED TOOL: $tool"
     }
@@ -104,13 +152,63 @@ if (-not (Test-Path $SrcTopDir)) {
     tar.exe -xJf $TarballName
 }
 
-Write-Host "== Step 5/9: get a Qt $QtHostVersion host toolchain (PREBUILT, win64_msvc2022_64) =="
-if (-not (Test-Path "qt-host\$QtHostVersion")) {
-    pip install --user --quiet aqtinstall
-    python -m aqt install-qt windows desktop $QtHostVersion win64_msvc2022_64 -O "$WorkDir\qt-host"
+Write-Host "== Step 5/9: get the official Qt $QtHostVersion host toolchain ($QtPackageArch, sha1-verified, no aqt) =="
+$QtHostDir        = Join-Path $WorkDir "qt-host"
+$QtHostInstallDir = Join-Path $QtHostDir "$QtHostVersion\$QtRepoArchDir"
+if (-not (Test-Path $QtHostInstallDir)) {
+    New-Item -ItemType Directory -Force -Path $QtHostDir | Out-Null
+    New-Item -ItemType Directory -Force -Path $QtHostInstallDir | Out-Null
+
+    $UpdatesUrl     = "$QtRepoBaseUrl/Updates.xml"
+    $UpdatesXmlPath = Join-Path $QtHostDir "Updates.xml"
+    Write-Host "-- downloading $UpdatesUrl --"
+    curl.exe -fL --retry 3 -o $UpdatesXmlPath $UpdatesUrl
+    [xml]$updates = Get-Content $UpdatesXmlPath
+
+    foreach ($pkg in $NeededQtPackages) {
+        $packageNode = $updates.Updates.PackageUpdate | Where-Object { $_.Name -eq $pkg.Package }
+        if (-not $packageNode) {
+            throw "Updates.xml ($UpdatesUrl) has no <PackageUpdate> named $($pkg.Package) -- Qt's repository layout may have changed since this script was written. Inspect $UpdatesXmlPath by hand before retrying."
+        }
+        $allArchives = @($packageNode.DownloadableArchives -split ",\s*" | Where-Object { $_ })
+
+        foreach ($prefix in $pkg.ArchivePrefixes) {
+            $archiveName = $allArchives | Where-Object { $_ -like "$prefix-*.7z" } | Select-Object -First 1
+            if (-not $archiveName) {
+                throw "Package $($pkg.Package) in Updates.xml has no archive matching '$prefix-*.7z'. Known archives: $($allArchives -join ', ')"
+            }
+
+            $archiveUrl  = "$QtRepoBaseUrl/$($pkg.Package)/$archiveName"
+            $archivePath = Join-Path $QtHostDir $archiveName
+            $sha1Path    = "$archivePath.sha1"
+
+            if (-not (Test-Path $archivePath)) {
+                Write-Host "-- downloading $archiveName --"
+                curl.exe -fL --retry 3 -o $archivePath $archiveUrl
+            }
+            curl.exe -fL --retry 3 -o $sha1Path "$archiveUrl.sha1"
+            if (-not (Test-Path $sha1Path) -or (Get-Item $sha1Path).Length -eq 0) {
+                throw "Could not download the .sha1 sidecar for $archiveName from $archiveUrl.sha1 -- refusing to extract an unverified archive."
+            }
+
+            $expectedSha1 = ((Get-Content $sha1Path -Raw).Trim() -split "\s+")[0].ToLower()
+            $actualSha1   = (Get-FileHash -Algorithm SHA1 -Path $archivePath).Hash.ToLower()
+            if ($actualSha1 -ne $expectedSha1) {
+                throw "SHA1 MISMATCH for $archiveName : expected $expectedSha1 (from $sha1Path), got $actualSha1. Refusing to extract."
+            }
+            Write-Host "   sha1 OK: $archiveName"
+
+            7z.exe x -y "-o$QtHostInstallDir" $archivePath | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "7z extraction of $archiveName into $QtHostInstallDir failed with exit code $LASTEXITCODE."
+            }
+        }
+    }
 }
-$QtHostBin = (Get-ChildItem -Path "$WorkDir\qt-host" -Recurse -Directory -Filter "bin" | Select-Object -First 1).FullName
-if (-not $QtHostBin) { throw "Could not locate qt-host bin\ after aqtinstall." }
+$QtHostBin = Join-Path $QtHostInstallDir "bin"
+if (-not (Test-Path (Join-Path $QtHostBin "qt-configure-module.bat"))) {
+    throw "Could not locate qt-host bin\qt-configure-module.bat under $QtHostBin after downloading and extracting the official $QtPackageArch archives. Qt's packaging layout may have changed -- inspect $QtHostInstallDir by hand."
+}
 $env:PATH = "$QtHostBin;$env:PATH"
 
 Write-Host "== Step 6/9: configure the qtwebengine module only far enough for GN =="
