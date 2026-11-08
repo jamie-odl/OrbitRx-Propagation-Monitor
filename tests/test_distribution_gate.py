@@ -33,7 +33,7 @@ def test_dev_and_gate_use_the_natural_earth_map_only():
     assert gate_main(["--release"]) == 1
     manifest = json.loads((ROOT / "packaging" / "distribution_manifest.json").read_text(encoding="utf-8"))
     assert manifest["packaged_basemap_sha256"] == MAP_SHA256
-    assert "qt-source-offer-not-published-by-copyright-holder" in manifest["release_blockers"]
+    assert "corresponding-source-archive-not-publicly-hosted" in manifest["release_blockers"]
     assert "windows-onedir-build-not-executed" not in manifest["release_blockers"]
     evidence = manifest["windows_onedir_evidence"]
     assert evidence["run"] == "42362357356"
@@ -106,6 +106,11 @@ def test_corresponding_source_archives_match_their_manifest():
     )
     assert manifest["qtwebengine"]["chromium_version_base"] == "140.0.7339.264"
     assert manifest["qtwebengine"]["chromium_security_patches_through"] == "151.0.7922.108"
+    assert manifest["qtwebengine"]["chromium_bytes_included"] is False
+    chromium = manifest["retained_source"]["qtwebengine_chromium"]
+    assert chromium["sha256"] == "d258e5a92def26ba37ebea5463c5ea2a0674fded471bf2b6f5ecaf8771fbe865"
+    assert chromium["gitlinks"] == 0
+    assert chromium["bytes"] == 3819509760
     assert "Not a published source offer" in manifest["purpose"] or "Not a published source offer" in manifest["purpose"]
     assert "not a published source offer" in manifest["purpose"].lower()
     for item in manifest["files"]:
@@ -154,7 +159,8 @@ def test_private_windows_workflow_does_not_upload_distributables():
     assert "cursor/shipped-5-1-0-notices-2d8d" in text
     assert "runs-on: windows-latest" in text
     assert "windows-private-validation-logs" in text
-    assert "windows-private-candidate" not in text
+    assert "windows-private-candidate" in text
+    assert "retention-days: 1" in text
     assert "OrbitRx-windows-unsigned" not in text
     assert "OrbitRx-Setup-5.1.0" not in text
     recorded = json.loads((ROOT / "packaging" / "windows_private_candidate.json").read_text(encoding="utf-8"))

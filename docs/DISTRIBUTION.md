@@ -45,13 +45,13 @@ The onedir spec carries `basemap/ne_110m_dark.png` and the `third_party` texts. 
 
 `qtcoreglobal.h` offers `LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only`. This packaging uses the LGPL-3.0-only alternative for the Qt libraries. That is not a commercial licence and it does not finish the LGPL duties:
 
-1. The copyright holder has not published a source offer. `docs/QT_SOURCE_OFFER_DRAFT.md` is only a draft. `third_party/corresponding-source/` holds the official PySide6 6.12.0 source archive, the official qtbase 6.12.0 source archive, and a git archive of qtwebengine branch `6.12` at `d4735ce` without the Chromium submodule. That is not the WebEngine/Chromium corresponding source and it is not an offer.
+1. The corresponding source bytes are retained. `qt-everywhere-src-6.12.0.tar.xz` is SHA-256 `98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165`. `qtwebengine-chromium-71a2fa55.tar` is SHA-256 `d258e5a92def26ba37ebea5463c5ea2a0674fded471bf2b6f5ecaf8771fbe865` and has no further gitlinks. They sit with the private candidate, in 40,000,000-byte parts. `docs/QT_SOURCE_OFFER_DRAFT.md` has the paragraph and the four download filenames. That paragraph is not published, and those four URLs are not uploaded, so the public release gate stays closed.
 2. Actions run 42362357356, commit `3736e29`, built the onedir on windows-latest. Qt6Core.dll and Qt6WebEngineCore.dll were separate files under `_internal/PySide6/`. Static and interactive captures both exited 0. An earlier run, 42359055614, had exited -1073741819 on the static capture before that shutdown change.
 3. `third_party/qt/chromium_attributions.qdoc` is the file from Qt target `generate_chromium_attributions` on Actions run 42476475449. SHA-256 `b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec`, 707,649 bytes, 120 pages. It starts with the `licenses.py` banner. The inputs were qtwebengine `d4735ce`, Chromium submodule `71a2fa55`, and the official Qt 6.12.0 MSVC SDK. `LICENSE.Chromium` is still only the BSD text. The printed GN args are in `third_party/qt/qtwebengine-core-gn-log.txt`.
 
 ## Other open decisions
 
 - The copyright holder has not published the source offer. The draft is not that publication.
-- The gn-generated Chromium credits file is `third_party/qt/chromium_attributions.qdoc`. The copyright holder has not published a source offer.
+- The gn-generated Chromium credits file is `third_party/qt/chromium_attributions.qdoc`. The source archives are retained privately. The public URLs in `docs/QT_SOURCE_OFFER_DRAFT.md` are not uploaded.
 - The Windows onedir build in run 42362357356 exited 0 for both captures. That run is not a release.
 - `world_map.jpg` and the v2 images are no longer selected. Their old provenance questions remain for those historical files only.

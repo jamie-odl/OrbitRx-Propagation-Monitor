@@ -28,8 +28,31 @@
     "chromium_security_patches_through": "151.0.7922.108",
     "chromium_bytes_included": false,
     "github_repo_size_kb": 6337494,
-    "credits_command": "licenses.py --gn-binary <gn built by qtwebengine> --gn-target :QtWebEngineCore --gn-out-dir <directory containing args.gn from gn gen> credits <output>",
+    "credits_command": "licenses.py via cmake target generate_chromium_attributions",
     "credits_tool": "src/3rdparty/chromium/tools/licenses/licenses.py credits, invoked by cmake/QtGnCredits.cmake after run_core_GnDone",
-    "credits_status": "not generated. The official command needs a gn out directory for :QtWebEngineCore. That directory is produced by Qt's gn gen step, which needs submodule 71a2fa55 checked out. This archive does not contain that submodule. LICENSE.Chromium is only the BSD text and is not the credits list."
+    "credits_status": "generated as third_party/qt/chromium_attributions.qdoc sha256 b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec. This webengine archive still omits the chromium submodule; the complete submodule tar is retained_source.qtwebengine_chromium."
+  },
+  "retained_source": {
+    "note": "Complete corresponding source for the PySide6 6.12.0 / Qt 6.12.0 libraries in the onedir. The two large archives are not in git. Their bytes are the 40000000-byte parts named in the agent store, and each part list reassembles to the sha256 below. No gitlink was present in the chromium commit, so no further submodule bytes are missing from that tar.",
+    "part_size_bytes": 40000000,
+    "qt_everywhere": {
+      "name": "qt-everywhere-src-6.12.0.tar.xz",
+      "bytes": 443394020,
+      "sha256": "98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165",
+      "origin": "https://download.qt.io/official_releases/qt/6.12/6.12.0/single/qt-everywhere-src-6.12.0.tar.xz",
+      "tag_file_sha1": "ef25002ed292b132d1ed3246bfcee1d24a9cd966",
+      "contains_qtwebengine": false,
+      "covers_dlls": "Every Qt6*.dll in the onedir except Qt6Pdf and Qt6WebEngine*"
+    },
+    "qtwebengine_chromium": {
+      "name": "qtwebengine-chromium-71a2fa55.tar",
+      "bytes": 3819509760,
+      "sha256": "d258e5a92def26ba37ebea5463c5ea2a0674fded471bf2b6f5ecaf8771fbe865",
+      "commit": "71a2fa55e2e2f5a5d6567aac93bda8775fc7b084",
+      "checkout": "git fetch --depth 1 of that commit, not a blob filter",
+      "gitlinks": 0,
+      "working_tree_bytes_including_git": "5.2G",
+      "file_count_in_tar": 295988
+    }
   }
 }

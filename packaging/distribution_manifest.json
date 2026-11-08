@@ -60,6 +60,6 @@
     "note": "Generated on windows-latest. The first entry is the licenses.py banner. This is not a published source offer."
   },
   "release_blockers": [
-    "qt-source-offer-not-published-by-copyright-holder"
+    "corresponding-source-archive-not-publicly-hosted"
   ]
 }
