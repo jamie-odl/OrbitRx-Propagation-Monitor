@@ -1,8 +1,12 @@
 name: Regenerate Chromium credits
 
 # Runs docs/REGENERATE_CREDITS.ps1 unchanged. No upload to a public host.
+# workflow_dispatch is not available until the file is on the default branch.
+# This side branch is the runner. It is not the notices branch and not main.
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - cursor/regenerate-credits-2d8d
 
 permissions:
   contents: read
