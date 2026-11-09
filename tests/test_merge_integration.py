@@ -104,14 +104,6 @@ def test_version_file_matches_package():
     assert f"## [{orbitrx.__version__}]" in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
-def test_leaflet_is_bundled_not_cdn():
-    src = (ROOT / "orbitrx" / "ui" / "leaflet_map.py").read_text(encoding="utf-8")
-    assert "unpkg.com" not in src and "cdn.jsdelivr" not in src
-    assets = ROOT / "orbitrx" / "ui" / "assets" / "leaflet"
-    assert (assets / "leaflet.js").stat().st_size > 100_000
-    assert (assets / "leaflet.css").is_file()
-
-
 @pytest.mark.parametrize("name", ["LICENSE", "NOTICE", "PRIVACY.md", "CHANGELOG.md", "README.md"])
 def test_release_docs_exist_without_em_dashes(name):
     text = (ROOT / name).read_text(encoding="utf-8")

@@ -177,7 +177,56 @@ def test_action_button_grid_has_no_ragged_hole(tmp_path, monkeypatch): # N-new-5
     app.processEvents()
 
 
-def test_static_disabled_spot_toggles_explain_and_switch_is_a_button(tmp_path, monkeypatch):  # P5
+def test_check_updates_runs_off_the_ui_thread(tmp_path, monkeypatch):
+    """The update check is a blocking network call (10s timeout); calling it
+    from _check_updates must return immediately and do the request on a
+    worker thread, not stall the window."""
+    monkeypatch.chdir(tmp_path)
+    import threading
+    import time as time_mod
+    from PySide6.QtWidgets import QApplication
+
+    import orbitrx.spots.service as svc
+    monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
+    import orbitrx.dx as dx
+    monkeypatch.setattr(dx.DxClusterService, "start", lambda self: None)
+    from orbitrx.ui.controller import OrbitRxController
+    monkeypatch.setattr(OrbitRxController, "fetch_weather", lambda self: None)
+    monkeypatch.setattr(OrbitRxController, "refresh_location", lambda self: None)
+
+    main_thread = threading.current_thread()
+    seen_threads = []
+    release = threading.Event()
+
+    def slow_fake_check(_version):
+        seen_threads.append(threading.current_thread())
+        release.wait(timeout=5)
+        return {"update_available": False, "latest": _version, "url": "", "message": "ok"}
+
+    import orbitrx.ui.qt_app as qt_app
+    monkeypatch.setattr(qt_app, "check_github_release", slow_fake_check)
+
+    app = QApplication.instance() or QApplication([])
+    from orbitrx.ui.qt_app import QtOrbitRxApplication
+    win = QtOrbitRxApplication()
+
+    t0 = time_mod.perf_counter()
+    win._check_updates()
+    call_duration = time_mod.perf_counter() - t0
+    assert call_duration < 1.0  # must return immediately, not wait for the "network" call
+
+    deadline = time_mod.time() + 5
+    while not seen_threads and time_mod.time() < deadline:
+        time_mod.sleep(0.01)
+    assert seen_threads and seen_threads[0] is not main_thread
+
+    release.set()
+    win.ctrl.stop()
+    win.deleteLater()
+    app.processEvents()
+
+
+def test_live_spot_toggles_are_enabled_on_the_native_map(tmp_path, monkeypatch):  # P5
     monkeypatch.chdir(tmp_path)
     from PySide6.QtWidgets import QApplication, QToolButton
 
@@ -192,13 +241,11 @@ def test_static_disabled_spot_toggles_explain_and_switch_is_a_button(tmp_path, m
     app = QApplication.instance() or QApplication([])
     from orbitrx.ui.qt_app import QtOrbitRxApplication
     win = QtOrbitRxApplication()
-    if win._map_backend != "leaflet":
-        for key in ("spot_arcs", "spot_heatmap"):
-            cb = win._layer_checks[key]
-            assert not cb.isEnabled()
-            assert cb.toolTip() == "Available on the interactive map"
-        btn = win.findChild(QToolButton, "switchMapButton")
-        assert btn is not None and btn.text() == "Switch map"
+    for key in ("spot_arcs", "spot_heatmap"):
+        cb = win._layer_checks[key]
+        assert cb.isEnabled()
+        assert cb.toolTip() == ""
+    assert win.findChild(QToolButton, "switchMapButton") is None
     win.ctrl.stop()
     win.deleteLater()
     app.processEvents()

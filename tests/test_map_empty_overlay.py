@@ -88,23 +88,6 @@ def test_empty_overlay_is_a_legible_pill_on_the_static_map(window): # S2
     assert "padding: 8px 14px" in style
 
 
-def test_empty_overlay_is_a_legible_pill_on_the_leaflet_map():  # S2
-    from orbitrx.ui.leaflet_map import WEBENGINE_AVAILABLE, LeafletMapWidget
-    from orbitrx.map_renderer import MapRenderer
-
-    if not WEBENGINE_AVAILABLE:
-        pytest.skip("QtWebEngine not available")
-    from PySide6.QtWidgets import QApplication
-
-    QApplication.instance() or QApplication([])
-    widget = LeafletMapWidget(MapRenderer(width=10, height=10))
-    style = widget._empty_overlay.styleSheet()
-    assert "color: #C9D1D9" in style
-    assert "background: rgba(15,23,32,0.85)" in style
-    assert "border-radius" in style
-    assert "padding: 8px 14px" in style
-
-
 def test_empty_overlay_pill_is_a_single_line(window):  # S2
     win = window
     mw = getattr(win, "map_widget", None) or getattr(win, "map_view", None)

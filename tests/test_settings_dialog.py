@@ -57,7 +57,7 @@ def test_every_settings_page_has_a_non_empty_description(window): # S4
 
 def test_map_and_spots_page_keeps_all_merged_controls(window): # S4
     dlg = window._build_settings_dialog()
-    for key in ("map_backend", "spots_mode", "pskreporter_poll_seconds"):
+    for key in ("spots_mode", "pskreporter_poll_seconds"):
         field = dlg.fields[key]
         page = field.parentWidget()
         assert dlg.stack.indexOf(page) == EXPECTED_PAGES.index("Map & spots")
@@ -205,7 +205,7 @@ def test_settings_label_column_is_consistent_across_pages(window): # N-new-3
     dlg = window._build_settings_dialog()
     sample_fields = [
         "spots_callsign", "cat_port", "dx_cluster_callsign",
-        "spots_mode", "map_backend", "refresh_interval_seconds",
+        "spots_mode", "refresh_interval_seconds",
     ]
     for key in sample_fields:
         field = dlg.fields[key]

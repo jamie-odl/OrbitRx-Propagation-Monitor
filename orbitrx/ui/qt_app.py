@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -26,12 +27,6 @@ from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
 from orbitrx.ui.theme import CARD_STYLE, CARD_TEXT, ERR, FONT_BODY, MUTED, MUTED_SECONDARY, OK, apply_theme
 from orbitrx.ui.window_fit import fit_to_screen
 from orbitrx.update_checker import check_github_release
-
-try:
-    from orbitrx.ui.leaflet_map import WEBENGINE_AVAILABLE, LeafletMapWidget
-except ImportError:
-    WEBENGINE_AVAILABLE = False
-    LeafletMapWidget = None
 
 if not QT_AVAILABLE:
     raise ImportError("PySide6 is required for the Qt UI")
@@ -83,7 +78,7 @@ SETTINGS_PAGE_DESCRIPTIONS = {
     "Station": "Your callsign and home coordinates, used to centre the map and tag your spots.",
     "Rig": "Connect to your radio over CAT so clicking a spot on the map can tune it for you.",
     "DX cluster": "Pick a cluster node and filter which DX spots show up on the map.",
-    "Map & spots": "Choose the map backend and how often live spots refresh from PSKReporter.",
+    "Map & spots": "How often live spots refresh from PSKReporter, and which mode they show.",
     "Services": "Optional QRZ lookups and how often space weather data refreshes.",
 }
 
@@ -177,6 +172,7 @@ class _UiInvoker(QObject):
 
 class QtOrbitRxApplication(QMainWindow):
     def __init__(self) -> None:
+        self._t_init_start = time.perf_counter()
         super().__init__()
         app = QApplication.instance()
         if app is not None:
@@ -201,11 +197,6 @@ class QtOrbitRxApplication(QMainWindow):
         self.ctrl._on_band_beep = ui(self._spot_beep)
         self.ctrl.on_live_spots = ui(self._refresh_live_spots)
 
-        cfg_backend = self.ctrl.cfg.get("map_backend", "static")
-        if cfg_backend == "leaflet" and not self._leaflet_available():
-            cfg_backend = "static"
-        self._map_backend = cfg_backend
-
         geom = self.ctrl.cfg.get("window_geometry", "1400x820")
         self.resize(*self._parse_geom(geom))
         self._build_ui()
@@ -227,8 +218,10 @@ class QtOrbitRxApplication(QMainWindow):
         self._cluster_pulse_timer.timeout.connect(self._tick_cluster_pulse)
         self._cluster_pulse_timer.start(700)
 
-    def _leaflet_available(self) -> bool:
-        return bool(WEBENGINE_AVAILABLE and LeafletMapWidget)
+        self.ctrl.log.info(
+            "perf: cold_start_to_first_paint_ready_ms=%.1f",
+            (time.perf_counter() - self._t_init_start) * 1000,
+        )
 
     def _parse_geom(self, g: str) -> tuple[int, int]:
         try:
@@ -238,8 +231,6 @@ class QtOrbitRxApplication(QMainWindow):
             return 1400, 820
 
     def _create_map_widget(self):
-        if self._map_backend == "leaflet" and self._leaflet_available():
-            return LeafletMapWidget(self.renderer)
         return PropagationMapWidget(self.renderer)
 
     def _build_ui(self) -> None:
@@ -252,9 +243,9 @@ class QtOrbitRxApplication(QMainWindow):
 
         map_pane = QWidget()
         map_layout = QVBoxLayout(map_pane)
-        # P1: a bold header ("Static map"/"Interactive map") plus a muted secondary
-        # hint line (file name/dims, or an error) that
-        # elides on the right with the full text always available as a tooltip.
+        # P1: a bold header ("Map") plus a muted secondary hint line (file name/dims,
+        # or an error) that elides on the right with the full text always available
+        # as a tooltip.
         map_layout.setContentsMargins(16, 16, 16, 8)
         map_layout.setSpacing(8)
         header_row = QHBoxLayout()
@@ -292,14 +283,11 @@ class QtOrbitRxApplication(QMainWindow):
         if hasattr(self.map_widget, "greyline_meta_changed"):
             self.map_widget.greyline_meta_changed.connect(self.banner_hint.setFullText)
         self.map_widget.map_clicked.connect(self._on_map_click)
-        if hasattr(self.map_widget, "switch_to_static_requested"):
-            self.map_widget.switch_to_static_requested.connect(
-                lambda: self._settings(initial_page="Map & spots")
-            )
         map_layout.addWidget(self.map_widget, stretch=1)
 
-        # M3: layer chips (checkable pills) in one wrapping row.
-        # V11 must-fix 2: Live spots / Heatmap only apply on Leaflet - hide on static.
+        # M3: layer chips (checkable pills) in one wrapping row. Live/Heat apply
+        # to the native map's own live-spots layer (set_live_spots), same as
+        # every other chip here.
         layer_widgets = []
         for key, label in [("greyline", "Greyline"), ("night", "Night"), ("dx_arcs", "DX"),
                            ("aurora", "Aurora"), ("grid", "Grid"),
@@ -310,30 +298,12 @@ class QtOrbitRxApplication(QMainWindow):
             chip.setObjectName("layerChip")
             chip.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             chip.blockSignals(True)
-            spot_on_static = key.startswith("spot_") and self._map_backend != "leaflet"
-            if spot_on_static:
-                chip.setChecked(False)
-                chip.setEnabled(False)
-                chip.setVisible(False)
-                chip.setToolTip("Available on the interactive map")
-            else:
-                chip.setChecked(self.ctrl.cfg.get("map_layers", {}).get(key, key != "grid"))
+            chip.setChecked(self.ctrl.cfg.get("map_layers", {}).get(key, key != "grid"))
             chip.blockSignals(False)
             self._layer_checks[key] = chip
-            # Unparented QToolButton.isVisible() is False before show — never gate on it.
-            if not spot_on_static:
-                layer_widgets.append(chip)
+            layer_widgets.append(chip)
         for chip in self._layer_checks.values():
             chip.toggled.connect(lambda _=False: self._layers_changed())
-        if self._map_backend != "leaflet":
-            switch_lbl = QToolButton()
-            switch_lbl.setText("Switch map")
-            switch_lbl.setObjectName("switchMapButton")
-            switch_lbl.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-            switch_lbl.setAutoRaise(True)
-            switch_lbl.setToolTip("Live spots need the interactive map. Switch in Settings > Map & spots.")
-            switch_lbl.clicked.connect(lambda: self._settings(initial_page="Map & spots"))
-            layer_widgets.append(switch_lbl)
         self._layer_grid = _ReflowGrid(layer_widgets, min_item_width=72, max_cols=8)
         self._layer_grid.setMinimumHeight(36)
         self._layer_grid.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
@@ -698,11 +668,6 @@ class QtOrbitRxApplication(QMainWindow):
         self.banner.setText("Map")
         self.banner_hint.setFullText("loading...")
         try:
-            if self._map_backend == "leaflet":
-                self._map_label = "Interactive map · offline basemap"
-                self.banner.setText("Interactive map")
-                self.banner_hint.setFullText("")
-                return
             map_path = ensure_map_image()
             if not map_path.is_file():
                 raise FileNotFoundError(f"{map_path.name} not found at {map_path}")
@@ -711,8 +676,8 @@ class QtOrbitRxApplication(QMainWindow):
             self.renderer.set_base_map(img)
             self.map_widget.set_base_map(self.renderer.base_rgba_image())
             # M1: never print the asset filename in the UI.
-            self._map_label = "Static map"
-            self.banner.setText("Static map")
+            self._map_label = "Map · offline basemap"
+            self.banner.setText("Map")
             self.banner_hint.setFullText("")
         except Exception as e:
             self.renderer.set_base_map(None)
@@ -879,6 +844,8 @@ class QtOrbitRxApplication(QMainWindow):
         self.ctrl.refresh_location()
         self.ctrl.fetch_weather()
         self._refresh_labels_and_map()
+        elapsed_ms = (time.perf_counter() - self._t_init_start) * 1000
+        self.ctrl.log.info("perf: cold_start_to_startup_complete_ms=%.1f", elapsed_ms)
 
     def _auto_refresh(self) -> None:
         self.ctrl.state.prune_dx_spots()
@@ -886,12 +853,23 @@ class QtOrbitRxApplication(QMainWindow):
         self.ctrl.fetch_weather()
 
     def _check_updates(self) -> None:
-        info = check_github_release(__version__)
-        if info.get("update_available"):
-            QMessageBox.information(
-                self, "Update Available",
-                f"{info['message']}\n\nDownload: {info['url']}",
-            )
+        # check_github_release does a blocking network call (10s timeout) --
+        # never run it on the UI thread, or a slow/unreachable GitHub freezes
+        # the whole window for up to that long.
+        on_done = self._ui.wrap(self._show_update_available)
+
+        def worker() -> None:
+            info = check_github_release(__version__)
+            if info.get("update_available"):
+                on_done(info)
+
+        threading.Thread(target=worker, daemon=True, name="update-check").start()
+
+    def _show_update_available(self, info: dict) -> None:
+        QMessageBox.information(
+            self, "Update Available",
+            f"{info['message']}\n\nDownload: {info['url']}",
+        )
 
     def _export_json(self) -> None:
         p = self.ctrl.export_json()
@@ -1226,15 +1204,6 @@ class QtOrbitRxApplication(QMainWindow):
 
         # --- Map & spots ---
         map_page = self._add_form_page(page_list, stack, "Map & spots")
-        map_backend = QComboBox()
-        map_backend.addItem("Static world map (works offline)", "static")
-        if self._leaflet_available():
-            map_backend.addItem("Interactive map with live spots (needs internet)", "leaflet")
-        idx = map_backend.findData(cfg.get("map_backend", "static"))
-        if idx >= 0:
-            map_backend.setCurrentIndex(idx)
-        fields["map_backend"] = map_backend
-        self._add_settings_row(map_page, "Map backend", map_backend)
         spots_mode = QComboBox()
         spots_mode.addItems(["FT8", "FT4", "WSPR"])
         midx = spots_mode.findText(str(cfg.get("spots_mode", "FT8")))
@@ -1344,15 +1313,13 @@ class QtOrbitRxApplication(QMainWindow):
         cfg.set("pskreporter_poll_seconds", clamp_poll_seconds(fields["pskreporter_poll_seconds"].value()))
         cfg.set("qrz_api_key", fields["qrz_api_key"].text().strip())
         cfg.set("refresh_interval_seconds", fields["refresh_interval_seconds"].value())
-        new_backend = fields["map_backend"].currentData()
-        if new_backend != self._map_backend:
-            cfg.set("map_backend", new_backend)
-            QMessageBox.information(self, "Map backend", "Map backend changed. Restart OrbitRx to apply.")
         self._timer.setInterval(int(cfg.get("refresh_interval_seconds", 60)) * 1000)
         self._populate_cluster_combo()
 
     def _settings(self, *, initial_page: str | None = None) -> None:
+        t0 = time.perf_counter()
         dlg = self._build_settings_dialog(initial_page=initial_page)
+        self.ctrl.log.info("perf: settings_dialog_build_ms=%.1f", (time.perf_counter() - t0) * 1000)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._apply_settings_dialog(dlg)
 
@@ -1724,37 +1691,11 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
         stats_lines.append(win._location_hint_lbl.text())
     (out_dir / "stats.txt").write_text("\n".join(stats_lines) + "\n", encoding="utf-8")
 
-    geometry_ok = True
-    if win._map_backend == "leaflet" and getattr(win.map_widget, "web", None) is not None:
-        win.ctrl.refresh_location()
-        for _ in range(30):
-            app.processEvents()
-            time.sleep(0.1)
-        measured = win.map_widget.measure_registration(51.5081, -0.1281)
-        if isinstance(measured, str):
-            try:
-                measured = json.loads(measured)
-            except json.JSONDecodeError:
-                measured = {"error": measured}
-        (out_dir / "leaflet-geometry.txt").write_text(
-            json.dumps(measured) + "\n", encoding="utf-8"
-        )
-        width = abs(float(measured.get("width", 0))) if isinstance(measured, dict) else 0
-        dx = abs(float(measured.get("dx", 99))) if isinstance(measured, dict) else 99
-        dy = abs(float(measured.get("dy", 99))) if isinstance(measured, dict) else 99
-        geometry_ok = (
-            isinstance(measured, dict)
-            and "error" not in measured
-            and width >= 50
-            and dx <= 2
-            and dy <= 2
-        )
-
     # Leave QApplication alive so in-process tests can keep using it. The
     # process entry point deletes it before exit. See finish note on
     # exit_after_qapplication_deleted.
     quiet_capture_shutdown(app, win, out_dir / "shutdown-stage.txt")
-    return 0 if geometry_ok else 1
+    return 0
 
 
 def _stage(stage_log: Path | None, name: str) -> None:
@@ -1784,9 +1725,12 @@ def quiet_capture_shutdown(app, win, stage_log: Path | None) -> None:
 
     closeEvent ignores the close while the tray icon is visible, which is the
     default. The capture is not a minimize-to-tray. Hide the tray first so the
-    window actually closes. A WebEngine view, if this window created one, is
-    released before that close. The static map does not create a view, but the
-    module import has already loaded Qt WebEngine.
+    window actually closes. Historical note: this used to also release a
+    WebEngine view before that close, back when the leaflet import loaded Qt
+    WebEngine even for the static map. Qt WebEngine is gone now (Option B,
+    2026-11-09); `map_widget.web` never exists, so the "webengine-not-created"
+    stage below always fires -- it stays named that for continuity with the
+    historical shutdown-stage logs this fed into.
     """
     if win is None:
         _stage(stage_log, "webengine-not-created")
@@ -1824,9 +1768,11 @@ def exit_after_qapplication_deleted(exit_code: int, stage_log: Path | None) -> N
 
     Actions run 42359055614 wrote the static-map screenshots and then exited
     -1073741819 (0xC0000005). That capture called os._exit while QApplication
-    still existed. Qt WebEngine is loaded by the leaflet import even for the
-    static map, and ExitProcess faults in Qt6WebEngineCore unless the
-    application object is destroyed first. This does not return.
+    still existed; back then, the leaflet import loaded Qt WebEngine even for
+    the static map, and ExitProcess faulted in Qt6WebEngineCore unless the
+    application object was destroyed first. Qt WebEngine is gone now (Option
+    B, 2026-11-09), but deleting the QApplication before os._exit is still
+    correct practice, so this keeps doing it. This does not return.
     """
     try:
         app = QApplication.instance()
