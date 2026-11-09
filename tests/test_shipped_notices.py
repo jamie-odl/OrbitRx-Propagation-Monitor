@@ -56,7 +56,9 @@ def test_broken_osm_notice_is_corrected_and_map_section_exists():
     assert "public domain" in MAP_DOC
     assert "does not extend that grant" in MAP_DOC
     assert "OpenStreetMap tile servers" not in PRIVACY
-    assert "file://" in PRIVACY
+    # F11: no Leaflet/WebEngine claim — the map is native-only now.
+    assert "Leaflet" not in PRIVACY
+    assert "No tile server" in PRIVACY
     about = (ROOT / "orbitrx" / "ui" / "about.py").read_text(encoding="utf-8")
     assert "OpenStreetMap credits" not in about
     assert "application source is under the MIT License" in about

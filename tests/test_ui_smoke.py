@@ -249,3 +249,174 @@ def test_live_spot_toggles_are_enabled_on_the_native_map(tmp_path, monkeypatch):
     win.ctrl.stop()
     win.deleteLater()
     app.processEvents()
+
+
+def test_basemap_load_runs_off_the_ui_thread_and_never_blocks_init(tmp_path, monkeypatch):
+    """F7: Image.open + LANCZOS scaling must not block window construction;
+    the real basemap swaps in once a background thread finishes loading it."""
+    monkeypatch.chdir(tmp_path)
+    import threading
+    import time as time_mod
+    from PySide6.QtWidgets import QApplication
+    from PIL import Image
+
+    import orbitrx.spots.service as svc
+    monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
+    import orbitrx.dx as dx
+    monkeypatch.setattr(dx.DxClusterService, "start", lambda self: None)
+    from orbitrx.ui.controller import OrbitRxController
+    monkeypatch.setattr(OrbitRxController, "fetch_weather", lambda self: None)
+    monkeypatch.setattr(OrbitRxController, "refresh_location", lambda self: None)
+
+    main_thread = threading.current_thread()
+    seen_threads = []
+    release = threading.Event()
+
+    fake_map_path = tmp_path / "fake_basemap.png"
+    Image.new("RGB", (10, 10), (1, 2, 3)).save(fake_map_path)
+
+    import orbitrx.paths as paths_mod
+    monkeypatch.setattr(paths_mod, "ensure_map_image", lambda: fake_map_path)
+
+    real_open = Image.open
+
+    def slow_open(path, *a, **kw):
+        seen_threads.append(threading.current_thread())
+        release.wait(timeout=5)
+        return real_open(path, *a, **kw)
+
+    monkeypatch.setattr(Image, "open", slow_open)
+
+    app = QApplication.instance() or QApplication([])
+    from orbitrx.ui.qt_app import QtOrbitRxApplication
+
+    t0 = time_mod.perf_counter()
+    win = QtOrbitRxApplication()
+    init_duration = time_mod.perf_counter() - t0
+    assert init_duration < 1.0  # must not block on the slow Image.open
+
+    deadline = time_mod.time() + 5
+    while not seen_threads and time_mod.time() < deadline:
+        time_mod.sleep(0.01)
+    assert seen_threads and seen_threads[0] is not main_thread
+
+    release.set()
+    deadline = time_mod.time() + 5
+    while win._map_label != "Map · offline basemap" and time_mod.time() < deadline:
+        app.processEvents()
+        time_mod.sleep(0.01)
+    assert win._map_label == "Map · offline basemap"
+
+    win.ctrl.stop()
+    win.deleteLater()
+    app.processEvents()
+
+
+def test_layer_toggle_defers_cfg_save_and_flushes_on_close(tmp_path, monkeypatch):
+    """F8: a chip toggle must not synchronously hit disk (cfg.save() can spike
+    under Windows AV scanning); rapid toggles coalesce into one deferred save
+    of the final mask, and closing the window flushes it so persistence
+    survives a quick close right after toggling."""
+    monkeypatch.chdir(tmp_path)
+    from PySide6.QtWidgets import QApplication
+
+    import orbitrx.spots.service as svc
+    monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
+    import orbitrx.dx as dx
+    monkeypatch.setattr(dx.DxClusterService, "start", lambda self: None)
+    from orbitrx.ui.controller import OrbitRxController
+    monkeypatch.setattr(OrbitRxController, "fetch_weather", lambda self: None)
+    monkeypatch.setattr(OrbitRxController, "refresh_location", lambda self: None)
+
+    app = QApplication.instance() or QApplication([])
+    from orbitrx.ui.qt_app import QtOrbitRxApplication
+    win = QtOrbitRxApplication()
+
+    save_calls = []
+    orig_save = win.ctrl.cfg.save
+
+    def counting_save():
+        save_calls.append(True)
+        orig_save()
+
+    monkeypatch.setattr(win.ctrl.cfg, "save", counting_save)
+
+    win._layer_checks["grid"].setChecked(True)
+    win._layer_checks["aurora"].setChecked(False)
+    win._layer_checks["night"].setChecked(False)
+    assert save_calls == []  # no synchronous disk write from the toggles themselves
+    # In-memory config (and therefore the redraw) already reflects the final
+    # state, so visuals are never stale even though the write is deferred.
+    assert win.ctrl.cfg.data["map_layers"]["grid"] is True
+    assert win.ctrl.cfg.data["map_layers"]["aurora"] is False
+
+    win.close()
+    # closeEvent flushes the deferred layers save and separately persists
+    # window_geometry (its own cfg.set -> save); either write already carries
+    # the up-to-date in-memory map_layers mask, so no toggle is lost.
+    assert len(save_calls) >= 1
+
+    from orbitrx.config import AppConfig
+    reloaded = AppConfig(path=win.ctrl.cfg.path).load()
+    assert reloaded.data["map_layers"]["grid"] is True
+    assert reloaded.data["map_layers"]["aurora"] is False
+
+    win.deleteLater()
+    app.processEvents()
+
+
+def test_slider_drag_throttles_redraw_to_final_value(tmp_path, monkeypatch):
+    """F10: dragging the time slider through many values in quick succession
+    must not fire one full redraw per step; redraws are throttled to <=10Hz
+    and the final value still settles quickly."""
+    monkeypatch.chdir(tmp_path)
+    import time as time_mod
+    from PySide6.QtWidgets import QApplication
+
+    import orbitrx.spots.service as svc
+    monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
+    import orbitrx.dx as dx
+    monkeypatch.setattr(dx.DxClusterService, "start", lambda self: None)
+    from orbitrx.ui.controller import OrbitRxController
+    monkeypatch.setattr(OrbitRxController, "fetch_weather", lambda self: None)
+    monkeypatch.setattr(OrbitRxController, "refresh_location", lambda self: None)
+
+    app = QApplication.instance() or QApplication([])
+    from orbitrx.ui.qt_app import QtOrbitRxApplication
+    win = QtOrbitRxApplication()
+    # Neutralize the other deferred callbacks so they can't sneak a redraw in
+    # while we pump the event loop below.
+    win._startup = lambda: None
+    win._check_updates = lambda: None
+    win._timer.stop()
+    win._cluster_pulse_timer.stop()
+
+    refresh_calls = []
+    orig_refresh_map = win._refresh_map
+
+    def counting_refresh_map(*a, **kw):
+        refresh_calls.append(win.ctrl.state.slider_offset_hours)
+        orig_refresh_map(*a, **kw)
+
+    win._refresh_map = counting_refresh_map
+
+    from orbitrx.ui.formatting import format_hour_offset
+
+    for v in range(20):
+        win._slider_moved(v)
+    # The label is immediate even though the redraw is throttled.
+    assert win.lbl_slider.text() == format_hour_offset(19)
+    # The leading edge fired once immediately; the other 19 rapid steps must
+    # not have each triggered their own redraw.
+    assert len(refresh_calls) == 1
+
+    deadline = time_mod.time() + 1.0
+    while len(refresh_calls) < 2 and time_mod.time() < deadline:
+        app.processEvents()
+        time_mod.sleep(0.005)
+    # A trailing redraw lands with the final dragged-to value.
+    assert refresh_calls[-1] == 19.0
+
+    win.ctrl.stop()
+    win.deleteLater()
+    app.processEvents()

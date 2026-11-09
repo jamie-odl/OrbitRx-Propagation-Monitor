@@ -63,6 +63,43 @@ def test_service_respects_poll_floor_and_survives_offline():
         assert len(result) == 1  # keeps last good data
 
 
+def test_spots_service_start_does_not_init_database_on_caller_thread():
+    """F9: start() is called from the UI thread during window init; the
+    SQLite DDL must happen on the worker thread, not block the caller."""
+    import threading
+    import time
+
+    main_thread = threading.current_thread()
+    init_threads = []
+    release = threading.Event()
+    real_init = database.initialize_database
+
+    def slow_init():
+        init_threads.append(threading.current_thread())
+        release.wait(timeout=5)
+        real_init()
+
+    with TemporaryDirectory() as tmp, patch.object(database, "DATABASE_PATH", Path(tmp) / "s.db"), \
+            patch.object(database, "initialize_database", slow_init):
+        svc = SpotsService(
+            _Cfg(spots_enabled=True, pskreporter_poll_seconds=100000),
+            fetcher=lambda **kwargs: [],
+        )
+
+        t0 = time.perf_counter()
+        svc.start()
+        call_duration = time.perf_counter() - t0
+        assert call_duration < 1.0  # start() must return immediately
+
+        deadline = time.time() + 5
+        while not init_threads and time.time() < deadline:
+            time.sleep(0.01)
+        assert init_threads and init_threads[0] is not main_thread
+
+        release.set()
+        svc.stop()
+
+
 def test_ip_geolocation_is_off_by_default():
     assert DEFAULT_CONFIG["ip_geolocation_enabled"] is False
 
