@@ -183,6 +183,15 @@ class QtOrbitRxApplication(QMainWindow):
         self._layer_checks: dict[str, QToolButton] = {}
         self._map_container: QWidget | None = None
         self._tray: QSystemTrayIcon | None = None
+        self._layers_save_timer: QTimer | None = None
+        self._slider_refresh_timer = QTimer(self)
+        self._slider_refresh_timer.setSingleShot(True)
+        self._slider_refresh_timer.timeout.connect(self._slider_refresh_cooldown)
+        self._slider_refresh_pending = False
+        self._replay_refresh_timer = QTimer(self)
+        self._replay_refresh_timer.setSingleShot(True)
+        self._replay_refresh_timer.timeout.connect(self._replay_refresh_cooldown)
+        self._replay_refresh_pending = False
 
         self._ui = _UiInvoker()
         ui = self._ui.wrap
@@ -663,31 +672,53 @@ class QtOrbitRxApplication(QMainWindow):
         self._set_status(f"Cluster → {node.get('name', node.get('host'))}")
 
     def _load_map(self) -> None:
+        """F7: the basemap PIL load + LANCZOS scale is real CPU work (cold-start
+        cost measured ~185ms); never do it on the UI thread. Show the renderer's
+        placeholder immediately so first paint/menu chrome is never blocked, then
+        swap in the real basemap once a daemon thread finishes loading it."""
         from orbitrx.paths import ensure_map_image
 
         self.banner.setText("Map")
         self.banner_hint.setFullText("loading...")
-        try:
-            map_path = ensure_map_image()
-            if not map_path.is_file():
-                raise FileNotFoundError(f"{map_path.name} not found at {map_path}")
-            img = Image.open(map_path)
-            img.load()
-            self.renderer.set_base_map(img)
+        self._map_label = "Map · loading"
+        self.renderer.set_base_map(None)
+        self.map_widget.set_base_map(self.renderer.base_rgba_image())
+
+        on_loaded = self._ui.wrap(self._on_map_loaded)
+        on_failed = self._ui.wrap(self._on_map_load_failed)
+
+        def worker() -> None:
+            try:
+                map_path = ensure_map_image()
+                if not map_path.is_file():
+                    raise FileNotFoundError(f"{map_path.name} not found at {map_path}")
+                img = Image.open(map_path)
+                img.load()
+                scaled = self.renderer.prepare_base_map(img)
+            except Exception as exc:
+                on_failed(exc)
+            else:
+                on_loaded(scaled)
+
+        threading.Thread(target=worker, daemon=True, name="map-load").start()
+
+    def _on_map_loaded(self, scaled_image) -> None:
+        self.renderer.set_prescaled_base_map(scaled_image)
+        self.map_widget.set_base_map(self.renderer.base_rgba_image())
+        # M1: never print the asset filename in the UI.
+        self._map_label = "Map · offline basemap"
+        self.banner.setText("Map")
+        self.banner_hint.setFullText("")
+
+    def _on_map_load_failed(self, exc: Exception) -> None:
+        self.renderer.set_base_map(None)
+        if hasattr(self.map_widget, "set_base_map"):
             self.map_widget.set_base_map(self.renderer.base_rgba_image())
-            # M1: never print the asset filename in the UI.
-            self._map_label = "Map · offline basemap"
-            self.banner.setText("Map")
-            self.banner_hint.setFullText("")
-        except Exception as e:
-            self.renderer.set_base_map(None)
-            if hasattr(self.map_widget, "set_base_map"):
-                self.map_widget.set_base_map(self.renderer.base_rgba_image())
-            self._map_label = f"Map FAILED: {e}"
-            self.banner.setText(self._map_label)
-            self.banner_hint.setFullText("")
-            self.banner.setProperty("state", "error")
-            self.banner.style().polish(self.banner)
+        self._map_label = f"Map FAILED: {exc}"
+        self.banner.setText(self._map_label)
+        self.banner_hint.setFullText("")
+        self.banner.setProperty("state", "error")
+        self.banner.style().polish(self.banner)
 
     def _current_layers(self) -> MapLayers:
         return MapLayers(
@@ -699,8 +730,21 @@ class QtOrbitRxApplication(QMainWindow):
         )
 
     def _replay_moved(self, val: int) -> None:
+        # F10: the label updates immediately; the (heavier) live-spots refresh
+        # is throttled to <=10Hz while dragging, same mechanism as the time
+        # slider below.
         self.lbl_replay.setText(format_replay_offset(val))
+        if self._replay_refresh_timer.isActive():
+            self._replay_refresh_pending = True
+            return
         self._refresh_live_spots()
+        self._replay_refresh_timer.start(80)
+
+    def _replay_refresh_cooldown(self) -> None:
+        if self._replay_refresh_pending:
+            self._replay_refresh_pending = False
+            self._refresh_live_spots()
+            self._replay_refresh_timer.start(80)
 
     def _refresh_live_spots(self) -> None:
         from orbitrx.spots.geo import arcs_payload, heatmap_payload
@@ -764,15 +808,49 @@ class QtOrbitRxApplication(QMainWindow):
         self._refresh_map()
 
     def _layers_changed(self) -> None:
+        # F8: the chip itself already flipped (native QToolButton paint, before
+        # this slot even runs) so visual feedback is immediate. The redraw stays
+        # synchronous (cheap, ~2-21ms measured) but the disk write is deferred:
+        # cfg.save() can spike under Windows AV scanning, so rapid toggles are
+        # coalesced into a single debounced save of the final mask rather than
+        # one write per click.
         ml = {k: cb.isChecked() for k, cb in self._layer_checks.items()}
         self.ctrl.cfg.data["map_layers"] = ml
-        self.ctrl.cfg.save()
         self._refresh_map()
+        self._schedule_layers_save()
+
+    def _schedule_layers_save(self) -> None:
+        if self._layers_save_timer is None:
+            self._layers_save_timer = QTimer(self)
+            self._layers_save_timer.setSingleShot(True)
+            self._layers_save_timer.timeout.connect(self.ctrl.cfg.save)
+        self._layers_save_timer.start(400)
+
+    def _flush_layers_save(self) -> None:
+        if self._layers_save_timer is not None and self._layers_save_timer.isActive():
+            self._layers_save_timer.stop()
+            self.ctrl.cfg.save()
 
     def _slider_moved(self, val: int) -> None:
+        # F10: thumb/label update is immediate (cheap); the full map+live-spots
+        # redraw is throttled to <=10Hz (80ms) while dragging so a fast drag
+        # doesn't fire one full redraw per pixel of mouse movement. The first
+        # move in a burst still redraws immediately, and a trailing redraw
+        # always runs right after the last move/release so the final position
+        # settles well within the design's 300ms budget.
         self.ctrl.state.slider_offset_hours = float(val)
         self.lbl_slider.setText(format_hour_offset(val))
+        if self._slider_refresh_timer.isActive():
+            self._slider_refresh_pending = True
+            return
         self._refresh_map()
+        self._slider_refresh_timer.start(80)
+
+    def _slider_refresh_cooldown(self) -> None:
+        if self._slider_refresh_pending:
+            self._slider_refresh_pending = False
+            self._refresh_map()
+            self._slider_refresh_timer.start(80)
 
     def _on_map_click(self, x: float, y: float) -> None:
         self.click_lbl.setText(self.ctrl.map_click_latlon(x, y, self.renderer))
@@ -1446,6 +1524,7 @@ class QtOrbitRxApplication(QMainWindow):
                 2500,
             )
             return
+        self._flush_layers_save()
         self.ctrl.cfg.set("window_geometry", f"{self.width()}x{self.height()}")
         self.ctrl.stop()
         super().closeEvent(event)

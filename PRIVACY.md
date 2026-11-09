@@ -11,7 +11,7 @@ and the author receives no data from it.
 | Live Spots on (default) | PSKReporter | Your IP address, and the callsign and mode filter you set (if any). At most once every 5 minutes |
 | DX cluster on | The cluster node you pick | Your cluster login callsign |
 | QRZ key set (optional) | QRZ.com | Your API key and the callsigns you look up |
-| Interactive map selected | No tile server. The page is a local file (`file://` image overlay of the basemap) | Nothing for the basemap. Leaflet is bundled in the app |
+| Map | No tile server. The basemap is a static image shipped in the app and rendered natively (Qt), not a browser/web view | Nothing - the basemap never leaves your computer |
 | Update check on | GitHub | Your IP address |
 | IP location turned on (OFF by default) | ipinfo.io | Your IP address; ipinfo returns an approximate location |
 

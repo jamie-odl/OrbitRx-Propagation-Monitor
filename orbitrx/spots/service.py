@@ -45,10 +45,6 @@ class SpotsService:
     def start(self) -> None:
         if not self.cfg.get("spots_enabled", True) or self._thread:
             return
-        try:
-            database.initialize_database()
-        except Exception as exc:  # pragma: no cover - disk issues
-            log.warning("Spots DB init failed: %s", exc)
         self._thread = threading.Thread(target=self._run, daemon=True, name="pskreporter")
         self._thread.start()
 
@@ -56,6 +52,13 @@ class SpotsService:
         self._stop.set()
 
     def _run(self) -> None:
+        # F9: SQLite DDL (CREATE TABLE/INDEX) runs here, on this worker thread,
+        # not in start() — start() is called from the UI thread during window
+        # init and must never block on disk I/O.
+        try:
+            database.initialize_database()
+        except Exception as exc:  # pragma: no cover - disk issues
+            log.warning("Spots DB init failed: %s", exc)
         while not self._stop.is_set():
             self.poll_once()
             self._stop.wait(self.poll_seconds)

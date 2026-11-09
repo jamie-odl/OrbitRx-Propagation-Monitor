@@ -57,7 +57,17 @@ class MapRenderer:
         if image is None:
             self._base_source = None
             return
-        self._base_source = image.resize((self.width, self.height), Image.Resampling.LANCZOS)
+        self._base_source = self.prepare_base_map(image)
+
+    def prepare_base_map(self, image: Image.Image) -> Image.Image:
+        """Scale a raw basemap image to this renderer's size. Pure PIL work with
+        no Qt/state side effects, so it's safe to call off the UI thread (F7);
+        pair with set_prescaled_base_map() to assign the result back."""
+        return image.resize((self.width, self.height), Image.Resampling.LANCZOS)
+
+    def set_prescaled_base_map(self, image: Image.Image) -> None:
+        """Assign a basemap already produced by prepare_base_map()."""
+        self._base_source = image
 
     def base_rgba_image(self) -> Image.Image:
         """RGBA base layer for the Qt widget (world map or placeholder)."""
