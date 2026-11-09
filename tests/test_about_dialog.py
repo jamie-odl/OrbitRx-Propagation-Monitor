@@ -44,6 +44,32 @@ def test_build_commit_prefers_env(monkeypatch):
     assert _build_commit() == "abc1234deadb"
 
 
+def test_build_commit_only_spawns_git_once_per_process(monkeypatch):
+    """About reopens must not re-spawn `git rev-parse` every time (perf fix,
+    2026-11-09): the live-git lookup is cached, only the env override is live."""
+    from orbitrx.ui import about
+
+    monkeypatch.delenv("ORBITRX_COMMIT_SHA", raising=False)
+    about._git_head_commit.cache_clear()
+    calls = []
+    real_run = about.subprocess.run
+
+    def counting_run(*args, **kwargs):
+        calls.append(1)
+        return real_run(*args, **kwargs)
+
+    monkeypatch.setattr(about.subprocess, "run", counting_run)
+    first = _build_commit()
+    second = _build_commit()
+    assert first == second
+    assert len(calls) == 1  # second call must hit the cache, not re-spawn git
+
+    # The env override must still win live even though the git lookup is cached.
+    monkeypatch.setenv("ORBITRX_COMMIT_SHA", "deadbeefcafe")
+    assert _build_commit() == "deadbeefcafe"
+    about._git_head_commit.cache_clear()
+
+
 def test_about_dialog_is_selectable_and_fixed_width(qtbot_app):
     from PySide6.QtCore import Qt
     from PySide6.QtWidgets import QDialog, QLabel

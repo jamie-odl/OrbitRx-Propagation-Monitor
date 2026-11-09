@@ -26,15 +26,17 @@ def pytest_sessionfinish(session, exitstatus):
 
 
 def pytest_unconfigure(config):
-    """Skip Python/Qt interpreter teardown, which can crash in Qt's global
-    destructors (QtWebEngine) after every test has already passed. Reports
-    (including --junitxml) are written before this hook runs."""
+    """Skip Python/Qt interpreter teardown, which used to crash in Qt's global
+    QtWebEngine destructors after every test had already passed, back when the
+    app still loaded WebEngine. Qt WebEngine is gone now, but the process-exit
+    hook stays as cheap insurance against any other Qt global-destructor crash.
+    Reports (including --junitxml) are written before this hook runs."""
     import sys
     sys.stdout.flush()
     sys.stderr.flush()
     if sys.platform == "win32":
-        # Windows' C runtime _exit runs DLL detach handlers, which triggers
-        # the same QtWebEngine shutdown crash; TerminateProcess does not.
+        # Windows' C runtime _exit runs DLL detach handlers, which used to
+        # trigger the same QtWebEngine shutdown crash; TerminateProcess does not.
         import ctypes
         from ctypes import wintypes
         k32 = ctypes.WinDLL("kernel32", use_last_error=True)

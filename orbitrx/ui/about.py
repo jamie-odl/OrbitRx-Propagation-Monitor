@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
+import time
+from functools import lru_cache
 
 from PySide6.QtCore import QUrl, Qt
 from PySide6.QtGui import QFont, QPainter, QColor, QPen, QPainterPath
@@ -23,16 +26,15 @@ BUY_ME_A_COFFEE_URL = "https://buymeacoffee.com/thevenom"
 RELEASES_URL = "https://github.com/jamie-odl/OrbitRx-Propagation-Monitor/releases"
 
 
-def _build_commit() -> str | None:
-    """Short git commit hash for the About version line.
+@lru_cache(maxsize=1)
+def _git_head_commit() -> str | None:
+    """Live `git rev-parse --short HEAD`, cached for the process lifetime.
 
-    Preference: ORBITRX_COMMIT_SHA (CI capture) → live `git rev-parse --short HEAD`
-    when a checkout is present → stamped _build_meta (frozen builds only).
-    Live git wins over a stale stamp so About never shows an old tip SHA.
+    HEAD cannot move while this process runs, so the subprocess spawn (tens
+    of ms, more under antivirus scanning on Windows) must not run again every
+    time the user reopens About. Only this -- not the env var override below,
+    which must always be checked live so tests can monkeypatch it -- is cached.
     """
-    env = (os.environ.get("ORBITRX_COMMIT_SHA") or "").strip()
-    if env:
-        return env[:12]
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -43,6 +45,22 @@ def _build_commit() -> str | None:
             return commit[:12]
     except Exception:
         pass
+    return None
+
+
+def _build_commit() -> str | None:
+    """Short git commit hash for the About version line.
+
+    Preference: ORBITRX_COMMIT_SHA (CI capture) → live `git rev-parse --short HEAD`
+    when a checkout is present → stamped _build_meta (frozen builds only).
+    Live git wins over a stale stamp so About never shows an old tip SHA.
+    """
+    env = (os.environ.get("ORBITRX_COMMIT_SHA") or "").strip()
+    if env:
+        return env[:12]
+    commit = _git_head_commit()
+    if commit:
+        return commit
     try:
         from orbitrx._build_meta import COMMIT_SHA as stamped
         if stamped:
@@ -119,7 +137,7 @@ def _build_about_dialog(parent=None) -> QDialog:
 
     copy = QLabel(
         "Copyright © 2026 thevenom. The OrbitRx application source is under the MIT License. "
-        "That grant does not cover Qt, Qt WebEngine, Chromium, or the map image."
+        "That grant does not cover Qt or the map image."
     )
     copy.setWordWrap(True)
     copy.setStyleSheet(f"color: {MUTED}; font-size: {FONT_CAPTION}px;")
@@ -132,7 +150,7 @@ def _build_about_dialog(parent=None) -> QDialog:
 
     sources = QLabel(
         f'<span style="color:{MUTED}">Data sources:</span> NOAA SWPC, HamQSL (N0NBH), '
-        f'PSKReporter, DX cluster, offline basemap (NOTICE), Leaflet. '
+        f'PSKReporter, DX cluster, offline basemap (NOTICE). '
         f'See <a href="{_notice_url()}" style="color:{ACCENT}">NOTICE</a> for credits.'
     )
     sources.setTextFormat(Qt.TextFormat.RichText)
@@ -187,13 +205,18 @@ def _about_html() -> str:
 <h2 style="margin-bottom:4px">OrbitRx Propagation Monitor</h2>
 <p style="color:#6B7A90;margin-top:0;margin-bottom:12px" id="version-line">{_version_line()}</p>
 <p style="margin-bottom:12px">HF propagation, space weather, DX cluster and live PSKReporter spots in one free desktop app.</p>
-<p style="margin-bottom:12px">Copyright &copy; 2026 thevenom. The OrbitRx application source is under the MIT License. That grant does not cover Qt, Qt WebEngine, Chromium, or the map image.</p>
+<p style="margin-bottom:12px">Copyright &copy; 2026 thevenom. The OrbitRx application source is under the MIT License. That grant does not cover Qt or the map image.</p>
 <p style="margin-bottom:12px"><b>Data sources:</b> NOAA SWPC, HamQSL (N0NBH), PSKReporter (Philip Gladstone),
-DX cluster nodes, offline basemap (NOTICE), Leaflet. See <a href="{_notice_url()}">NOTICE</a> for full credits.</p>
+DX cluster nodes, offline basemap (NOTICE). See <a href="{_notice_url()}">NOTICE</a> for full credits.</p>
 <p style="margin-bottom:12px">This build is unsigned. <a href="{RELEASES_URL}">Verify download</a>
 (compare the file's SHA256 with SHA256SUMS.txt on the release page).</p>
 {coffee}
 """
 
 def show_about(parent=None) -> None:
-    _build_about_dialog(parent).exec()
+    t0 = time.perf_counter()
+    dlg = _build_about_dialog(parent)
+    logging.getLogger("orbitrx").info(
+        "perf: about_dialog_build_ms=%.1f", (time.perf_counter() - t0) * 1000
+    )
+    dlg.exec()
