@@ -41,11 +41,7 @@ def test_london_default_and_offline_map_stay():
     assert DEFAULT_CONFIG["map_backend"] == "static"
     assert DEFAULT_CONFIG["qrz_api_key"] == ""
     assert "mapbox" not in NOTICE.lower()
-    leaflet = (ROOT / "orbitrx" / "ui" / "leaflet_map.py").read_text(encoding="utf-8")
-    assert "mapbox" not in leaflet.lower()
-    assert "basemaps.cartocdn.com" not in leaflet
-    assert "tile.openstreetmap.org" not in leaflet
-    assert "L.imageOverlay" in leaflet
+    assert not (ROOT / "orbitrx" / "ui" / "leaflet_map.py").exists()
 
 
 def test_broken_osm_notice_is_corrected_and_map_section_exists():
@@ -67,7 +63,7 @@ def test_broken_osm_notice_is_corrected_and_map_section_exists():
     assert "does not cover Qt" in about
     qt = (ROOT / "orbitrx" / "ui" / "qt_app.py").read_text(encoding="utf-8")
     assert "Interactive map · OpenStreetMap" not in qt
-    assert "Interactive map · offline basemap" in qt
+    assert "Map · offline basemap" in qt
 
 
 def test_dependency_lines_follow_upstream_files():

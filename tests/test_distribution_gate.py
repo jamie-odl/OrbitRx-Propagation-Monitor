@@ -36,13 +36,15 @@ def test_dev_and_gate_use_the_natural_earth_map_only():
     assert "final-public-candidate-gate-pending" in manifest["release_blockers"]
     assert "corresponding-source-archive-not-publicly-hosted" not in manifest["release_blockers"]
     assert "windows-onedir-build-not-executed" not in manifest["release_blockers"]
+    # Option B (2026-11-09): WebEngine/Chromium are no longer shipped, so the
+    # corresponding-source offer covers only the plain Qt/PySide6 libraries this
+    # build still ships; chromium_credits is gone and the WebEngine archives
+    # moved to the historical "superseded" list (webengine_removed explains why).
     hosted = manifest["corresponding_source"]["entries"]
     hosted_names = {item["name"] for item in hosted}
     assert hosted_names == {
         "pyside-setup-everywhere-src-6.12.0.tar.xz",
         "qt-everywhere-src-6.12.0.tar.xz",
-        "qtwebengine-everywhere-src-6.140.0-rc.tar.xz",
-        "THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt",
     }
     hosted_sha256 = {item["name"]: item["sha256"] for item in hosted}
     assert hosted_sha256["pyside-setup-everywhere-src-6.12.0.tar.xz"] == (
@@ -51,21 +53,17 @@ def test_dev_and_gate_use_the_natural_earth_map_only():
     assert hosted_sha256["qt-everywhere-src-6.12.0.tar.xz"] == (
         "98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165"
     )
-    assert hosted_sha256["qtwebengine-everywhere-src-6.140.0-rc.tar.xz"] == (
-        "61257967afd9803a1db6403e86ea25c4efff8fad479bda365a9d81bfd709f621"
-    )
-    assert hosted_sha256["THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt"] == (
-        "acde5959267a8afbd29c04f776f228ef6d208fa8a632bf356204174de5c460ca"
-    )
+    superseded = manifest["corresponding_source"]["superseded"]
+    assert "qtwebengine-everywhere-src-6.140.0-rc.tar.xz" in superseded
+    assert "THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt" in superseded
+    assert "chromium_credits" not in manifest
     evidence = manifest["windows_onedir_evidence"]
     assert evidence["run"] == "42362357356"
     assert evidence["static_process_exit"] == 0
     assert evidence["interactive_process_exit"] == 0
     assert "windows-static-capture-exit-0xC0000005-on-42359055614" not in manifest["release_blockers"]
     assert "qtwebengine-gn-about-credits-not-generated-for-submodule-71a2fa55" not in manifest["release_blockers"]
-    assert manifest["chromium_credits"]["file"] == "third_party/qt/THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt"
-    assert manifest["chromium_credits"]["sha256"] == "acde5959267a8afbd29c04f776f228ef6d208fa8a632bf356204174de5c460ca"
-    assert manifest["chromium_credits"]["bytes"] == 1026119
+    assert manifest["webengine_removed"]["branch"] == "feat/native-map-no-webengine-2026-11-09"
 
 
 def test_frozen_bundle_ignores_legacy_art_sitting_beside_the_exe(tmp_path, monkeypatch):
@@ -145,31 +143,31 @@ def test_corresponding_source_archives_match_their_manifest():
         assert path.stat().st_size == item["bytes"]
 
 
-def test_capture_process_exits_zero_for_static_and_webengine_view(tmp_path):
+def test_capture_process_exits_zero_for_the_static_capture(tmp_path):
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = "offscreen"
     env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
     probe = ROOT / "tools" / "capture_shutdown_probe.py"
-    for name, extra in (("static", []), ("webengine", ["--with-view"])):
-        out = tmp_path / name
-        proc = subprocess.run(
-            [sys.executable, str(probe), str(out), *extra],
-            env=env,
-            timeout=90,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        assert proc.returncode == 0, proc.stderr
-        stage = (out / "shutdown-stage.txt").read_text(encoding="utf-8")
-        assert "qapplication-deleted" in stage
-        assert stage.strip().splitlines()[-1] == "process-exit"
+    out = tmp_path / "static"
+    proc = subprocess.run(
+        [sys.executable, str(probe), str(out)],
+        env=env,
+        timeout=90,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    stage = (out / "shutdown-stage.txt").read_text(encoding="utf-8")
+    assert "qapplication-deleted" in stage
+    assert stage.strip().splitlines()[-1] == "process-exit"
 
 
 def test_about_snapshot_matches_the_offline_basemap_wording():
     html = (ROOT / "orbitrx" / "ui" / "about.py").read_text(encoding="utf-8")
-    assert "offline basemap (NOTICE), Leaflet" in html
+    assert "offline basemap (NOTICE)." in html
     assert "OrbitRx dark basemap" not in html
+    assert "Leaflet" not in html
 
 
 def test_text_files_stay_lf_so_windows_hashes_match():
@@ -210,20 +208,39 @@ def test_onedir_layout_checker_accepts_sibling_dlls(tmp_path):
     (root / "_internal" / "PySide6").mkdir(parents=True)
     (root / "OrbitRxMonitor.exe").write_bytes(b"x")
     (root / "_internal" / "PySide6" / "Qt6Core.dll").write_bytes(b"x")
-    (root / "_internal" / "PySide6" / "Qt6WebEngineCore.dll").write_bytes(b"x")
     (root / "_internal" / "ne_110m_dark.png").write_bytes(b"x")
     (root / "_internal" / "LICENSE").write_bytes(b"x")
     (root / "_internal" / "NOTICE").write_bytes(b"x")
     (root / "_internal" / "PRIVACY.md").write_bytes(b"x")
     (root / "_internal" / "third_party" / "qt" / "LICENSES").mkdir(parents=True)
     (root / "_internal" / "third_party" / "qt" / "LICENSES" / "LGPL-3.0-only.txt").write_text("lgpl", encoding="utf-8")
-    (root / "_internal" / "third_party" / "qt" / "LICENSE.Chromium").write_text("bsd", encoding="utf-8")
-    (root / "_internal" / "third_party" / "qt" / "THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt").write_text("notices", encoding="utf-8")
     (root / "_internal" / "third_party" / "natural_earth").mkdir(parents=True)
     (root / "_internal" / "third_party" / "natural_earth" / "TERMS_OF_USE.txt").write_text("pd", encoding="utf-8")
     assert check_layout(root) == []
     (root / "world_map.jpg").write_bytes(b"nope")
     assert any("world_map" in item for item in check_layout(root))
+
+
+def test_onedir_layout_checker_rejects_webengine_leftovers(tmp_path):
+    """Option B (2026-11-09): a WebEngine DLL or vendored notice reaching the
+    onedir folder is a packaging regression, not a legacy-art false positive."""
+    from tools.check_onedir_layout import check_layout
+
+    root = tmp_path / "OrbitRxMonitor"
+    (root / "_internal" / "PySide6").mkdir(parents=True)
+    (root / "OrbitRxMonitor.exe").write_bytes(b"x")
+    (root / "_internal" / "PySide6" / "Qt6Core.dll").write_bytes(b"x")
+    (root / "_internal" / "ne_110m_dark.png").write_bytes(b"x")
+    (root / "_internal" / "LICENSE").write_bytes(b"x")
+    (root / "_internal" / "NOTICE").write_bytes(b"x")
+    (root / "_internal" / "PRIVACY.md").write_bytes(b"x")
+    (root / "_internal" / "third_party" / "qt" / "LICENSES").mkdir(parents=True)
+    (root / "_internal" / "third_party" / "qt" / "LICENSES" / "LGPL-3.0-only.txt").write_text("lgpl", encoding="utf-8")
+    (root / "_internal" / "third_party" / "natural_earth").mkdir(parents=True)
+    (root / "_internal" / "third_party" / "natural_earth" / "TERMS_OF_USE.txt").write_text("pd", encoding="utf-8")
+    assert check_layout(root) == []
+    (root / "_internal" / "PySide6" / "Qt6WebEngineCore.dll").write_bytes(b"nope")
+    assert any("Qt6WebEngineCore.dll" in item for item in check_layout(root))
 
 
 def test_scan_pyz_resolves_an_onedir_folder(tmp_path):

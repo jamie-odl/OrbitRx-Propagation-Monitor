@@ -19,8 +19,7 @@
     "third_party/matplotlib/LICENSE": "5a1a81ea301728c8bba2933da832c0cd62229daf20893a024ab3d53244468dbc",
     "third_party/pyserial/LICENSE.txt": "f91cb9813de6a5b142b8f7f2dede630b5134160aedaeaf55f4d6a7e2593ca3f3",
     "third_party/pywin32/License.txt": "ae254460373deef5dff3e08104f4c1f03a045c2ae1b34760b5c30f7efcef9078",
-    "third_party/pyinstaller/COPYING.txt": "0598064c7d2718e38d7914a7d08343b2fa008e3bea9ebba2aa7a6ffa5900dd64",
-    "orbitrx/ui/assets/leaflet/LICENSE-leaflet.txt": null
+    "third_party/pyinstaller/COPYING.txt": "0598064c7d2718e38d7914a7d08343b2fa008e3bea9ebba2aa7a6ffa5900dd64"
   },
   "windows_onedir_evidence": {
     "run": "42362357356",
@@ -46,25 +45,15 @@
     "private_candidate_zip_sha256": null,
     "receipt": "A build receipt is not stored in this file. It is written outside git after the build, because this commit cannot name the hash of its own zip."
   },
-  "chromium_credits": {
-    "file": "third_party/qt/THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt",
-    "bytes": 1026119,
-    "sha256": "acde5959267a8afbd29c04f776f228ef6d208fa8a632bf356204174de5c460ca",
-    "generator": "gen_notices.py from Qt vendor SPDX SBOMs, vendor-SBOM inference, not GN-identity proof",
-    "qtwebengine_commit": "d505fc23640d2bd6345e6483eb73daf4e19f5829",
-    "qtwebengine_tag": "v6.140.0-rc",
-    "chromium_submodule": "39352427a3245a19fb395547b3aa38be9d091ec4",
-    "current_source_archive": {
-      "file": "qtwebengine-everywhere-src-6.140.0-rc.tar.xz",
-      "bytes": 580351144,
-      "sha256": "61257967afd9803a1db6403e86ea25c4efff8fad479bda365a9d81bfd709f621"
-    },
-    "note": "Supersedes third_party/qt/chromium_attributions.qdoc (stale sha256 b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec) and its regeneration path, docs/REGENERATE_CREDITS.ps1; that script and the regenerate-credits workflow are superseded and must not be run. Vendor-SBOM inference is not a GN-identity proof that the generated graph matches this build's configure. Not a published source offer, not legal clearance."
+  "webengine_removed": {
+    "branch": "feat/native-map-no-webengine-2026-11-09",
+    "note": "Option B: Live Spots were ported to the native PropagationMapWidget and the Leaflet/QtWebEngine map view was deleted (orbitrx/ui/leaflet_map.py and orbitrx/ui/assets/leaflet/). This build no longer links, ships, or offers corresponding source for Qt WebEngine or Chromium. The chromium_credits and the two qtwebengine-* / THIRD_PARTY_NOTICES_QtWebEngine-* corresponding_source entries that used to live here described the published WebEngine-era 5.1.0 line (baseline commit 9ca6178799a698231491eebcc101ad3bba914754); that historical hosted material is untouched at downloads.thevenom.dev and still covers copies of that release already distributed. It is simply no longer a true description of what this build packages."
   },
   "corresponding_source": {
     "hosted": true,
     "base_url": "https://downloads.thevenom.dev/orbitrx/",
     "verified_by": "public HTTPS GET 2026-11-08",
+    "note_scope": "Covers only the plain Qt/PySide6 (Widgets/Core/Gui) LGPL libraries this build still ships. See webengine_removed above for why the former WebEngine/Chromium entries were dropped.",
     "entries": [
       {
         "name": "pyside-setup-everywhere-src-6.12.0.tar.xz",
@@ -79,27 +68,13 @@
         "bytes": 443394020,
         "sha256": "98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165",
         "verified_by": "public HTTPS GET 2026-11-08"
-      },
-      {
-        "name": "qtwebengine-everywhere-src-6.140.0-rc.tar.xz",
-        "url": "https://downloads.thevenom.dev/orbitrx/qtwebengine-everywhere-src-6.140.0-rc.tar.xz",
-        "bytes": 580351144,
-        "sha256": "61257967afd9803a1db6403e86ea25c4efff8fad479bda365a9d81bfd709f621",
-        "verified_by": "public HTTPS GET 2026-11-08",
-        "qtwebengine_commit": "d505fc23640d2bd6345e6483eb73daf4e19f5829",
-        "chromium_submodule": "39352427a3245a19fb395547b3aa38be9d091ec4"
-      },
-      {
-        "name": "THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt",
-        "url": "https://downloads.thevenom.dev/orbitrx/THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt",
-        "bytes": 1026119,
-        "sha256": "acde5959267a8afbd29c04f776f228ef6d208fa8a632bf356204174de5c460ca",
-        "verified_by": "public HTTPS GET 2026-11-08"
       }
     ],
     "superseded": [
       "qtwebengine-6.12-d4735ce.tar.xz",
-      "qtwebengine-chromium-71a2fa55.tar"
+      "qtwebengine-chromium-71a2fa55.tar",
+      "qtwebengine-everywhere-src-6.140.0-rc.tar.xz",
+      "THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt"
     ],
     "note": "Hosting and byte identity are verified by the public GET above. That is not a statement of legal clearance; see release_blockers."
   },

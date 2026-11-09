@@ -1,10 +1,13 @@
-"""Run one capture and exit the way the frozen app does.
+"""Run the static-map capture and exit the way the frozen app does.
 
-Usage: capture_shutdown_probe.py <output-dir> [--with-view]
+Usage: capture_shutdown_probe.py <output-dir>
 
-Without --with-view this is the static-map capture. --with-view only builds a
-QWebEngineView and shuts it down, for machines where the full window is not
-what is under test.
+Historical note: this probe used to also exercise a bare QWebEngineView's
+shutdown path (--with-view) because the frozen app's leaflet import loaded
+Qt WebEngine even when only the static map was shown, and a prior Windows
+build crashed (0xC0000005) tearing it down. Qt WebEngine is no longer part
+of the app at all (Option B, 2026-11-09), so that path can no longer occur
+and the probe no longer builds one.
 """
 
 from __future__ import annotations
@@ -18,36 +21,6 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 def main() -> None:
     out = Path(sys.argv[1])
-    if "--with-view" in sys.argv:
-        from PySide6.QtWebEngineWidgets import QWebEngineView
-        from PySide6.QtWidgets import QApplication
-
-        from orbitrx.ui.leaflet_map import WEBENGINE_AVAILABLE
-        from orbitrx.ui.qt_app import exit_after_qapplication_deleted, quiet_capture_shutdown
-
-        if not WEBENGINE_AVAILABLE:
-            sys.stderr.write("Qt WebEngine is not importable\n")
-            raise SystemExit(2)
-        app = QApplication([])
-
-        class _Holder:
-            def __init__(self, web) -> None:
-                self.map_widget = self
-                self.web = web
-                self._timer = None
-                self._cluster_pulse_timer = None
-                self._tray = None
-                self.ctrl = None
-
-            def close(self) -> None:
-                self.web.close()
-
-        holder = _Holder(QWebEngineView())
-        holder.web.setHtml("<p>probe</p>")
-        app.processEvents()
-        quiet_capture_shutdown(app, holder, out / "shutdown-stage.txt")
-        exit_after_qapplication_deleted(0, out / "shutdown-stage.txt")
-        return
     from orbitrx.ui.qt_app import exit_after_qapplication_deleted, run_release_capture_hook
 
     code = run_release_capture_hook(out)

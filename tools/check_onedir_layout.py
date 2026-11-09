@@ -11,16 +11,15 @@ from pathlib import Path
 REQUIRED = (
     "OrbitRxMonitor.exe",
     "_internal/PySide6/Qt6Core.dll",
-    "_internal/PySide6/Qt6WebEngineCore.dll",
     "_internal/ne_110m_dark.png",
     "_internal/LICENSE",
     "_internal/NOTICE",
     "_internal/PRIVACY.md",
     "_internal/third_party/qt/LICENSES/LGPL-3.0-only.txt",
-    "_internal/third_party/qt/LICENSE.Chromium",
-    "_internal/third_party/qt/THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt",
     "_internal/third_party/natural_earth/TERMS_OF_USE.txt",
 )
+# Option B (2026-11-09): the Leaflet/WebEngine map view is gone, so none of its
+# Chromium-backed DLLs or vendored notices should ever reach the onedir folder.
 FORBIDDEN = (
     "world_map.jpg",
     "static_basemap_v2.png",
@@ -28,6 +27,11 @@ FORBIDDEN = (
     "_internal/world_map.jpg",
     "_internal/static_basemap_v2.png",
     "_internal/static_basemap_v2.webp",
+    "_internal/PySide6/Qt6WebEngineCore.dll",
+    "_internal/PySide6/Qt6WebEngineWidgets.dll",
+    "_internal/PySide6/Qt6WebChannel.dll",
+    "_internal/third_party/qt/LICENSE.Chromium",
+    "_internal/third_party/qt/THIRD_PARTY_NOTICES_QtWebEngine-6.140.0.txt",
 )
 
 
@@ -42,7 +46,7 @@ def check_layout(root: Path) -> list[str]:
         if (root / rel).exists():
             problems.append(f"legacy or nested art present: {rel}")
     exe = root / "OrbitRxMonitor.exe"
-    for dll in ("Qt6Core.dll", "Qt6WebEngineCore.dll"):
+    for dll in ("Qt6Core.dll",):
         lib = root / dll
         if exe.is_file() and lib.is_file() and lib.resolve() == exe.resolve():
             problems.append(f"{dll} is not a separate file")

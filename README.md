@@ -4,7 +4,7 @@ Free desktop HF propagation dashboard for radio amateurs. OrbitRx combines NOAA 
 weather, band condition estimates, a live DX cluster and live PSKReporter reception
 reports on one map, so you can see what is open and who is hearing whom.
 
-![OrbitRx main window with Live Spots](docs/screenshots/01-main-leaflet.png)
+![OrbitRx main window with Live Spots](docs/screenshots/01-main-static.png)
 
 > Status: 5.1.0 in development. Windows is the primary target; Linux and macOS run from source.
 
@@ -18,8 +18,8 @@ reports on one map, so you can see what is open and who is hearing whom.
 
 **Map**
 - Greyline, night shading, aurora oval and optional grid, with a 24 hour time-travel slider
-- Two backends, both offline: a static world map, or an interactive map that draws the same local basemap (no tile server, no map API key)
-- **Live Spots** (interactive map): PSKReporter reports as band-coloured arcs, plus an activity heatmap
+- One native map, fully offline: the local basemap drawn directly with Qt (no embedded browser, no tile server, no map API key)
+- **Live Spots**: PSKReporter reports as band-coloured arcs, plus an activity heatmap
 - **Spot replay**: scrub back through the last 24 hours of cached spots (stored for 7 days)
 
 **Station**
@@ -47,13 +47,11 @@ pip install -r requirements.txt
 python app.py
 ```
 
-The interactive map needs Qt WebEngine (`pip install PySide6-Addons` on some platforms).
-
 ## First run
 
 1. Open **Settings** and enter your home latitude and longitude (or opt in to IP location).
 2. Optional: set your callsign for Live Spots, your DX cluster login and a QRZ API key.
-3. Choose **Map backend: Interactive map with Live Spots** to enable Live Spots and the heatmap (restart to apply).
+3. Turn on the **Live** and **Heat** layer chips under the map to show Live Spots and the heatmap.
 4. Choose **Rig control**: Serial CAT or OmniRig, then use **Rig** to test the connection.
 
 ## Privacy
@@ -64,7 +62,7 @@ See [PRIVACY.md](PRIVACY.md) for exactly what is sent where.
 ## Data sources and credits
 
 NOAA SWPC, HamQSL (N0NBH), PSKReporter (Philip Gladstone, N1DQ), DX cluster nodes,
-QRZ.com (optional), WA7BNM Contest Calendar, and Leaflet (bundled locally).
+QRZ.com (optional), and WA7BNM Contest Calendar.
 The map image is a local file; see [Map image](#map-image). PSKReporter is
 polled no more than once every 5 minutes.
 Full credits and licences are in [NOTICE](NOTICE).
@@ -83,7 +81,6 @@ Full credits and licences are in [NOTICE](NOTICE).
 | Problem | What to do |
 |---------|------------|
 | Status shows "Offline" | NOAA or PSKReporter is unreachable. OrbitRx keeps showing cached data and retries automatically. |
-| Live Spots greyed out | Switch Map backend to the interactive map in Settings and restart. |
 | No location | Enter home latitude and longitude in Settings, or opt in to IP location. |
 | Radio does not tune | Check Rig control, COM port and baud rate in Settings, then use **Rig** then **Test CAT**. For OmniRig, install OmniRig and `pywin32`. |
 | Anything else | Check `logs/orbitrx.log`. |
@@ -103,7 +100,7 @@ Windows executable and installer as workflow artefacts. See [CHANGELOG.md](CHANG
 orbitrx/
   config.py, weather.py, propagation.py, dx.py, cat.py, alerts.py, map_renderer.py, storage.py
   spots/   PSKReporter client, spot cache, analytics, watchlist, alerts, rotor, OmniRig, ADIF
-  ui/      Qt main window, interactive map, theme, about, rig wizard; assets/leaflet (bundled)
+  ui/      Qt main window, native map widget, theme, about, rig wizard
 tests/     pytest suite
 installer/ Inno Setup script
 ```

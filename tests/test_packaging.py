@@ -23,9 +23,15 @@ def test_pyinstaller_spec_references_icon_and_excludes_unused_qt_modules():
     assert "assets/orbitrx.ico" in text  # bundled as a data file too
     for unused in ["Qt3DCore", "QtQuick3D", "QtMultimedia", "QtCharts", "QtBluetooth", "QtSensors", "QtSql", "QtTest"]:
         assert unused in text
-    # Must never exclude modules QtWebEngine needs.
-    for required in ["QtWebEngineWidgets", "QtWebChannel"]:
-        assert f"'PySide6.{required}'" not in text.split("excludes = [")[1].split("]")[0]
+    # Option B (2026-11-09): the Leaflet/WebEngine map view is gone, so none of
+    # its Chromium-backed stack may ship any more -- it must be excluded, and
+    # must never be a hiddenimport.
+    excludes_block = text.split("excludes = [")[1].split("]")[0]
+    for excluded in ["QtWebEngineCore", "QtWebEngineWidgets", "QtWebEngineQuick", "QtWebChannel", "QtQml", "QtQuick"]:
+        assert f"'PySide6.{excluded}'" in excludes_block
+    hiddenimports_line = text.split("hiddenimports = [")[1].split("]")[0]
+    for forbidden in ["QtWebEngineWidgets", "QtWebChannel"]:
+        assert f"PySide6.{forbidden}" not in hiddenimports_line
 
 
 def test_inno_setup_has_publisher_version_and_icon():

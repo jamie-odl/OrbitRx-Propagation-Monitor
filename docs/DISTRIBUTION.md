@@ -12,7 +12,15 @@ That installer does not contain a GPL text, an LGPL text, a Qt source offer, rel
 
 `OrbitRxMonitor.spec` sets `exclude_binaries=True` and `COLLECT`, so Qt shared libraries are files beside the executable. `docs/REPLACING_QT_LIBRARIES.md` says how to replace them. That layout has not been built on Windows in this workspace. A Linux PyInstaller run was not treated as a Windows execution.
 
-WebEngine stays. The default map is static and does not need it. The interactive Leaflet backend does. Dropping WebEngine would remove that backend, so it was not removed.
+**Superseded 2026-11-09 (Option B):** the paragraph below described the decision
+on the WebEngine-era 5.1.0 line. On `feat/native-map-no-webengine-2026-11-09`,
+Live Spots were ported to the native `PropagationMapWidget` and the Leaflet/
+WebEngine backend (`orbitrx/ui/leaflet_map.py`) was deleted, so WebEngine is
+excluded from this build's spec. The rest of this section (the 5 Nov 2026 exe,
+run `42362357356`, the hosted corresponding-source hashes) is unchanged
+historical fact about builds that predate this branch.
+
+~~WebEngine stays. The default map is static and does not need it. The interactive Leaflet backend does. Dropping WebEngine would remove that backend, so it was not removed.~~
 
 Qt libraries are packaged for the LGPL-3.0-only alternative in the upstream SPDX line. That is not a commercial purchase and not a statement that the LGPL duties are finished. `docs/QT_SOURCE_OFFER_DRAFT.md` records the corresponding-source archives now hosted and hash-verified by a public HTTPS GET on 2026-11-08. Hosting is verified; that verification is not by itself legal clearance.
 
