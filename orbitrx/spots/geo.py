@@ -50,6 +50,9 @@ def arcs_payload(spots: Iterable[Spot], limit: int = MAX_RENDERED_ARCS) -> list[
             "color": color,
             "label": f"{spot.sender} > {spot.receiver} {band} {spot.snr_db:+.0f} dB",
             "opacity": opacity,
+            # Native map click-to-tune needs an actual frequency; the label only
+            # carries the band name.
+            "freq_mhz": round(spot.frequency_hz / 1_000_000.0, 4),
         })
     return out
 

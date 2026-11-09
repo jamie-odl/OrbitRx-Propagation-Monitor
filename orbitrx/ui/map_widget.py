@@ -31,6 +31,12 @@ except ImportError:
     SmoothGraphicsView = None  # type: ignore
 
 
+# Native port of the Leaflet setLiveSpots JS: same caps so a big PSKReporter
+# window never swamps the view.
+MAX_LIVE_ARCS = 200
+MAX_LIVE_HEAT_CELLS = 40
+
+
 def _pil_to_qpixmap(img: Image.Image) -> QPixmap:
     """PIL → Qt with an explicit buffer copy so Qt never holds dangling memory."""
     if img.mode != "RGBA":
@@ -100,6 +106,12 @@ class PropagationMapWidget(QWidget):
 
         self._vector_root = self.scene.createItemGroup([])
         self._vector_root.setZValue(10)
+
+        # Live PSKReporter layer (arcs + heat); drawn above the DX vectors, same
+        # as the old Leaflet liveArcs/liveHeat layer groups.
+        self._live_spots_root = self.scene.createItemGroup([])
+        self._live_spots_root.setZValue(11)
+        self._live_click_targets: list[tuple[float, float, float, float]] = []
 
         # S1: centred label shown over the map when live spots are on but the
         # current replay window has nothing to plot.
@@ -201,6 +213,66 @@ class PropagationMapWidget(QWidget):
         self.hud.hide()
         if hasattr(self, "greyline_meta_changed"):
             self.greyline_meta_changed.emit(meta)
+
+    def _clear_live_spots(self) -> None:
+        for item in self._live_spots_root.childItems()[:]:
+            self._live_spots_root.removeFromGroup(item)
+            del item
+        self._live_click_targets.clear()
+
+    def set_live_spots(self, payload: dict[str, Any] | None) -> None:
+        """Native equivalent of the Leaflet setLiveSpots JS (former
+        orbitrx/ui/leaflet_map.py): draws the live PSKReporter arcs/heat layer,
+        capped like the old JS (200 arcs, 40 heat cells). A click on an arc's
+        receiver marker tunes the rig when the payload carries a frequency.
+        """
+        self._clear_live_spots()
+        if not payload:
+            return
+        if payload.get("heatmap"):
+            for cell in list(payload.get("heat") or [])[:MAX_LIVE_HEAT_CELLS]:
+                if len(cell) < 3:
+                    continue
+                lat, lon, weight = cell[0], cell[1], cell[2]
+                try:
+                    weight = max(0.0, min(1.0, float(weight)))
+                except (TypeError, ValueError):
+                    weight = 0.0
+                x, y = self.renderer.world_to_map(lat, lon)
+                r = 10.0 + 14.0 * weight
+                cell_item = QGraphicsEllipseItem(x - r, y - r, 2 * r, 2 * r)
+                cell_item.setBrush(QBrush(QColor(240, 113, 120, int(40 + 70 * weight))))
+                cell_item.setPen(QPen(Qt.PenStyle.NoPen))
+                self._live_spots_root.addToGroup(cell_item)
+        if payload.get("arcs"):
+            for spot in list(payload.get("spots") or [])[:MAX_LIVE_ARCS]:
+                tx, rx = spot.get("tx"), spot.get("rx")
+                if not tx or not rx:
+                    continue
+                opacity = spot.get("opacity")
+                if not isinstance(opacity, (int, float)):
+                    opacity = 0.9
+                opacity = max(0.0, min(1.0, float(opacity)))
+                tx_x, tx_y = self.renderer.world_to_map(tx[0], tx[1])
+                rx_x, rx_y = self.renderer.world_to_map(rx[0], rx[1])
+                path = QPainterPath()
+                path.moveTo(tx_x, tx_y)
+                path.lineTo(rx_x, rx_y)
+                line = QGraphicsPathItem(path)
+                pen = QPen(QColor(120, 180, 255, int(102 * opacity)), 1.0)
+                pen.setCosmetic(True)
+                line.setPen(pen)
+                label = spot.get("label")
+                if label:
+                    line.setToolTip(str(label))
+                self._live_spots_root.addToGroup(line)
+                dot = QGraphicsEllipseItem(tx_x - 3, tx_y - 3, 6, 6)
+                dot.setBrush(QBrush(QColor(120, 180, 255, int(255 * opacity))))
+                dot.setPen(QPen(Qt.PenStyle.NoPen))
+                self._live_spots_root.addToGroup(dot)
+                freq_mhz = spot.get("freq_mhz")
+                if isinstance(freq_mhz, (int, float)):
+                    self._live_click_targets.append((rx_x, rx_y, float(freq_mhz), 9.0))
 
     def _clear_vectors(self) -> None:
         for item in self._vector_root.childItems()[:]:
@@ -321,7 +393,7 @@ class PropagationMapWidget(QWidget):
             self._pan_anchor = event.pos()
         elif event.button() == Qt.MouseButton.LeftButton:
             sp = self.view.mapToScene(event.pos())
-            for tx, ty, freq, radius in self._click_targets:
+            for tx, ty, freq, radius in self._click_targets + self._live_click_targets:
                 if (sp.x() - tx) ** 2 + (sp.y() - ty) ** 2 <= radius ** 2:
                     self.spot_clicked.emit(freq)
                     return
