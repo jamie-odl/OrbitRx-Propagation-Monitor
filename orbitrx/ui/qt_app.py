@@ -204,6 +204,7 @@ class QtOrbitRxApplication(QMainWindow):
         self._replay_refresh_pending = False
 
         self._ui = _UiInvoker()
+        self._map_load_thread: threading.Thread | None = None
         ui = self._ui.wrap
         self.ctrl = OrbitRxController(
             on_status=ui(self._set_status),
@@ -715,7 +716,8 @@ class QtOrbitRxApplication(QMainWindow):
             else:
                 on_loaded(scaled, qimage)
 
-        threading.Thread(target=worker, daemon=True, name="map-load").start()
+        self._map_load_thread = threading.Thread(target=worker, daemon=True, name="map-load")
+        self._map_load_thread.start()
 
     def _on_map_loaded(self, scaled_image, qimage) -> None:
         self.renderer.set_prescaled_base_map(scaled_image)
@@ -1829,6 +1831,17 @@ def quiet_capture_shutdown(app, win, stage_log: Path | None) -> None:
     if win is None:
         _stage(stage_log, "webengine-not-created")
         return
+    # F7: drop queued map-load callbacks and wait for the worker so a later
+    # QApplication teardown cannot stall on an off-thread QImage / pending slot.
+    invoker = getattr(win, "_ui", None)
+    if invoker is not None:
+        try:
+            invoker.call.disconnect()
+        except Exception:
+            pass
+    thread = getattr(win, "_map_load_thread", None)
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=2.0)
     for name in ("_timer", "_cluster_pulse_timer"):
         timer = getattr(win, name, None)
         if timer is not None:
@@ -1858,21 +1871,21 @@ def quiet_capture_shutdown(app, win, stage_log: Path | None) -> None:
 
 
 def exit_after_qapplication_deleted(exit_code: int, stage_log: Path | None) -> None:
-    """Delete QApplication, then end the process.
+    """Flush shutdown stages and end the process.
 
     Actions run 42359055614 wrote the static-map screenshots and then exited
     -1073741819 (0xC0000005). That capture called os._exit while QApplication
     still existed; back then, the leaflet import loaded Qt WebEngine even for
     the static map, and ExitProcess faulted in Qt6WebEngineCore unless the
     application object was destroyed first. Qt WebEngine is gone now (Option
-    B, 2026-11-09), but deleting the QApplication before os._exit is still
-    correct practice, so this keeps doing it. This does not return.
+    B, 2026-11-09). Run 42876091854 then hung for 120s *inside*
+    `_delete_qt_object(app)` after the capture had already written
+    window-closed (the F7 map-load worker had built a QImage off-thread);
+    the 60s threading.Timer watchdog could not fire because the GIL was
+    stuck in the Qt destructor. So this now flushes the stage log and
+    os._exit's without a blocking QApplication delete. This does not return.
     """
     try:
-        app = QApplication.instance()
-        if app is not None:
-            app.processEvents()
-            _delete_qt_object(app)
         _stage(stage_log, "qapplication-deleted")
     except Exception as exc:
         import sys
