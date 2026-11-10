@@ -15,7 +15,7 @@ from orbitrx.map_renderer import MapLayers, MapRenderer
 from orbitrx.propagation import HF_BANDS
 from orbitrx.ui.band_panel import BandPanelWidget
 from orbitrx.ui.controller import OrbitRxController
-from orbitrx.ui.map_widget import PropagationMapWidget, QT_AVAILABLE
+from orbitrx.ui.map_widget import PropagationMapWidget, QT_AVAILABLE, _pil_to_qimage
 from orbitrx.spots.settings import clamp_poll_seconds
 from orbitrx.ui.formatting import (
     widen_to_min_span,
@@ -101,18 +101,28 @@ class _ReflowGrid(QWidget):
     ) -> None:
         super().__init__(parent)
         self._widgets = widgets
-        self._min_item_width = max(1, min_item_width)
         self._min_cols = max(1, min_cols)
         self._max_cols = max_cols or (len(widgets) or 1)
+        # W1: size columns off each widget's real sizeHint, not a fixed guess -
+        # native styles (e.g. Windows' chip padding) render noticeably wider
+        # than Linux's, and a fixed width let a too-wide column overflow the
+        # window on Windows while fitting fine on Ubuntu.
+        self._min_item_width = max(
+            [max(1, min_item_width)] + [w.sizeHint().width() for w in widgets]
+        )
         self._grid = QGridLayout(self)
         self._grid.setSpacing(6)
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._cols = 0
-        self._relayout(self._columns_for_width(len(widgets) * min_item_width))
+        self._relayout(self._columns_for_width(len(widgets) * self._min_item_width))
 
     def _columns_for_width(self, width: int) -> int:
         n = len(self._widgets) or 1
-        fit = max(self._min_cols, min(self._max_cols, width // self._min_item_width))
+        spacing = self._grid.spacing()
+        fit = max(
+            self._min_cols,
+            min(self._max_cols, (width + spacing) // (self._min_item_width + spacing)),
+        )
         cols = max(1, min(n, fit))
         # V12 tune 2: avoid an orphan last-row chip (e.g. Heatmap alone under Greyline).
         if cols < n:
@@ -695,16 +705,21 @@ class QtOrbitRxApplication(QMainWindow):
                 img = Image.open(map_path)
                 img.load()
                 scaled = self.renderer.prepare_base_map(img)
+                # F7: QImage has no GUI-thread affinity (unlike QPixmap), so the
+                # byte-level conversion is also safe to do here, off the UI
+                # thread; only the cheap QPixmap wrap + scene assignment is
+                # left for _on_map_loaded.
+                qimage = _pil_to_qimage(scaled)
             except Exception as exc:
                 on_failed(exc)
             else:
-                on_loaded(scaled)
+                on_loaded(scaled, qimage)
 
         threading.Thread(target=worker, daemon=True, name="map-load").start()
 
-    def _on_map_loaded(self, scaled_image) -> None:
+    def _on_map_loaded(self, scaled_image, qimage) -> None:
         self.renderer.set_prescaled_base_map(scaled_image)
-        self.map_widget.set_base_map(self.renderer.base_rgba_image())
+        self.map_widget.set_base_map_from_qimage(qimage)
         # M1: never print the asset filename in the UI.
         self._map_label = "Map · offline basemap"
         self.banner.setText("Map")

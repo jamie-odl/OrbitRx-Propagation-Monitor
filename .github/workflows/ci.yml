@@ -108,6 +108,36 @@ jobs:
       - name: Checksums
         shell: pwsh
         run: Get-FileHash dist\OrbitRxMonitor\OrbitRxMonitor.exe, dist\OrbitRxMonitor-Setup.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Out-File dist\SHA256SUMS.txt -Encoding ascii
+      # Prototype-branch-only diagnostic zip (onedir + installer + sums) so this
+      # branch's Qt WebEngine exclusion can be inspected from a real Windows
+      # build. Deliberately a new artifact name, not the old forbidden one
+      # (see test_packaging.py / test_distribution_gate.py), and never runs on
+      # main or in release.yml.
+      - name: Zip native prototype build (branch-only diagnostic)
+        if: always() && startsWith(github.ref, 'refs/heads/feat/native-map-no-webengine')
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist-zip | Out-Null
+          if (Test-Path dist\OrbitRxMonitor\OrbitRxMonitor.exe) {
+            Compress-Archive -Path dist\OrbitRxMonitor -DestinationPath dist-zip\OrbitRx-native-prototype-unsigned.zip -Force
+            if (Test-Path dist\OrbitRxMonitor-Setup.exe) {
+              Compress-Archive -Path dist\OrbitRxMonitor-Setup.exe -Update -DestinationPath dist-zip\OrbitRx-native-prototype-unsigned.zip
+            }
+            if (Test-Path dist\SHA256SUMS.txt) {
+              Compress-Archive -Path dist\SHA256SUMS.txt -Update -DestinationPath dist-zip\OrbitRx-native-prototype-unsigned.zip
+            }
+            Write-Host "Zipped native prototype build for branch diagnostic upload"
+          } else {
+            Write-Host "No dist\OrbitRxMonitor build output found; skipping native prototype zip"
+          }
+      - name: Upload native prototype build (branch-only; never main or release)
+        if: always() && startsWith(github.ref, 'refs/heads/feat/native-map-no-webengine')
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrbitRx-native-prototype-unsigned
+          path: dist-zip/OrbitRx-native-prototype-unsigned.zip
+          retention-days: 14
+          if-no-files-found: warn
       # Distributable upload stays off while packaging/distribution_manifest.json
       # lists release_blockers. release.yml runs that gate and uploads nothing.
       # release-shots later in this job are screenshots and text, not the exe.

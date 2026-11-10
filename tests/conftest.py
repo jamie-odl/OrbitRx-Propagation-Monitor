@@ -48,3 +48,94 @@ def pytest_unconfigure(config):
         sys.stderr.flush()
         k32.TerminateProcess(k32.GetCurrentProcess(), _exit_status)
     os._exit(_exit_status)
+
+import pytest
+
+
+def _destroy_leftover_qt_windows() -> None:
+    """Drop OrbitRx windows, timers, trays and matplotlib figures left behind
+    by a test. deleteLater() plus one processEvents() is not enough: each
+    leaked QMainWindow keeps pulse/startup/refresh timers alive, and later
+    QtOrbitRxApplication() construction (which processes events) gets steadily
+    slower. After ~20 history-plot windows the F7 1.0s budget is already
+    missed; after a full suite it stretches to 8-10s even though Image.open
+    itself is off the UI thread."""
+    try:
+        from PySide6.QtWidgets import QApplication
+    except Exception:
+        return
+    app = QApplication.instance()
+    if app is None:
+        return
+    try:
+        import shiboken6
+        from orbitrx.ui.qt_app import QtOrbitRxApplication
+    except Exception:
+        return
+
+    def _stop_window(win) -> None:
+        for name in (
+            "_timer",
+            "_cluster_pulse_timer",
+            "_slider_refresh_timer",
+            "_replay_refresh_timer",
+            "_layers_save_timer",
+        ):
+            timer = getattr(win, name, None)
+            if timer is not None:
+                try:
+                    timer.stop()
+                except Exception:
+                    pass
+        tray = getattr(win, "_tray", None)
+        if tray is not None:
+            try:
+                tray.hide()
+            except Exception:
+                pass
+            try:
+                win._tray = None
+            except Exception:
+                pass
+        ctrl = getattr(win, "ctrl", None)
+        if ctrl is not None:
+            try:
+                ctrl.cfg.set("minimize_to_tray", False)
+            except Exception:
+                pass
+            try:
+                ctrl.stop()
+            except Exception:
+                pass
+        try:
+            win.close()
+        except Exception:
+            pass
+
+    for widget in list(app.topLevelWidgets()):
+        try:
+            if shiboken6.isValid(widget) and isinstance(widget, QtOrbitRxApplication):
+                _stop_window(widget)
+        except Exception:
+            pass
+    app.processEvents()
+
+    for widget in list(app.topLevelWidgets()):
+        try:
+            if shiboken6.isValid(widget):
+                shiboken6.delete(widget)
+        except Exception:
+            pass
+    app.processEvents()
+
+    try:
+        import matplotlib.pyplot as plt
+        plt.close("all")
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_orbitrx_qt_windows():
+    yield
+    _destroy_leftover_qt_windows()

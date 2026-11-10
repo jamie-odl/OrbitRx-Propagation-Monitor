@@ -37,14 +37,20 @@ MAX_LIVE_ARCS = 200
 MAX_LIVE_HEAT_CELLS = 40
 
 
-def _pil_to_qpixmap(img: Image.Image) -> QPixmap:
-    """PIL → Qt with an explicit buffer copy so Qt never holds dangling memory."""
+def _pil_to_qimage(img: Image.Image) -> QImage:
+    """PIL -> QImage with an explicit buffer copy so Qt never holds dangling
+    memory. QImage (unlike QPixmap) has no GUI-thread affinity, so this half
+    of the conversion is safe to run on a background thread (F7)."""
     if img.mode != "RGBA":
         img = img.convert("RGBA")
     data = img.tobytes("raw", "RGBA")
     stride = img.width * 4
     qimg = QImage(data, img.width, img.height, stride, QImage.Format.Format_RGBA8888)
-    return QPixmap.fromImage(qimg.copy())
+    return qimg.copy()
+
+
+def _pil_to_qpixmap(img: Image.Image) -> QPixmap:
+    return QPixmap.fromImage(_pil_to_qimage(img))
 
 
 class PropagationMapWidget(QWidget):
@@ -151,13 +157,20 @@ class PropagationMapWidget(QWidget):
 
     def set_base_map(self, base_rgba: Image.Image) -> None:
         """Load world map once; kept until widget is destroyed or map is reloaded."""
-        pixmap = _pil_to_qpixmap(base_rgba)
+        self._assign_base_pixmap(_pil_to_qpixmap(base_rgba), base_rgba.width, base_rgba.height)
+
+    def set_base_map_from_qimage(self, qimage: QImage) -> None:
+        """Like set_base_map, but for a QImage a background thread already
+        decoded/scaled (F7): only the cheap QPixmap wrap + scene assignment
+        below needs the GUI thread."""
+        self._assign_base_pixmap(QPixmap.fromImage(qimage), qimage.width(), qimage.height())
+
+    def _assign_base_pixmap(self, pixmap: QPixmap, w: int, h: int) -> None:
         if pixmap.isNull():
             raise RuntimeError("Base map pixmap conversion failed")
         self._base_pixmap = pixmap
         self._base_item.setPixmap(pixmap)
         self._base_item.setPos(0, 0)
-        w, h = base_rgba.width, base_rgba.height
         self.scene.setSceneRect(0, 0, w, h)
         # P2: KeepAspectRatio letterboxes (dark bars, #0F1720) instead of cropping,
         # so the poles are never clipped asymmetrically and the map is centred.
