@@ -103,3 +103,65 @@ def test_capture_hook_negative_control_lists_simulated_rig(tmp_path, monkeypatch
     ports = (out_dir / "rig-wizard-release-ports.txt").read_text(encoding="utf-8")
     assert ports.strip()
     assert "Simulated" in ports
+
+
+def test_capture_hook_os_exits_after_process_exit_stage_when_env_set(tmp_path, monkeypatch):
+    """CI self-capture must os._exit inside the hook, after process-exit,
+    while the Qt objects are still alive."""
+    calls = []
+
+    def fake_exit(code):
+        calls.append(code)
+        raise SystemExit(code)
+
+    import orbitrx.ui.qt_app as qt_app
+    monkeypatch.setattr(qt_app.os, "_exit", fake_exit)
+    monkeypatch.delenv("ORBITRX_TEST_SIMULATED_RIG", raising=False)
+    out_dir = tmp_path / "capture-exit"
+    monkeypatch.setenv("ORBITRX_CAPTURE_DIR", str(out_dir))
+
+    with pytest.raises(SystemExit) as exc:
+        qt_app.run_release_capture_hook(out_dir)
+    assert exc.value.code == 0
+    assert calls == [0]
+    stage = (out_dir / "shutdown-stage.txt").read_text(encoding="utf-8")
+    assert "window-closed" in stage
+    assert "qapplication-deleted" in stage
+    assert stage.strip().splitlines()[-1] == "process-exit"
+
+
+def test_non_capture_exit_path_and_close_to_tray_never_call_os_exit(tmp_path, monkeypatch):
+    """Normal app exit and close-to-tray must never reach os._exit. The
+    capture-only os._exit is gated on ORBITRX_CAPTURE_DIR."""
+    calls = []
+
+    def fake_exit(code):
+        calls.append(code)
+        raise SystemExit(code)
+
+    import orbitrx.ui.qt_app as qt_app
+    monkeypatch.setattr(qt_app.os, "_exit", fake_exit)
+    monkeypatch.setattr(os, "_exit", fake_exit)
+    monkeypatch.delenv("ORBITRX_CAPTURE_DIR", raising=False)
+    monkeypatch.delenv("ORBITRX_TEST_SIMULATED_RIG", raising=False)
+
+    out_dir = tmp_path / "no-capture"
+    assert qt_app.run_release_capture_hook(out_dir) == 0
+    assert calls == []
+    stage = (out_dir / "shutdown-stage.txt").read_text(encoding="utf-8")
+    assert "window-closed" in stage
+    assert "process-exit" not in stage
+
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance() or QApplication([])
+    win = qt_app.QtOrbitRxApplication()
+    win.ctrl.cfg.set("minimize_to_tray", True)
+    if win._tray is None:
+        win._setup_tray()
+    if win._tray is not None:
+        win._tray.show()
+    win.show()
+    app.processEvents()
+    win.close()
+    app.processEvents()
+    assert calls == []

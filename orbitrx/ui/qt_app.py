@@ -1787,10 +1787,20 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
         stats_lines.append(win._location_hint_lbl.text())
     (out_dir / "stats.txt").write_text("\n".join(stats_lines) + "\n", encoding="utf-8")
 
-    # Leave QApplication alive so in-process tests can keep using it. The
-    # process entry point deletes it before exit. See finish note on
-    # exit_after_qapplication_deleted.
+    # Leave QApplication alive so in-process tests can keep using it.
+    # The frozen/CI capture path must not return: Python would then GC
+    # these hook locals (win / QApplication) and hang in a Qt destructor
+    # before exit_after_qapplication_deleted could run (CI runs
+    # 42876091854 and 42878248609). When ORBITRX_CAPTURE_DIR is set,
+    # flush stdio, write process-exit, and os._exit while the Qt objects
+    # are still alive. Normal app exit and close-to-tray never take
+    # this branch.
     quiet_capture_shutdown(app, win, out_dir / "shutdown-stage.txt")
+    if os.environ.get("ORBITRX_CAPTURE_DIR"):
+        import sys
+        sys.stdout.flush()
+        sys.stderr.flush()
+        exit_after_qapplication_deleted(0, out_dir / "shutdown-stage.txt")
     return 0
 
 
