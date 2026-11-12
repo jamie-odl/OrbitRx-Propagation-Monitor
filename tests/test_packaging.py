@@ -124,22 +124,30 @@ def test_ci_release_build_self_captures_and_checks_for_simulated_rig(): # M3
     assert "dist/" not in evidence
 
 
-def test_ci_uploads_native_prototype_artifact_branch_only_never_on_main():
-    """CI item 4: a branch-only diagnostic zip of the onedir build + installer,
-    uploaded under a new artifact name. OrbitRx-windows-unsigned stays forbidden
-    (test_ci_release_build_self_captures_and_checks_for_simulated_rig above),
-    and release.yml must never gain an upload step for either name."""
+def test_ci_never_uploads_a_ship_set_artifact():
+    """The repository is public, so any Actions artifact is downloadable by any
+    signed-in GitHub user. No workflow that runs on main or feat/** may upload
+    the onedir build, the exe, the installer or a zip of them. Uploads are
+    limited to pytest XML, rig-wizard screenshots and release-shots/ (text and
+    PNG captures, including a text-only ship-set inventory)."""
+    import re
+
     text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    assert "OrbitRx-native-prototype-unsigned" in text
     assert "OrbitRx-windows-unsigned" not in text
-
-    upload_step = text.split("name: Upload native prototype build")[1].split("\n      - name:")[0]
-    assert "OrbitRx-native-prototype-unsigned" in upload_step
-    assert "startsWith(github.ref, 'refs/heads/feat/native-map-no-webengine')" in upload_step
-
-    zip_step = text.split("name: Zip native prototype build")[1].split("\n      - name:")[0]
-    assert "startsWith(github.ref, 'refs/heads/feat/native-map-no-webengine')" in zip_step
-    assert "github.ref == 'refs/heads/main'" not in text
+    assert "OrbitRx-native-prototype-unsigned" not in text
+    assert "dist-zip" not in text
+    names = re.findall(r"uses: actions/upload-artifact@v4\n(?:.*\n)*?\s+name: (\S+)", text)
+    assert sorted(set(names)) == sorted({
+        "pytest-${{", "rig-wizard-windows-screenshot", "release-exe-captures",
+    }), names
+    for block in text.split("uses: actions/upload-artifact@v4")[1:]:
+        upload = block.split("\n      - ")[0]
+        path_part = upload.split("path:", 1)[1]
+        for banned in ("dist", ".exe", ".zip", "OrbitRxMonitor"):
+            assert banned not in path_part, (banned, upload)
+    inventory = text.split("name: Ship-set inventory")[1].split("\n      - ")[0]
+    assert "upload-artifact" not in inventory
+    assert "release-shots" in inventory
 
     release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "upload-artifact" not in release
