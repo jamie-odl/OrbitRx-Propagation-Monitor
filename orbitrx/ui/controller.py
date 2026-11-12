@@ -79,6 +79,13 @@ class OrbitRxController:
             on_alert=self._spot_alert,
             location=lambda: (self.state.user_lat, self.state.user_lon),
         )
+        # One-shot background threads (weather/location fetch) and the DX
+        # update-coalescing timer are not owned by a service with its own
+        # start()/stop(), so capture-process teardown needs its own handle
+        # on the most recent one to join before any Qt object is deleted.
+        self._weather_thread: threading.Thread | None = None
+        self._location_thread: threading.Thread | None = None
+        self._dx_update_timer: threading.Timer | None = None
 
     def _spot_alert(self, title: str, message: str) -> None:
         show_toast(f"OrbitRx: {title}", message)
@@ -94,6 +101,23 @@ class OrbitRxController:
         self.cat.disconnect()
         self._dx.stop()
         self.spots.stop()
+
+    def join_background_threads(self, timeout: float = 3.0) -> list[str]:
+        """Capture-process teardown only: stop() must already have been called
+        (it signals _dx/spots to unblock) -- this joins every thread it may have
+        started, returning the names of any still alive after `timeout` so the
+        caller can log them instead of silently proceeding into a Qt object
+        delete that one of them might still reach into."""
+        timer = self._dx_update_timer
+        if timer is not None:
+            timer.cancel()
+        stragglers = []
+        for thread in (self._dx._thread, self.spots._thread, self._weather_thread, self._location_thread):
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=timeout)
+                if thread.is_alive():
+                    stragglers.append(thread.name)
+        return stragglers
 
     def layers_from_config(self) -> MapLayers:
         ml = self.cfg.get("map_layers", {})
@@ -125,7 +149,8 @@ class OrbitRxController:
     def _schedule_dx_ui(self) -> None:
         if not self.state.dx_update_pending:
             self.state.dx_update_pending = True
-            threading.Timer(0.5, self._update_dx).start()
+            self._dx_update_timer = threading.Timer(0.5, self._update_dx)
+            self._dx_update_timer.start()
 
     def _update_dx(self) -> None:
         self.state.dx_update_pending = False
@@ -160,7 +185,8 @@ class OrbitRxController:
                 self.state.user_lat = None
                 self.state.user_lon = None
             self._on_weather()
-        threading.Thread(target=worker, daemon=True).start()
+        self._location_thread = threading.Thread(target=worker, daemon=True, name="geo-location")
+        self._location_thread.start()
 
     def fetch_weather(self) -> None:
         if offline_fixture():
@@ -192,7 +218,8 @@ class OrbitRxController:
             finally:
                 self.state.weather_fetch_in_progress = False
 
-        threading.Thread(target=worker, daemon=True).start()
+        self._weather_thread = threading.Thread(target=worker, daemon=True, name="weather-fetch")
+        self._weather_thread.start()
 
     def _apply_weather(self, data: dict[str, Any], offline: bool = False) -> None:
         self.state.kp_index = float(data.get("kp_index", 0))

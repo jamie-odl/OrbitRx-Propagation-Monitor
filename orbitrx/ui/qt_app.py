@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import datetime
+import faulthandler
+import gc
 import json
 import os
+import sys
 import threading
 import time
 from pathlib import Path
@@ -205,6 +208,7 @@ class QtOrbitRxApplication(QMainWindow):
 
         self._ui = _UiInvoker()
         self._map_load_thread: threading.Thread | None = None
+        self._update_check_thread: threading.Thread | None = None
         ui = self._ui.wrap
         self.ctrl = OrbitRxController(
             on_status=ui(self._set_status),
@@ -958,7 +962,10 @@ class QtOrbitRxApplication(QMainWindow):
             if info.get("update_available"):
                 on_done(info)
 
-        threading.Thread(target=worker, daemon=True, name="update-check").start()
+        # Stored so capture-process teardown can join it before deleting any
+        # Qt object the finished callback might otherwise reach into.
+        self._update_check_thread = threading.Thread(target=worker, daemon=True, name="update-check")
+        self._update_check_thread.start()
 
     def _show_update_available(self, info: dict) -> None:
         QMessageBox.information(
@@ -1787,20 +1794,14 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
         stats_lines.append(win._location_hint_lbl.text())
     (out_dir / "stats.txt").write_text("\n".join(stats_lines) + "\n", encoding="utf-8")
 
-    # Leave QApplication alive so in-process tests can keep using it.
-    # The frozen/CI capture path must not return: Python would then GC
-    # these hook locals (win / QApplication) and hang in a Qt destructor
-    # before exit_after_qapplication_deleted could run (CI runs
-    # 42876091854 and 42878248609). When ORBITRX_CAPTURE_DIR is set,
-    # flush stdio, write process-exit, and os._exit while the Qt objects
-    # are still alive. Normal app exit and close-to-tray never take
-    # this branch.
+    # Stop background work and close the window, but never exit the process
+    # here (CI runs 42876091854 and 42878248609 hung/crashed because an
+    # earlier version of this hook tried to end the process itself while Qt
+    # objects were still alive). In-process pytest callers rely on
+    # QApplication staying alive afterwards; the frozen exe's self-capture
+    # and tools/capture_shutdown_probe.py drive the real process-ending
+    # teardown themselves, via run_capture_and_exit, after this returns.
     quiet_capture_shutdown(app, win, out_dir / "shutdown-stage.txt")
-    if os.environ.get("ORBITRX_CAPTURE_DIR"):
-        import sys
-        sys.stdout.flush()
-        sys.stderr.flush()
-        exit_after_qapplication_deleted(0, out_dir / "shutdown-stage.txt")
     return 0
 
 
@@ -1880,43 +1881,154 @@ def quiet_capture_shutdown(app, win, stage_log: Path | None) -> None:
     _stage(stage_log, "window-closed")
 
 
-def exit_after_qapplication_deleted(exit_code: int, stage_log: Path | None) -> None:
-    """Flush shutdown stages and end the process.
+def _join_worker_threads(win, stage_log: Path | None) -> None:
+    """Capture-process teardown only: stop and join every background thread this
+    app may have started, before any Qt object is deleted. A Qt destructor on
+    the main thread holds the GIL; a worker thread that later tries to queue a
+    call into a deleted QObject (e.g. the weather-fetch completion callback)
+    cannot be allowed to still be running once we start deleting widgets below.
+    Threads that do not finish within their timeout are logged by name (via
+    threading.enumerate(), to also catch anything not explicitly tracked here)
+    rather than joined forever -- this capture process must still end.
+    """
+    ctrl = getattr(win, "ctrl", None) if win is not None else None
+    if ctrl is not None:
+        ctrl.join_background_threads()
+    update_thread = getattr(win, "_update_check_thread", None) if win is not None else None
+    if update_thread is not None and update_thread.is_alive():
+        update_thread.join(timeout=3.0)
+    map_thread = getattr(win, "_map_load_thread", None) if win is not None else None
+    if map_thread is not None and map_thread.is_alive():
+        map_thread.join(timeout=2.0)
+    stragglers = sorted(t.name for t in threading.enumerate() if t is not threading.main_thread())
+    if stragglers:
+        _stage(stage_log, f"threads-still-alive:{','.join(stragglers)}")
+    else:
+        _stage(stage_log, "threads-joined")
 
-    Actions run 42359055614 wrote the static-map screenshots and then exited
-    -1073741819 (0xC0000005). That capture called os._exit while QApplication
-    still existed; back then, the leaflet import loaded Qt WebEngine even for
-    the static map, and ExitProcess faulted in Qt6WebEngineCore unless the
-    application object was destroyed first. Qt WebEngine is gone now (Option
-    B, 2026-11-09). Run 42876091854 then hung for 120s *inside*
-    `_delete_qt_object(app)` after the capture had already written
-    window-closed (the F7 map-load worker had built a QImage off-thread);
-    the 60s threading.Timer watchdog could not fire because the GIL was
-    stuck in the Qt destructor. So this now flushes the stage log and
-    os._exit's without a blocking QApplication delete. This does not return.
+
+def _delete_all_top_level_widgets(app, stage_log: Path | None) -> None:
+    """Capture-process teardown only: close and delete every top-level widget
+    (main window, and any dialog the hook only reject()/close()'d -- RigWizardDialog,
+    the Settings dialog, the About box -- which stay alive as undeleted QObjects
+    otherwise) before QApplication itself is deleted. Processes DeferredDelete
+    events between rounds so children scheduled via deleteLater() actually go."""
+    import shiboken6
+    from PySide6.QtCore import QCoreApplication
+
+    try:
+        import matplotlib.pyplot as plt
+        plt.close("all")
+    except Exception:
+        pass
+
+    if app is None:
+        _stage(stage_log, "widgets-deleted")
+        return
+
+    for widget in list(app.topLevelWidgets()):
+        if shiboken6.isValid(widget):
+            widget.close()
+    remaining = [w for w in app.topLevelWidgets() if shiboken6.isValid(w)]
+    for _ in range(50):
+        if not remaining:
+            break
+        for widget in remaining:
+            widget.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+        app.processEvents()
+        remaining = [w for w in app.topLevelWidgets() if shiboken6.isValid(w)]
+    if remaining:
+        _stage(stage_log, f"widgets-still-alive:{len(remaining)}")
+        for widget in remaining:
+            _delete_qt_object(widget)
+    _stage(stage_log, "widgets-deleted")
+
+
+def _delete_qapplication(app, stage_log: Path | None) -> None:
+    """Capture-process teardown only: end QApplication itself, having already
+    joined every worker thread and deleted every other Qt object above, then
+    drop the last Python references to it and collect. This is the "process
+    an app the documented way" counterpart to the historical os._exit calls
+    this replaces -- os._exit (and the ExitProcess it maps to on Windows) runs
+    DLL-detach / Qt global-static destructors unconditionally, which crashed
+    (0xC0000005) when QApplication and widgets were still alive (CI run
+    42881812414). Nothing is alive here for that to race against.
+    """
+    if app is not None and hasattr(app, "shutdown"):
+        try:
+            app.shutdown()
+        except Exception:
+            pass
+    _delete_qt_object(app)
+    gc.collect()
+    _stage(stage_log, "qapplication-deleted")
+
+
+def shutdown_capture_process(app, win, exit_code: int, stage_log: Path | None) -> int:
+    """Deterministic end-of-process teardown for the capture-only path (the
+    frozen exe's self-capture and tools/capture_shutdown_probe.py). Unlike
+    quiet_capture_shutdown (used in-process by pytest, which must leave
+    QApplication alive for later tests), this actually tears everything down:
+    worker threads joined, every top-level widget deleted, then QApplication
+    itself. The caller is expected to end the process (sys.exit or platform
+    equivalent) with the returned code immediately afterward -- normal
+    interpreter finalisation is safe at that point because there is no live
+    Qt object left for it to touch.
     """
     try:
-        _stage(stage_log, "qapplication-deleted")
+        _join_worker_threads(win, stage_log)
+        _delete_all_top_level_widgets(app, stage_log)
+        _delete_qapplication(app, stage_log)
     except Exception as exc:
-        import sys
         _stage(stage_log, f"exception:{type(exc).__name__}: {exc}")
         sys.stderr.write(f"capture shutdown failed: {type(exc).__name__}: {exc}\n")
-        os._exit(4)
+        exit_code = 4
     _stage(stage_log, "process-exit")
-    os._exit(exit_code)
+    return exit_code
+
+
+def run_capture_and_exit(capture_dir: str | Path) -> None:
+    """Drive the self-capture hook and then end the process. Shared by
+    run_qt_app (the frozen exe, when ORBITRX_CAPTURE_DIR is set) and
+    tools/capture_shutdown_probe.py, so the probe exercises exactly the
+    shutdown path the Windows CI job depends on. Does not return.
+    """
+    capture_dir = Path(capture_dir)
+    stage_log = capture_dir / "shutdown-stage.txt"
+    fault_log = capture_dir / "faulthandler.txt"
+    capture_dir.mkdir(parents=True, exist_ok=True)
+    fault_file = fault_log.open("w", encoding="utf-8")
+    # The frozen exe is windowed (no console), so stderr may be None -- always
+    # pass an explicit file. faulthandler's watchdog runs on its own C thread
+    # and does not need the GIL, unlike the threading.Timer it replaces (CI run
+    # 42876091854: the GIL was stuck inside a Qt destructor, so a Timer
+    # callback could never have run either). 75s leaves headroom inside both the
+    # 90s pytest probe timeout and the 120s CI exe timeout, so a hang dumps a
+    # traceback here before the caller kills the process.
+    faulthandler.enable(file=fault_file)
+    faulthandler.dump_traceback_later(75.0, exit=True, file=fault_file)
+    try:
+        code = run_release_capture_hook(capture_dir)
+        app = QApplication.instance()
+        win = next(
+            (w for w in app.topLevelWidgets() if isinstance(w, QtOrbitRxApplication)), None
+        ) if app is not None else None
+        code = shutdown_capture_process(app, win, code, stage_log)
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    fault_file.flush()
+    fault_file.close()
+    sys.exit(code)
 
 
 def run_qt_app() -> None:
-    import sys
     capture_dir = os.environ.get("ORBITRX_CAPTURE_DIR")
     if capture_dir:
-        import threading
-        watchdog = threading.Timer(60.0, lambda: os._exit(3))  # capture never hangs CI
-        watchdog.daemon = True
-        watchdog.start()
-        code = run_release_capture_hook(capture_dir)
-        sys.stdout.flush()
-        exit_after_qapplication_deleted(code, Path(capture_dir) / "shutdown-stage.txt")
+        run_capture_and_exit(capture_dir)
+        return  # pragma: no cover - unreachable, run_capture_and_exit always exits
     app = QApplication(sys.argv)
     apply_theme(app)
     app.setWindowIcon(_app_icon())

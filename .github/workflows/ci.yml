@@ -147,6 +147,18 @@ jobs:
           $exe = (Resolve-Path dist\OrbitRxMonitor\OrbitRxMonitor.exe).Path
           New-Item -ItemType Directory -Force -Path release-shots\100, release-shots\150 | Out-Null
 
+          function Show-CaptureDiagnostics([string]$CaptureDir) {
+            foreach ($name in 'shutdown-stage.txt', 'faulthandler.txt') {
+              $f = Join-Path $CaptureDir $name
+              if (Test-Path $f) {
+                Write-Host "--- $name ($CaptureDir) ---"
+                Get-Content $f
+              } else {
+                Write-Host "--- $name ($CaptureDir) missing ---"
+              }
+            }
+          }
+
           function Invoke-ReleaseCapture([string]$CaptureDir, [string]$ScaleFactor) {
             Remove-Item Env:ORBITRX_TEST_SIMULATED_RIG -ErrorAction SilentlyContinue
             Remove-Item Env:QT_SCALE_FACTOR -ErrorAction SilentlyContinue
@@ -154,9 +166,17 @@ jobs:
             $env:ORBITRX_COMMIT_SHA = $env:GITHUB_SHA.Substring(0,7)
             if ($ScaleFactor) { $env:QT_SCALE_FACTOR = $ScaleFactor }
             $proc = Start-Process -FilePath $exe -PassThru
+            # Touch .Handle so Windows PowerShell actually populates .ExitCode once the
+            # process exits (pwsh 7 does not need this, but it is harmless there too).
+            $null = $proc.Handle
             if (-not $proc.WaitForExit(120000)) {
               Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+              Show-CaptureDiagnostics $CaptureDir
               throw "OrbitRxMonitor.exe did not exit within 120s for $CaptureDir"
+            }
+            if ($proc.ExitCode -ne 0) {
+              Show-CaptureDiagnostics $CaptureDir
+              throw "OrbitRxMonitor.exe exited $($proc.ExitCode) for $CaptureDir"
             }
             Get-ChildItem $CaptureDir | Format-Table Name, Length
             if (-not (Test-Path (Join-Path $CaptureDir 'rig-wizard-release-ports.txt'))) { throw "No capture written for $CaptureDir (exit $($proc.ExitCode))" }
@@ -170,7 +190,16 @@ jobs:
           $env:ORBITRX_TEST_SIMULATED_RIG = "1"
           $env:ORBITRX_CAPTURE_DIR = (Resolve-Path release-shots\negative-control).Path
           $proc = Start-Process -FilePath $exe -PassThru
-          if (-not $proc.WaitForExit(120000)) { Stop-Process -Id $proc.Id -Force; throw "negative control did not exit" }
+          $null = $proc.Handle
+          if (-not $proc.WaitForExit(120000)) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            Show-CaptureDiagnostics "release-shots\negative-control"
+            throw "negative control did not exit"
+          }
+          if ($proc.ExitCode -ne 0) {
+            Show-CaptureDiagnostics "release-shots\negative-control"
+            throw "negative control exited $($proc.ExitCode)"
+          }
           Remove-Item Env:ORBITRX_TEST_SIMULATED_RIG -ErrorAction SilentlyContinue
           Remove-Item Env:ORBITRX_CAPTURE_DIR, Env:QT_SCALE_FACTOR -ErrorAction SilentlyContinue
       - name: Fail if the simulated rig leaked into the release build

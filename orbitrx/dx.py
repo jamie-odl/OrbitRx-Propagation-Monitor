@@ -190,7 +190,7 @@ class DxClusterService:
             return
         self._wake.clear()
         self.state.cluster_active = True
-        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread = threading.Thread(target=self._run, daemon=True, name="dx-cluster")
         self._thread.start()
 
     def stop(self) -> None:

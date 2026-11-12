@@ -105,14 +105,16 @@ def test_capture_hook_negative_control_lists_simulated_rig(tmp_path, monkeypatch
     assert "Simulated" in ports
 
 
-def test_capture_hook_os_exits_after_process_exit_stage_when_env_set(tmp_path, monkeypatch):
-    """CI self-capture must os._exit inside the hook, after process-exit,
-    while the Qt objects are still alive."""
-    calls = []
-
+def test_capture_hook_never_exits_the_process_even_with_capture_dir_set(tmp_path, monkeypatch):
+    """The hook itself must never end the process, regardless of
+    ORBITRX_CAPTURE_DIR: only run_capture_and_exit (used by the frozen exe's
+    self-capture and tools/capture_shutdown_probe.py) performs the real
+    process-ending teardown, and it does so after this returns, not inside
+    it. This replaces an earlier design where the hook called os._exit
+    itself while Qt objects were still alive (Windows CI runs 42876091854 /
+    42881812414 hung or crashed doing exactly that)."""
     def fake_exit(code):
-        calls.append(code)
-        raise SystemExit(code)
+        raise AssertionError(f"hook must never call os._exit (code={code})")
 
     import orbitrx.ui.qt_app as qt_app
     monkeypatch.setattr(qt_app.os, "_exit", fake_exit)
@@ -120,14 +122,16 @@ def test_capture_hook_os_exits_after_process_exit_stage_when_env_set(tmp_path, m
     out_dir = tmp_path / "capture-exit"
     monkeypatch.setenv("ORBITRX_CAPTURE_DIR", str(out_dir))
 
-    with pytest.raises(SystemExit) as exc:
-        qt_app.run_release_capture_hook(out_dir)
-    assert exc.value.code == 0
-    assert calls == [0]
+    exit_code = qt_app.run_release_capture_hook(out_dir)
+    assert exit_code == 0
     stage = (out_dir / "shutdown-stage.txt").read_text(encoding="utf-8")
     assert "window-closed" in stage
-    assert "qapplication-deleted" in stage
-    assert stage.strip().splitlines()[-1] == "process-exit"
+    assert "qapplication-deleted" not in stage
+    assert "process-exit" not in stage
+
+    from PySide6.QtWidgets import QApplication
+    import shiboken6
+    assert shiboken6.isValid(QApplication.instance())
 
 
 def test_non_capture_exit_path_and_close_to_tray_never_call_os_exit(tmp_path, monkeypatch):

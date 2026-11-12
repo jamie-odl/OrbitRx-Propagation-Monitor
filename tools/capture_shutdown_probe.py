@@ -21,13 +21,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 def main() -> None:
     out = Path(sys.argv[1])
-    # Same env the frozen exe uses in CI self-capture, so the hook's
-    # process-exit / os._exit path runs while Qt objects are still alive.
+    # Same env the frozen exe uses in CI self-capture, so this exercises
+    # exactly the shutdown path run_qt_app takes (run_capture_and_exit:
+    # join every worker thread, delete every widget, delete QApplication,
+    # then exit) -- not the old os._exit-while-Qt-alive path it replaced.
     os.environ["ORBITRX_CAPTURE_DIR"] = str(out)
-    from orbitrx.ui.qt_app import exit_after_qapplication_deleted, run_release_capture_hook
+    from orbitrx.ui.qt_app import run_capture_and_exit
 
-    code = run_release_capture_hook(out)
-    exit_after_qapplication_deleted(code, out / "shutdown-stage.txt")
+    run_capture_and_exit(out)
 
 
 if __name__ == "__main__":

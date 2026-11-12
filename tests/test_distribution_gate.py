@@ -157,10 +157,27 @@ def test_capture_process_exits_zero_for_the_static_capture(tmp_path):
         text=True,
         check=False,
     )
-    assert proc.returncode == 0, proc.stderr
-    stage = (out / "shutdown-stage.txt").read_text(encoding="utf-8")
-    assert "qapplication-deleted" in stage
-    assert stage.strip().splitlines()[-1] == "process-exit"
+    stage_path = out / "shutdown-stage.txt"
+    fault_path = out / "faulthandler.txt"
+    stage = stage_path.read_text(encoding="utf-8") if stage_path.is_file() else "<missing>"
+    fault = fault_path.read_text(encoding="utf-8") if fault_path.is_file() else "<missing>"
+    diagnostics = (
+        f"returncode={proc.returncode}\nstderr={proc.stderr}\n"
+        f"--- shutdown-stage.txt ---\n{stage}\n--- faulthandler.txt ---\n{fault}"
+    )
+    assert proc.returncode == 0, diagnostics
+    lines = stage.strip().splitlines()
+    # Order proves threads were joined and widgets deleted before QApplication
+    # itself, and that the process ended normally afterward (see
+    # orbitrx.ui.qt_app.shutdown_capture_process / run_capture_and_exit).
+    thread_stage = next(
+        (l for l in lines if l == "threads-joined" or l.startswith("threads-still-alive:")), None
+    )
+    assert thread_stage == "threads-joined", diagnostics
+    required_order = ["window-closed", thread_stage, "widgets-deleted", "qapplication-deleted", "process-exit"]
+    positions = [lines.index(name) for name in required_order]
+    assert positions == sorted(positions), diagnostics
+    assert lines[-1] == "process-exit", diagnostics
 
 
 def test_about_snapshot_matches_the_offline_basemap_wording():
