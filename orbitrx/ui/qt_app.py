@@ -1982,7 +1982,8 @@ def shutdown_capture_process(app, win, exit_code: int, stage_log: Path | None) -
         _delete_qapplication(app, stage_log)
     except Exception as exc:
         _stage(stage_log, f"exception:{type(exc).__name__}: {exc}")
-        sys.stderr.write(f"capture shutdown failed: {type(exc).__name__}: {exc}\n")
+        if sys.stderr is not None:  # None in the windowed (console=False) frozen exe
+            sys.stderr.write(f"capture shutdown failed: {type(exc).__name__}: {exc}\n")
         exit_code = 4
     _stage(stage_log, "process-exit")
     return exit_code
@@ -2017,8 +2018,17 @@ def run_capture_and_exit(capture_dir: str | Path) -> None:
         code = shutdown_capture_process(app, win, code, stage_log)
     finally:
         faulthandler.cancel_dump_traceback_later()
-    sys.stdout.flush()
-    sys.stderr.flush()
+    # CI run 43299583680 (17ad018): the frozen exe wrote process-exit but never
+    # reached atexit, and the re-armed watchdog never fired -- because it was
+    # never re-armed. The exe is windowed (console=False), so sys.stdout and
+    # sys.stderr are None there; the unguarded stdout flush that used to sit
+    # here raised AttributeError, which escaped main() as an unhandled
+    # exception, and PyInstaller's windowed bootloader then shows a modal
+    # "Unhandled exception" dialog that nobody on a CI runner can dismiss.
+    # That dialog, not a Qt destructor, was the post-teardown 120s hang.
+    # (Python and the offscreen pytest probe always have real stdio, which is
+    # why Linux and the Windows test job never saw it.)
+    _flush_stdio()
     fault_file.flush()
     # CI run 43297268110 (8a9beb4): on the frozen Windows exe the whole
     # teardown above completed (stage log ends in process-exit, faulthandler.txt
@@ -2032,6 +2042,17 @@ def run_capture_and_exit(capture_dir: str | Path) -> None:
     atexit.register(_stage, capture_dir / "finalise-stage.txt", "atexit")
     faulthandler.dump_traceback_later(FINALISE_WATCHDOG_SECONDS, exit=True, file=fault_file)
     sys.exit(code)
+
+
+def _flush_stdio() -> None:
+    """Flush stdout/stderr when they exist. In the windowed frozen exe both are
+    None, and calling .flush() on None would raise."""
+    for stream in (sys.stdout, sys.stderr):
+        if stream is not None:
+            try:
+                stream.flush()
+            except Exception:
+                pass
 
 
 # Interpreter-finalisation watchdog for the capture process only (see

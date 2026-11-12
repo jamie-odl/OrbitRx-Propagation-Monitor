@@ -175,3 +175,39 @@ def test_capture_process_keeps_a_watchdog_armed_through_interpreter_finalisation
     assert proc.returncode == 0, proc.stderr
     assert (out / "shutdown-stage.txt").read_text(encoding="utf-8").splitlines()[-1] == "process-exit"
     assert (out / "finalise-stage.txt").read_text(encoding="utf-8").splitlines() == ["atexit"]
+
+
+def test_capture_process_exits_zero_without_stdio_like_the_windowed_exe(tmp_path):
+    """CI run 43299583680: the frozen exe is windowed (console=False), so
+    sys.stdout and sys.stderr are None. A bare sys.stdout.flush() after the
+    teardown raised AttributeError, escaped as an unhandled exception, and
+    PyInstaller's windowed bootloader blocked on a modal error dialog (the 120s
+    hang). The capture path must end cleanly with exit 0 with no stdio at all."""
+    out = tmp_path / "no-stdio"
+    code = (
+        "import sys; sys.stdout = None; sys.stderr = None\n"
+        "from orbitrx.ui.qt_app import run_capture_and_exit\n"
+        f"run_capture_and_exit({str(out)!r})\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", code],
+        env=_subprocess_env(), timeout=90, capture_output=True, text=True, check=False,
+    )
+    stage = (out / "shutdown-stage.txt").read_text(encoding="utf-8") if (out / "shutdown-stage.txt").exists() else ""
+    fault = (out / "faulthandler.txt").read_text(encoding="utf-8") if (out / "faulthandler.txt").exists() else ""
+    assert proc.returncode == 0, f"rc={proc.returncode}\n{proc.stderr}\n{stage}\n{fault}"
+    assert stage.splitlines()[-1] == "process-exit"
+    assert (out / "finalise-stage.txt").read_text(encoding="utf-8").splitlines() == ["atexit"]
+    assert "Traceback" not in proc.stderr
+
+
+def test_capture_path_has_no_bare_stdio_flush():
+    """Pin the fix: run_capture_and_exit must not call sys.stdout/sys.stderr
+    methods directly (they are None in the windowed exe)."""
+    import inspect
+    import orbitrx.ui.qt_app as qt_app
+
+    src = inspect.getsource(qt_app.run_capture_and_exit) + inspect.getsource(qt_app.shutdown_capture_process)
+    assert "sys.stdout.flush()" not in src
+    assert "sys.stderr.flush()" not in src
+    assert "if sys.stderr is not None" in src
