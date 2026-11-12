@@ -141,6 +141,34 @@ def test_version_file_matches_package():
     assert f"## [{orbitrx.__version__}]" in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
+def test_this_build_is_a_prototype_and_never_identifies_as_5_1_0():
+    """Risk condition 6: this build must not be mistaken for the 5.1.0
+    release anywhere an operator or CI gate would look at identity."""
+    import tomllib
+
+    assert orbitrx.__version__ == "5.2.0-prototype.1"
+    assert (ROOT / "VERSION").read_text().strip() == "5.2.0-prototype.1"
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert pyproject["project"]["version"] == "5.2.0-prototype.1"
+
+    from tools.make_version_info import version_tuple4
+    assert version_tuple4(orbitrx.__version__) == (5, 2, 0, 1)
+
+    iss = (ROOT / "installer" / "OrbitRxMonitor.iss").read_text(encoding="utf-8")
+    assert '#define AppVer "5.2.0-prototype.1"' in iss
+    assert '#define AppVerNumeric "5.2.0.1"' in iss
+    assert "5.1.0" not in iss
+
+    qt_app = (ROOT / "orbitrx" / "ui" / "qt_app.py").read_text(encoding="utf-8")
+    assert re.search(r'setWindowTitle\(f"OrbitRx Propagation Monitor \{__version__\}[^"]*prototype', qt_app)
+
+    about = (ROOT / "orbitrx" / "ui" / "about.py").read_text(encoding="utf-8")
+    assert "prototype, not a release" in about
+
+    for rel in ("VERSION", "pyproject.toml", "orbitrx/__init__.py", "installer/OrbitRxMonitor.iss"):
+        assert "5.1.0" not in (ROOT / rel).read_text(encoding="utf-8"), rel
+
+
 @pytest.mark.parametrize("name", ["LICENSE", "NOTICE", "PRIVACY.md", "CHANGELOG.md", "README.md"])
 def test_release_docs_exist_without_em_dashes(name):
     text = (ROOT / name).read_text(encoding="utf-8")

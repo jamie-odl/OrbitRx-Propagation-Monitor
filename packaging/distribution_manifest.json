@@ -49,11 +49,24 @@
     "branch": "feat/native-map-no-webengine-2026-11-09",
     "note": "Option B: Live Spots were ported to the native PropagationMapWidget and the Leaflet/QtWebEngine map view was deleted (orbitrx/ui/leaflet_map.py and orbitrx/ui/assets/leaflet/). This build no longer links, ships, or offers corresponding source for Qt WebEngine or Chromium. The chromium_credits and the two qtwebengine-* / THIRD_PARTY_NOTICES_QtWebEngine-* corresponding_source entries that used to live here described the published WebEngine-era 5.1.0 line (baseline commit 9ca6178799a698231491eebcc101ad3bba914754); that historical hosted material is untouched at downloads.thevenom.dev and still covers copies of that release already distributed. It is simply no longer a true description of what this build packages."
   },
+  "ship_set": {
+    "note": "F1 (2026-11-12): empirical trim of unused Qt binaries. Policy lives in tools/ship_set.py (filter_binaries), applied in OrbitRxMonitor.spec after Analysis; the Windows CI gate re-checks the built dist/ tree with the same module.",
+    "shipped_qt_dlls": ["Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll", "Qt6Svg.dll"],
+    "also_shipped": ["opengl32sw.dll"],
+    "banned_patterns": [
+      "*qt6pdf*.dll", "*plugins/imageformats/qpdf.dll",
+      "*qt6virtualkeyboard*.dll", "*plugins/platforminputcontexts/qtvirtualkeyboardplugin.dll",
+      "*qt6quick*.dll", "*qt6qml*.dll", "*qt6opengl*.dll",
+      "*qt6webengine*.dll", "*qtwebengineprocess*", "*qt6webchannel*.dll",
+      "*qt6positioning*.dll", "*qt6location*.dll", "*/qml/*", "*qml/*",
+      "*qtwebengine_resources*", "*qtwebengine*locales*"
+    ]
+  },
   "corresponding_source": {
     "hosted": true,
     "base_url": "https://downloads.thevenom.dev/orbitrx/",
     "verified_by": "public HTTPS GET 2026-11-08",
-    "note_scope": "Covers only the plain Qt/PySide6 (Widgets/Core/Gui) LGPL libraries this build still ships. See webengine_removed above for why the former WebEngine/Chromium entries were dropped.",
+    "note_scope": "Covers the Qt6Core, Qt6Gui, Qt6Widgets, Qt6Network and Qt6Svg LGPL libraries, plus PySide6 and Shiboken6, that this build ships (see ship_set above). Qt PDF, Qt Virtual Keyboard, Qt Quick/Qml, Qt OpenGL and Qt WebEngine/WebChannel are not shipped. See webengine_removed above for why the former WebEngine/Chromium entries were dropped.",
     "entries": [
       {
         "name": "pyside-setup-everywhere-src-6.12.0.tar.xz",

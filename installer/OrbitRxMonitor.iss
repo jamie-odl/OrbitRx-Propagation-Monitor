@@ -1,16 +1,23 @@
 ; Inno Setup 6 script for OrbitRx (unsigned).
-; Build the exe first (build.bat or CI), then: iscc /DAppVer=5.1.0 installer\OrbitRxMonitor.iss
+; Build the exe first (build.bat or CI), then:
+;   iscc /DAppVer=5.2.0-prototype.1 /DAppVerNumeric=5.2.0.1 installer\OrbitRxMonitor.iss
+; AppVer can carry a pre-release suffix (e.g. "5.2.0-prototype.1"); Inno's
+; VersionInfoVersion cannot, so AppVerNumeric -- the strictly-numeric 4-part
+; version from tools/make_version_info.version_tuple4 -- is passed separately.
 
 [Setup]
 AppName=OrbitRx Propagation Monitor
 #ifndef AppVer
-  #define AppVer "5.1.0"
+  #define AppVer "5.2.0-prototype.1"
+#endif
+#ifndef AppVerNumeric
+  #define AppVerNumeric "5.2.0.1"
 #endif
 AppVersion={#AppVer}
 AppVerName=OrbitRx Propagation Monitor {#AppVer}
 AppPublisher=thevenom
 AppCopyright=Copyright (C) 2026 thevenom
-VersionInfoVersion={#AppVer}.0
+VersionInfoVersion={#AppVerNumeric}
 VersionInfoCompany=thevenom
 VersionInfoProductName=OrbitRx Propagation Monitor
 LicenseFile=..\LICENSE

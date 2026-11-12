@@ -77,7 +77,8 @@ def _notice_url() -> str:
 
 def _version_line() -> str:
     commit = _build_commit()
-    return f"Version {__version__} ({commit})" if commit else f"Version {__version__}"
+    base = f"Version {__version__} (prototype, not a release)"
+    return f"{base} ({commit})" if commit else base
 
 
 class _OrbitMark(QWidget):

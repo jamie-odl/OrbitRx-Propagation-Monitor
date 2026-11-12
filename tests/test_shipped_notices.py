@@ -136,3 +136,37 @@ def test_qt_replacement_notice_points_to_shipped_internal_doc():
     assert "_internal/REPLACING_QT_LIBRARIES.md" in NOTICE
     assert "See\n    docs/REPLACING_QT_LIBRARIES.md" not in NOTICE
     assert "See docs/REPLACING_QT_LIBRARIES.md" not in NOTICE
+
+
+def test_notice_qt_paragraph_names_the_actual_ship_set_not_the_false_plain_sentence():
+    """F1 (2026-11-12): "Only the plain Qt libraries (Widgets, Core, Gui) are
+    linked and shipped" was false -- Network and Svg ship too, and the wheel
+    also carries (but this build drops) Pdf, Virtual Keyboard, Quick/Qml and
+    OpenGL. The paragraph must name what is actually shipped instead."""
+    assert "Only the plain Qt libraries (Widgets, Core, Gui)" not in NOTICE
+    for shipped in ("Qt6Core", "Qt6Gui", "Qt6Widgets", "Qt6Network", "Qt6Svg"):
+        assert shipped in NOTICE
+    for plugin_category in ("platforms", "imageformats", "iconengines", "styles", "tls", "networkinformation"):
+        assert plugin_category in NOTICE
+    for not_shipped in ("Qt PDF", "Qt Virtual Keyboard", "Qt Quick/Qml", "Qt OpenGL"):
+        assert not_shipped in NOTICE
+    assert "Qt WebEngine" in NOTICE and "Qt WebChannel" in NOTICE
+    assert "No Chromium-derived code is\n    shipped by this build." in NOTICE
+    assert "opengl32sw.dll" in NOTICE
+    assert "Mesa llvmpipe" in NOTICE
+    assert "PySide6 and Shiboken6" in NOTICE
+
+
+def test_notice_and_packaged_replacing_doc_agree_on_the_same_offer():
+    replacing = (ROOT / "docs" / "REPLACING_QT_LIBRARIES.md").read_text(encoding="utf-8")
+    assert "not an offer" not in replacing
+    assert "QT_SOURCE_OFFER_DRAFT.md" not in replacing
+    pyside_sha = "099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751"
+    qt_sha = "98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165"
+    for sha in (pyside_sha, qt_sha):
+        assert sha in NOTICE
+        assert sha in replacing
+    assert "https://downloads.thevenom.dev/orbitrx/pyside-setup-everywhere-src-6.12.0.tar.xz" in replacing
+    assert "https://downloads.thevenom.dev/orbitrx/qt-everywhere-src-6.12.0.tar.xz" in replacing
+    for dll in ("Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll", "Qt6Svg.dll"):
+        assert dll in replacing

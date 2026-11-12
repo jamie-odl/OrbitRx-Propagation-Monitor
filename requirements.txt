@@ -1,7 +1,7 @@
 # Runtime
 pillow>=10.0
 matplotlib>=3.8
-PySide6==6.12.0
+PySide6_Essentials==6.12.0
 pyserial>=3.5
 win10toast>=0.9; sys_platform == "win32"
 pywin32>=306; sys_platform == "win32"

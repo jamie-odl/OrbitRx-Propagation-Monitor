@@ -3,7 +3,12 @@
 All notable changes to OrbitRx are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
-## [Unreleased]
+## [5.2.0-prototype.1] - prototype, not a release
+
+F1 (2026-11-12): native-map prototype build. Identifies itself as
+5.2.0-prototype.1 everywhere (exe version resource, installer, window
+title, About) so it is never mistaken for the 5.1.0 release. See NOTICE
+for the trimmed Qt ship set.
 
 ### Fixed (design review V2 follow-ups)
 - Removed the duplicate "Click a spot to tune" hint on the Leaflet map header.

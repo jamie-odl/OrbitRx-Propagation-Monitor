@@ -60,24 +60,34 @@ Details and the files that were read are in docs/DEPENDENCY_LICENCES.md.
   Qt: the private prospective packaging route is LGPL-3.0-only for the Qt
     libraries, one alternative in the qtcoreglobal.h SPDX line. That is not
     clearance, not a published source offer, and not a commercial grant.
-    The wheel's LicenseRef-Qt-Commercial pointer is not copied. Only the
-    plain Qt libraries (Widgets, Core, Gui) are linked and shipped as of
-    2026-11-09 (Option B): Qt WebEngine, Qt WebChannel and the Chromium
-    code they depended on were removed along with the Leaflet map view that
-    was their only caller (orbitrx/ui/leaflet_map.py, deleted). They are no
-    longer built, linked, or shipped, so no corresponding-source offer is
-    made for them from this build; the historical offer and hosted archives
-    covering the WebEngine-era 5.1.0 release remain at
+    The wheel's LicenseRef-Qt-Commercial pointer is not copied. As of
+    2026-11-12 (F1), the Qt libraries actually linked and shipped are
+    Qt6Core, Qt6Gui, Qt6Widgets, Qt6Network and Qt6Svg, together with
+    PySide6 and Shiboken6, and the Qt plugins platforms, imageformats,
+    iconengines, styles, tls and networkinformation, plus the generic
+    category (qtuiotouchplugin). Qt PDF (which bundled PDFium -- the only
+    Chromium-derived code remaining after the 2026-11-09 Option B removal of
+    Qt WebEngine), Qt Virtual Keyboard, Qt Quick/Qml and Qt OpenGL are present
+    in the PySide6 wheel but are not linked, not shipped, and are excluded by
+    OrbitRxMonitor.spec's ship-set filter (tools/ship_set.py); Qt WebEngine
+    and Qt WebChannel remain excluded as before. No Chromium-derived code is
+    shipped by this build. opengl32sw.dll, Qt's software OpenGL rasteriser
+    fallback (built from Mesa llvmpipe, an MIT-style licence), is shipped by
+    the PySide6 wheel alongside the Qt libraries above. The historical offer
+    and hosted archives covering the WebEngine-era 5.1.0 release remain at
     https://downloads.thevenom.dev/orbitrx/ for copies of that release
-    already distributed. Corresponding source for the plain Qt/PySide6
-    libraries this build does ship is offered under GPL-3.0 section 6(d), as
+    already distributed. Corresponding source for the Qt/PySide6 libraries
+    this build does ship is offered under GPL-3.0 section 6(d), as
     incorporated into LGPL-3.0 section 4 for this Combined Work (conveyance
     by download, not the physical-product written-offer clause in section
     6(b)); see
     https://downloads.thevenom.dev/orbitrx/pyside-setup-everywhere-src-6.12.0.tar.xz
-    (sha256 099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751) and
+    (sha256 099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751),
+    which covers PySide6 and Shiboken6, and
     https://downloads.thevenom.dev/orbitrx/qt-everywhere-src-6.12.0.tar.xz
-    (sha256 98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165).
+    (sha256 98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165),
+    the single official Qt source archive, which covers qtbase (Qt6Core,
+    Qt6Gui, Qt6Widgets, Qt6Network) and qtsvg (Qt6Svg) among its modules.
     The Qt DLLs are separate files under _internal/PySide6 and can be
     replaced there. See _internal/REPLACING_QT_LIBRARIES.md, in the
     _internal folder beside OrbitRxMonitor.exe. docs/DISTRIBUTION.md has

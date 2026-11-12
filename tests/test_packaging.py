@@ -73,6 +73,16 @@ def test_version_tuple4_pads_and_truncates_to_four_ints():
     assert version_tuple4("5.1.0.3") == (5, 1, 0, 3)
 
 
+def test_version_tuple4_takes_the_build_number_from_a_prerelease_suffix():
+    """F1 (2026-11-12): a prototype build is tagged "X.Y.Z-prototype.N" so it
+    is never mistaken for a numbered release; Windows' VS_FIXEDFILEINFO has
+    no field for the suffix text, so the trailing digits of the suffix
+    become the 4th numeric component instead."""
+    from tools.make_version_info import version_tuple4
+    assert version_tuple4("5.2.0-prototype.1") == (5, 2, 0, 1)
+    assert version_tuple4("5.2.0-prototype.12") == (5, 2, 0, 12)
+
+
 def test_build_version_info_text_has_expected_fields_and_parses():
     import ast
     from tools.make_version_info import build_version_info_text
@@ -83,9 +93,22 @@ def test_build_version_info_text_has_expected_fields_and_parses():
     assert "u'CompanyName', u'thevenom'" in text
     assert "u'ProductName', u'OrbitRx Propagation Monitor'" in text
     assert "u'LegalCopyright', u'Copyright (C) 2026 thevenom'" in text
-    assert "u'FileVersion', u'5.1.0.0'" in text
+    assert "u'FileVersion', u'5.1.0'" in text
     assert "u'ProductVersion', u'5.1.0'" in text
     assert "filevers=(5, 1, 0, 0)" in text
+
+
+def test_build_version_info_text_keeps_full_prerelease_string_in_stringstructs():
+    """F1: FileVersion/ProductVersion must show "5.2.0-prototype.1", not the
+    numeric-only "5.2.0.1" -- that numeric form is reserved for the binary
+    filevers/prodvers tuple, which Windows requires to be strictly numeric."""
+    from tools.make_version_info import build_version_info_text
+
+    text = build_version_info_text("5.2.0-prototype.1")
+    assert "u'FileVersion', u'5.2.0-prototype.1'" in text
+    assert "u'ProductVersion', u'5.2.0-prototype.1'" in text
+    assert "filevers=(5, 2, 0, 1)" in text
+    assert "prodvers=(5, 2, 0, 1)" in text
 
 
 def test_screenshot_rig_wizard_tool_exists_and_uses_real_enumeration(): # M9 evidence

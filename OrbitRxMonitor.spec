@@ -5,6 +5,7 @@ from PyInstaller.utils.hooks import collect_submodules
 
 sys.path.insert(0, '.')
 from tools.make_version_info import write_version_info  # noqa: E402
+from tools.ship_set import filter_binaries  # noqa: E402
 
 # I3: VERSION is the single source of truth; regenerate the exe's Windows version
 # resource from it on every build instead of hand-maintaining a second copy.
@@ -40,6 +41,12 @@ excludes = [
     'PySide6.QtQml', 'PySide6.QtQuick', 'PySide6.QtQuickWidgets',
     'PySide6.QtQuickControls2', 'PySide6.QtQuickTest', 'PySide6.QtQmlFeatures',
     'PySide6.QtPositioning', 'PySide6.QtLocation',
+    # F1 (2026-11-12): nothing in orbitrx/ imports these either. Qt6Pdf (PDF
+    # viewing), Qt6VirtualKeyboard, Qt6Quick/Qml* and Qt6OpenGL (Qt6Quick's
+    # only dependent) are dropped from both the Python modules here and the
+    # Qt binaries below (tools/ship_set.BANNED_PATTERNS).
+    'PySide6.QtPdf', 'PySide6.QtPdfWidgets', 'PySide6.QtVirtualKeyboard',
+    'PySide6.QtOpenGL', 'PySide6.QtOpenGLWidgets',
 ]
 
 a = Analysis(
@@ -85,6 +92,12 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+# F1: drop the Qt binaries/data nothing in orbitrx/ imports (see excludes
+# above and tools/ship_set.py) from the actual ship set, not just the Python
+# module graph -- PyInstaller's Qt hook still collects their DLLs by default.
+a.binaries = filter_binaries(a.binaries)
+a.datas = filter_binaries(a.datas)
+
 pyz = PYZ(a.pure)
 
 exe = EXE(

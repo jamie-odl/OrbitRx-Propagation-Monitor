@@ -48,23 +48,42 @@ VSVersionInfo(
 
 
 def version_tuple4(version: str) -> tuple[int, int, int, int]:
-    """"5.1.0" -> (5, 1, 0, 0); pads/truncates to exactly 4 ints."""
-    parts = [int(p) for p in version.strip().split(".") if p != ""]
-    parts = (parts + [0, 0, 0, 0])[:4]
+    """"5.1.0" -> (5, 1, 0, 0); "5.1.0.3" -> (5, 1, 0, 3); pads/truncates the
+    release part to exactly 3 ints.
+
+    A pre-release suffix after a "-" (e.g. "5.2.0-prototype.1") supplies the
+    4th int instead: the last run of digits in the suffix, so
+    "5.2.0-prototype.1" -> (5, 2, 0, 1). Windows' VS_FIXEDFILEINFO has no
+    field for a suffix string, so this is the only way a prototype build gets
+    a distinct, strictly-numeric filevers/prodvers from a real release.
+    """
+    release, _, prerelease = version.strip().partition("-")
+    parts = [int(p) for p in release.split(".") if p != ""]
+    if prerelease:
+        digits = "".join(ch if ch.isdigit() else " " for ch in prerelease).split()
+        build = int(digits[-1]) if digits else 0
+    else:
+        build = parts[3] if len(parts) >= 4 else 0
+    parts = (parts + [0, 0, 0])[:3] + [build]
     return tuple(parts)  # type: ignore[return-value]
 
 
 def build_version_info_text(version: str) -> str:
+    version = version.strip()
     tuple4 = ", ".join(str(n) for n in version_tuple4(version))
     return _TEMPLATE.format(
         tuple4=tuple4,
         company=COMPANY_NAME,
         product=PRODUCT_NAME,
-        file_version=".".join(str(n) for n in version_tuple4(version)),
+        # FileVersion/ProductVersion keep the full version string (including
+        # any pre-release suffix), not just the numeric filevers/prodvers
+        # tuple above -- that's what "5.2.0-prototype.1" vs the real 5.1.0
+        # release looks like to a human reading Explorer's Details tab.
+        file_version=version,
         internal_name=Path(ORIGINAL_FILENAME).stem,
         copyright=LEGAL_COPYRIGHT,
         original_filename=ORIGINAL_FILENAME,
-        product_version=version.strip(),
+        product_version=version,
     )
 
 

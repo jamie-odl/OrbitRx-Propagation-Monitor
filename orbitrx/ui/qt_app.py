@@ -190,7 +190,7 @@ class QtOrbitRxApplication(QMainWindow):
         app = QApplication.instance()
         if app is not None:
             apply_theme(app)
-        self.setWindowTitle(f"OrbitRx Propagation Monitor {__version__}")
+        self.setWindowTitle(f"OrbitRx Propagation Monitor {__version__} (prototype, not a release)")
         self.renderer = MapRenderer(width=900, height=720)
         self._labels: dict[str, QLabel] = {}
         self._layer_checks: dict[str, QToolButton] = {}

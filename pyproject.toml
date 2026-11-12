@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orbitrx-propagation-monitor"
-version = "5.1.0"
+version = "5.2.0-prototype.1"
 description = "HF propagation dashboard for ham radio operators"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "pillow>=10.0",
     "matplotlib>=3.8",
-    "PySide6>=6.6",
+    "PySide6_Essentials>=6.12,<6.13",
 ]
 
 [project.optional-dependencies]
@@ -20,7 +20,6 @@ ui = ["win10toast>=0.9; sys_platform == 'win32'"]
 omnirig = ["pywin32>=306; sys_platform == 'win32'"]
 dev = ["pytest>=8.0", "mypy>=1.8"]
 build = ["pyinstaller>=6.0"]
-map = ["PySide6-Addons>=6.6"]
 
 [project.scripts]
 orbitrx = "orbitrx.main:main"
