@@ -2020,8 +2020,23 @@ def run_capture_and_exit(capture_dir: str | Path) -> None:
     sys.stdout.flush()
     sys.stderr.flush()
     fault_file.flush()
-    fault_file.close()
+    # CI run 43297268110 (8a9beb4): on the frozen Windows exe the whole
+    # teardown above completed (stage log ends in process-exit, faulthandler.txt
+    # empty) and the process still did not end within 120s, so the hang is in
+    # interpreter finalisation after sys.exit. Keep faulthandler armed through
+    # finalisation -- the file stays open on purpose -- so a hang there dumps
+    # every thread's stack and ends the process instead of hanging silently,
+    # and mark the atexit point (in finalise-stage.txt, so shutdown-stage.txt
+    # still ends at process-exit) to locate it.
+    import atexit
+    atexit.register(_stage, capture_dir / "finalise-stage.txt", "atexit")
+    faulthandler.dump_traceback_later(FINALISE_WATCHDOG_SECONDS, exit=True, file=fault_file)
     sys.exit(code)
+
+
+# Interpreter-finalisation watchdog for the capture process only (see
+# run_capture_and_exit). Well inside the 90s probe and 120s CI timeouts.
+FINALISE_WATCHDOG_SECONDS = 20.0
 
 
 def run_qt_app() -> None:

@@ -156,3 +156,22 @@ def test_normal_exit_and_close_to_tray_never_run_the_capture_teardown(tmp_path, 
     win.close()  # real close now
     app.processEvents()
     assert shiboken6.isValid(app)
+
+
+def test_capture_process_keeps_a_watchdog_armed_through_interpreter_finalisation(tmp_path):
+    """CI run 43297268110: the frozen Windows exe finished the whole teardown
+    (shutdown-stage.txt ended in process-exit) and then hung in interpreter
+    finalisation with the watchdog already cancelled. The capture process must
+    reach atexit (finalise-stage.txt) and keep a short faulthandler watchdog
+    armed through finalisation, well inside the 90s/120s caller timeouts."""
+    import orbitrx.ui.qt_app as qt_app
+
+    assert 0 < qt_app.FINALISE_WATCHDOG_SECONDS <= 30
+    out = tmp_path / "finalise"
+    proc = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "capture_shutdown_probe.py"), str(out)],
+        env=_subprocess_env(), timeout=90, capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert (out / "shutdown-stage.txt").read_text(encoding="utf-8").splitlines()[-1] == "process-exit"
+    assert (out / "finalise-stage.txt").read_text(encoding="utf-8").splitlines() == ["atexit"]

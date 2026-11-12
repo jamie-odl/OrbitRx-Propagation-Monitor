@@ -148,7 +148,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path release-shots\100, release-shots\150 | Out-Null
 
           function Show-CaptureDiagnostics([string]$CaptureDir) {
-            foreach ($name in 'shutdown-stage.txt', 'faulthandler.txt') {
+            foreach ($name in 'shutdown-stage.txt', 'finalise-stage.txt', 'faulthandler.txt') {
               $f = Join-Path $CaptureDir $name
               if (Test-Path $f) {
                 Write-Host "--- $name ($CaptureDir) ---"
