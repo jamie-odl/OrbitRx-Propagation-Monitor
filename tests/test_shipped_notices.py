@@ -105,6 +105,22 @@ def test_zip_wrapper_is_split_into_historical_and_future():
     assert hashlib.sha256(historical).hexdigest() != HISTORICAL_ZIP_SHA256
 
 
+def test_setup_zip_doc_names_the_live_5_1_0_digest_not_the_superseded_one():
+    """The live 5.1.0 zip (since 9 Nov 2026) is d6a3aebf...; bb8f087e... is the
+    superseded 5 Nov installer-only archive and must not be presented as the
+    current published checksum."""
+    from tools.pack_setup_zip import HISTORICAL_ZIP_SHA256, LIVE_ZIP_SHA256
+
+    assert LIVE_ZIP_SHA256 == "d6a3aebf3c79389949ce3ca4abe2b865fe6d1ce4346aa409ba610b053c609c6f"
+    assert LIVE_ZIP_SHA256 != HISTORICAL_ZIP_SHA256
+    live_section = ZIP_DOC.split("## Superseded 5 November 2026 archive")[0]
+    assert f"{LIVE_ZIP_SHA256}  OrbitRx-Setup-5.1.0.zip" in live_section
+    assert "434,814,502 bytes" in live_section
+    assert f"{HISTORICAL_ZIP_SHA256}  OrbitRx-Setup-5.1.0.zip" not in live_section
+    assert "superseded" in live_section
+    assert "## Superseded 5 November 2026 archive" in ZIP_DOC
+
+
 def test_historical_wrapper_matches_published_zip_when_installer_present():
     exe = os.environ.get("ORBITRX_SETUP_EXE")
     if not exe:

@@ -16,6 +16,10 @@ when the input is the installer whose SHA-256 is
 That is a reconstruction of the archive that was downloaded. It is not
 a command that was stored in git, and running it on any other bytes
 does not claim to be that release.
+
+That 5 November archive is superseded. The live OrbitRx-Setup-5.1.0.zip
+since 9 November 2026 is LIVE_ZIP_SHA256 (onedir plus installer, built
+from 9ca6178). This tool does not produce that zip. See docs/SETUP_ZIP.md.
 """
 
 from __future__ import annotations
@@ -28,6 +32,9 @@ import zlib
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Live public 5.1.0 zip since 9 Nov 2026 (not produced by this tool).
+LIVE_ZIP_SHA256 = "d6a3aebf3c79389949ce3ca4abe2b865fe6d1ce4346aa409ba610b053c609c6f"
+# Superseded 5 Nov 2026 installer-only archive.
 HISTORICAL_ZIP_SHA256 = "bb8f087e041c13f868e6bb2ceb77c197760901aa478b3ee4ac9f9509efb2498b"
 HISTORICAL_EXE_SHA256 = "4cb3c4d0774218b0b39e05d9f4ca3dc2609c367349f1383f60d378a0d89642d8"
 HISTORICAL_DOS_TIME = 20601  # 2026-11-05 10:03:50
