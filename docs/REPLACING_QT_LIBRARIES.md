@@ -12,7 +12,7 @@ Windows runs have shown these as separate files, not packed inside the exe:
 - `_internal/PySide6/Qt6Network.dll`
 - `_internal/PySide6/Qt6Svg.dll`
 
-`opengl32sw.dll` (Qt's software OpenGL rasteriser fallback, built from Mesa llvmpipe) ships alongside them but is not a Qt module DLL and is not part of this relink list.
+`opengl32sw.dll` (Qt's software OpenGL rasteriser fallback, built from Mesa llvmpipe) is in the PySide6 wheel but is not shipped: it is excluded by the ship-set filter (`tools/ship_set.py`), since nothing in `orbitrx/` creates a software-fallback `QOpenGLContext`. It is not a Qt module DLL and is not part of this relink list regardless.
 
 `OrbitRxMonitor.spec` and its ship-set filter (`tools/ship_set.py`) drop Qt PDF, Qt Virtual Keyboard, Qt Quick/Qml, Qt OpenGL, and Qt WebEngine/WebChannel from the build (see "Removed Qt modules" below), so there is nothing to relink for any of those.
 
@@ -37,11 +37,13 @@ DLLs no longer ship and there is nothing to relink there. The local GN
 argument log and `third_party/qt/qtpdf-args-AMD64.gn` describe a past
 configure of the now-removed WebEngine module and are historical only.
 
-F1 (2026-11-12): Qt PDF (`Qt6Pdf.dll`, `plugins/imageformats/qpdf.dll`), Qt
-Virtual Keyboard (`Qt6VirtualKeyboard.dll`,
-`plugins/platforminputcontexts/qtvirtualkeyboardplugin.dll`), Qt Quick/Qml
-(`Qt6Quick.dll`, `Qt6Qml*.dll`) and Qt OpenGL (`Qt6OpenGL.dll`, the only
-importer of which was Qt6Quick) are excluded the same way: nothing in
-`orbitrx/` imports any of them. Qt PDF bundled PDFium, the only
-Chromium-derived code remaining after Option B; with Qt PDF gone, no
-Chromium-derived code is shipped by this build.
+F1 (2026-11-12): Qt PDF (`Qt6Pdf.dll`) and Qt Virtual Keyboard
+(`Qt6VirtualKeyboard.dll`) are not installed by the pinned
+`PySide6_Essentials` 6.12.0 wheel at all -- neither DLL is present in it.
+Their orphan plugins (`plugins/imageformats/qpdf.dll`,
+`plugins/platforminputcontexts/qtvirtualkeyboardplugin.dll`), plus Qt
+Quick/Qml (`Qt6Quick.dll`, `Qt6Qml*.dll`) and Qt OpenGL (`Qt6OpenGL.dll`,
+the only importer of which was Qt6Quick), are present in the wheel but are
+excluded the same way: nothing in `orbitrx/` imports any of them. Qt PDF
+bundled PDFium, the only Chromium-derived code remaining after Option B;
+with Qt PDF gone, no Chromium-derived code is shipped by this build.

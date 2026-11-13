@@ -57,23 +57,33 @@ Details and the files that were read are in docs/DEPENDENCY_LICENCES.md.
   PyInstaller 6.22.3 bootloader: third_party/pyinstaller/COPYING.txt
     (GPL-2.0-or-later plus the Bootloader Exception). The bootloader is
     embedded in the exe. Copying that file is not a grant for OrbitRx.
-  Qt: the private prospective packaging route is LGPL-3.0-only for the Qt
-    libraries, one alternative in the qtcoreglobal.h SPDX line. That is not
-    clearance, not a published source offer, and not a commercial grant.
-    The wheel's LicenseRef-Qt-Commercial pointer is not copied. As of
-    2026-11-12 (F1), the Qt libraries actually linked and shipped are
+  Qt: the packaging route is LGPL-3.0-only for the Qt libraries, one
+    alternative in the qtcoreglobal.h SPDX line. That is not
+    legal clearance and not a commercial grant. The wheel's
+    LicenseRef-Qt-Commercial pointer is not copied. As of 2026-11-12 (F1),
+    the Qt libraries actually linked and shipped are
     Qt6Core, Qt6Gui, Qt6Widgets, Qt6Network and Qt6Svg, together with
     PySide6 and Shiboken6, and the Qt plugins platforms, imageformats,
     iconengines, styles, tls and networkinformation, plus the generic
-    category (qtuiotouchplugin). Qt PDF (which bundled PDFium -- the only
-    Chromium-derived code remaining after the 2026-11-09 Option B removal of
-    Qt WebEngine), Qt Virtual Keyboard, Qt Quick/Qml and Qt OpenGL are present
-    in the PySide6 wheel but are not linked, not shipped, and are excluded by
-    OrbitRxMonitor.spec's ship-set filter (tools/ship_set.py); Qt WebEngine
-    and Qt WebChannel remain excluded as before. No Chromium-derived code is
+    category (qtuiotouchplugin). Qt PDF (Qt6Pdf.dll, which bundled PDFium --
+    the only Chromium-derived code remaining after the 2026-11-09 Option B
+    removal of Qt WebEngine) and Qt Virtual Keyboard (Qt6VirtualKeyboard.dll)
+    are not installed by the pinned PySide6_Essentials 6.12.0 wheel at all --
+    neither DLL is present in it. Only their orphan plugins
+    (plugins/imageformats/qpdf.dll,
+    plugins/platforminputcontexts/qtvirtualkeyboardplugin.dll), plus Qt
+    Quick/Qml (Qt6Quick.dll, Qt6Qml*.dll) and Qt OpenGL (Qt6OpenGL.dll, the
+    only importer of which was Qt6Quick), are present in the wheel, and all
+    of those are excluded by OrbitRxMonitor.spec's ship-set filter
+    (tools/ship_set.py); none of Qt PDF, Qt Virtual Keyboard, Qt Quick/Qml
+    or Qt OpenGL is shipped. Qt WebEngine and Qt WebChannel remain excluded
+    as before. No Chromium-derived code is
     shipped by this build. opengl32sw.dll, Qt's software OpenGL rasteriser
-    fallback (built from Mesa llvmpipe, an MIT-style licence), is shipped by
-    the PySide6 wheel alongside the Qt libraries above. The historical offer
+    fallback (built from Mesa llvmpipe, an MIT-style licence), is present in
+    the wheel alongside the Qt libraries above but is excluded by the same
+    ship-set filter and is not shipped: nothing in orbitrx/ or app.py uses
+    OpenGL, QOpenGLWidget, Qt Quick or RHI widgets, so a QOpenGLContext
+    never falls back to software GL in this app. The historical offer
     and hosted archives covering the WebEngine-era 5.1.0 release remain at
     https://downloads.thevenom.dev/orbitrx/ for copies of that release
     already distributed. Corresponding source for the Qt/PySide6 libraries
@@ -93,6 +103,14 @@ Details and the files that were read are in docs/DEPENDENCY_LICENCES.md.
     _internal folder beside OrbitRxMonitor.exe. docs/DISTRIBUTION.md has
     more detail; it is also a source-repository document and is not
     included in this download.
+  OpenSSL 3: _internal/libcrypto-3.dll and _internal/libssl-3.dll are the
+    CPython 3.12 runtime's own OpenSSL build, loaded by _ssl.pyd for every
+    urllib HTTPS request OrbitRx makes (NOAA, HamQSL, PSKReporter, QRZ,
+    ipinfo.io). _internal/libcrypto-3-x64.dll and _internal/libssl-3-x64.dll
+    are a second copy, collected by PyInstaller's Qt hook for the Qt tls
+    plugin qopensslbackend.dll. All four are OpenSSL 3, Apache License 2.0;
+    the licence text ships at third_party/openssl/LICENSE.txt (also
+    packaged as _internal/third_party/openssl/LICENSE.txt).
 pystray is not imported and is not in the frozen exe. It is not an
   obligation of that binary. customtkinter is not a dependency of this commit.
 The MIT sentence in LICENSE covers the OrbitRx application source named

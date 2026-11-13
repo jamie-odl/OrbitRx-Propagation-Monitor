@@ -105,6 +105,13 @@ def test_zip_wrapper_is_split_into_historical_and_future():
     assert hashlib.sha256(historical).hexdigest() != HISTORICAL_ZIP_SHA256
 
 
+def test_default_zip_name_uses_the_version_file():
+    from tools.pack_setup_zip import default_zip_name
+
+    version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+    assert default_zip_name(version) == "OrbitRx-Setup-5.2.0.zip"
+
+
 def test_setup_zip_doc_names_the_live_5_1_0_digest_not_the_superseded_one():
     """The live 5.1.0 zip (since 9 Nov 2026) is d6a3aebf...; bb8f087e... is the
     superseded 5 Nov installer-only archive and must not be presented as the
@@ -142,10 +149,25 @@ def test_notice_qt_paragraph_names_the_actual_ship_set_not_the_false_plain_sente
     """F1 (2026-11-12): "Only the plain Qt libraries (Widgets, Core, Gui) are
     linked and shipped" was false -- Network and Svg ship too, and the wheel
     also carries (but this build drops) Pdf, Virtual Keyboard, Quick/Qml and
-    OpenGL. The paragraph must name what is actually shipped instead."""
+    OpenGL. The paragraph must name what is actually shipped instead.
+
+    M5: a mutant that drops Qt6Network/Qt6Svg from the shipped-libraries
+    sentence must be caught even though those two names also occur later in
+    the source-offer text -- so this extracts that sentence by its anchor
+    phrases instead of searching NOTICE as a whole."""
+    from tools.ship_set import REQUIRED_QT_DLLS
+
     assert "Only the plain Qt libraries (Widgets, Core, Gui)" not in NOTICE
-    for shipped in ("Qt6Core", "Qt6Gui", "Qt6Widgets", "Qt6Network", "Qt6Svg"):
-        assert shipped in NOTICE
+    anchor_start = "actually linked and shipped are"
+    anchor_end = "together with"
+    assert anchor_start in NOTICE, "shipped-libraries anchor phrase is missing from NOTICE"
+    after_start = NOTICE.split(anchor_start, 1)[1]
+    assert anchor_end in after_start, "shipped-libraries anchor end phrase is missing from NOTICE"
+    sentence = after_start.split(anchor_end, 1)[0]
+    normalised = " ".join(sentence.split()).replace(" and ", ", ")
+    named = {part.strip().rstrip(",") for part in normalised.split(",")} - {""}
+    assert named == {dll.removesuffix(".dll") for dll in REQUIRED_QT_DLLS}
+
     for plugin_category in ("platforms", "imageformats", "iconengines", "styles", "tls", "networkinformation"):
         assert plugin_category in NOTICE
     for not_shipped in ("Qt PDF", "Qt Virtual Keyboard", "Qt Quick/Qml", "Qt OpenGL"):
@@ -154,6 +176,7 @@ def test_notice_qt_paragraph_names_the_actual_ship_set_not_the_false_plain_sente
     assert "No Chromium-derived code is\n    shipped by this build." in NOTICE
     assert "opengl32sw.dll" in NOTICE
     assert "Mesa llvmpipe" in NOTICE
+    assert "ship-set filter and is not shipped" in NOTICE
     assert "PySide6 and Shiboken6" in NOTICE
 
 
@@ -170,3 +193,66 @@ def test_notice_and_packaged_replacing_doc_agree_on_the_same_offer():
     assert "https://downloads.thevenom.dev/orbitrx/qt-everywhere-src-6.12.0.tar.xz" in replacing
     for dll in ("Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll", "Qt6Svg.dll"):
         assert dll in replacing
+
+
+def test_notice_makes_one_consistent_statement_about_the_source_offer():
+    """NOTICE must not simultaneously deny and make the Corresponding Source
+    offer. It names LGPL-3.0-only as the conveyance route and then offers
+    Corresponding Source under GPL-3.0 6(d)/LGPL-3.0 4 -- it must never also
+    say the offer was not published."""
+    replacing = (ROOT / "docs" / "REPLACING_QT_LIBRARIES.md").read_text(encoding="utf-8")
+    for doc in (NOTICE, replacing):
+        assert "not a published source offer" not in doc
+        assert "not an offer" not in doc
+    assert "is offered under GPL-3.0 section 6(d)" in NOTICE
+    assert "This offer is made under GPL-3.0 section 6(d)" in replacing
+
+
+def test_notice_names_openssl_3_and_its_licence_text():
+    assert "OpenSSL 3" in NOTICE
+    assert "Apache License 2.0" in NOTICE or "Apache-2.0" in NOTICE
+    for dll in ("libcrypto-3.dll", "libssl-3.dll", "libcrypto-3-x64.dll", "libssl-3-x64.dll"):
+        assert dll in NOTICE
+    assert "third_party/openssl/LICENSE.txt" in NOTICE
+
+
+def test_spec_datas_include_the_openssl_licence_text():
+    spec = (ROOT / "OrbitRxMonitor.spec").read_text(encoding="utf-8")
+    assert "('third_party/openssl/LICENSE.txt', 'third_party/openssl')" in spec
+
+
+def test_openssl_licence_text_is_the_apache_2_0_header():
+    path = ROOT / "third_party" / "openssl" / "LICENSE.txt"
+    assert path.is_file()
+    text = path.read_text(encoding="utf-8")
+    assert "Apache License" in text
+    assert "Version 2.0" in text
+
+
+def test_no_tracked_file_references_the_404_qtwebengine_rename():
+    """The never-uploaded rename of the hosted qtwebengine archive returns
+    HTTP 404 at downloads.thevenom.dev; the hosted file keeps its upstream
+    name, qtwebengine-everywhere-src-6.140.0-rc.tar.xz (see
+    docs/QT_SOURCE_OFFER_DRAFT.md). The renamed string is assembled at
+    runtime so this test itself does not trip its own check."""
+    import subprocess
+
+    this_file = Path(__file__).relative_to(ROOT).as_posix()
+    renamed = "qtwebengine-everywhere-src-6.140.0-rc-" + "d505fc23640d-39352427a324.tar.xz"
+    tracked = subprocess.run(
+        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.splitlines()
+    offenders = []
+    for rel in tracked:
+        if rel == this_file:
+            continue
+        path = ROOT / rel
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        if renamed in text:
+            offenders.append(rel)
+    assert offenders == []

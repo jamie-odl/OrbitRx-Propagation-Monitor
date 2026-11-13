@@ -37,6 +37,10 @@ BANNED_PATTERNS = (
     "*qml/*",
     "*qtwebengine_resources*",
     "*qtwebengine*locales*",
+    # opengl32sw.dll (Mesa llvmpipe software OpenGL fallback, ~20 MB): nothing
+    # in orbitrx/ or app.py uses OpenGL, QOpenGLWidget, Qt Quick or RHI
+    # widgets, so a QOpenGLContext never falls back to software GL here.
+    "*opengl32sw.dll",
 )
 
 # Qt libraries this build must keep. Checked by name stem (case-insensitive),

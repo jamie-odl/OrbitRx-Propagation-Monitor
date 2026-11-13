@@ -10,7 +10,7 @@ The public `OrbitRx-Setup-5.1.0.zip` was replaced on 9 November 2026. The digest
 - Built by Actions run `42520759834` from commit `9ca6178799a698231491eebcc101ad3bba914754` (branch `cursor/shipped-5-1-0-notices-2d8d`, private artifact `windows-private-candidate`). Layout: onedir `OrbitRxMonitor/` plus `OrbitRxMonitor-Setup.exe`. `OrbitRxMonitor.exe` SHA-256 `a103f27d4abff5450acfcce52e4eb116cf99d65d175bc582a126005d24257830`; `OrbitRxMonitor-Setup.exe` SHA-256 `1fedae7e50b69576762a3670a07ffd1c63ffa5032749f2fb30d6408c32d723c8`.
 - `tools/pack_setup_zip.py` does not produce this zip and does not claim to.
 
-This branch (the native-map prototype) does not publish, replace or re-pack the live zip.
+This branch (the 5.2.0 native-map candidate, prepared but not yet published) does not publish, replace or re-pack the live zip.
 
 ## Superseded 5 November 2026 archive
 
@@ -26,7 +26,7 @@ Two different facts. The installer bytes have a recorded build. The zip around t
 - `osslsigncode` on that exe: no signature. PE checksum field `00000000`, calculated `0F60B2DC`
 - Version resource: CompanyName `thevenom`, FileVersion `5.1.0.0`, ProductVersion `5.1.0`
 
-The release workflow on this commit does not publish. The changelog still says 5.1.0 is not yet released. Nothing in this branch uploads a release or replaces that exe.
+The release workflow on this commit does not publish. The changelog records 5.1.0 as released on 9 November 2026. Nothing in this branch uploads a release or replaces that exe.
 
 ### Published digest at the time, and what was actually hashed
 

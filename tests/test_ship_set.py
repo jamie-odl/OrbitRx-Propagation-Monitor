@@ -62,6 +62,7 @@ BANNED_SAMPLE_NAMES = {
     "PySide6/plugins/imageformats/qpdf.dll",
     "PySide6/plugins/platforminputcontexts/qtvirtualkeyboardplugin.dll",
     "PySide6/qml/QtQuick/qmldir",
+    "opengl32sw.dll",
 }
 
 KEPT_SAMPLE_NAMES = {
@@ -70,7 +71,6 @@ KEPT_SAMPLE_NAMES = {
     "PySide6/Qt6Widgets.dll",
     "PySide6/Qt6Network.dll",
     "PySide6/Qt6Svg.dll",
-    "opengl32sw.dll",
     "PySide6/plugins/imageformats/qsvg.dll",
     "PySide6/plugins/iconengines/qsvgicon.dll",
     "PySide6/plugins/tls/qschannelbackend.dll",
@@ -125,6 +125,21 @@ def test_check_ship_set_flags_banned_files_and_missing_required_dlls(tmp_path):
     (internal / "Qt6Core.dll").unlink()
     problems = check_ship_set(root)
     assert any("Qt6Core.dll" in p for p in problems)
+
+
+def test_check_ship_set_flags_opengl32sw_dll(tmp_path):
+    from tools.ship_set import check_ship_set
+
+    root = tmp_path / "OrbitRxMonitor"
+    internal = root / "_internal" / "PySide6"
+    internal.mkdir(parents=True)
+    for name in ("Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll", "Qt6Svg.dll"):
+        (internal / name).write_bytes(b"x")
+    assert check_ship_set(root) == []
+
+    (root / "_internal" / "opengl32sw.dll").write_bytes(b"x")
+    problems = check_ship_set(root)
+    assert any("opengl32sw.dll" in p for p in problems)
 
 
 def test_spec_filters_binaries_and_datas_after_analysis_and_still_excludes_webengine():

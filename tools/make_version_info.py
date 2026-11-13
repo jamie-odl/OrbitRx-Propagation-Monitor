@@ -51,11 +51,11 @@ def version_tuple4(version: str) -> tuple[int, int, int, int]:
     """"5.1.0" -> (5, 1, 0, 0); "5.1.0.3" -> (5, 1, 0, 3); pads/truncates the
     release part to exactly 3 ints.
 
-    A pre-release suffix after a "-" (e.g. "5.2.0-prototype.1") supplies the
+    A pre-release suffix after a "-" (e.g. "5.3.0-rc.1") supplies the
     4th int instead: the last run of digits in the suffix, so
-    "5.2.0-prototype.1" -> (5, 2, 0, 1). Windows' VS_FIXEDFILEINFO has no
-    field for a suffix string, so this is the only way a prototype build gets
-    a distinct, strictly-numeric filevers/prodvers from a real release.
+    "5.3.0-rc.1" -> (5, 3, 0, 1). Windows' VS_FIXEDFILEINFO has no
+    field for a suffix string, so this is the only way a pre-release build gets
+    a distinct, strictly-numeric filevers/prodvers from a numbered release.
     """
     release, _, prerelease = version.strip().partition("-")
     parts = [int(p) for p in release.split(".") if p != ""]
@@ -77,8 +77,8 @@ def build_version_info_text(version: str) -> str:
         product=PRODUCT_NAME,
         # FileVersion/ProductVersion keep the full version string (including
         # any pre-release suffix), not just the numeric filevers/prodvers
-        # tuple above -- that's what "5.2.0-prototype.1" vs the real 5.1.0
-        # release looks like to a human reading Explorer's Details tab.
+        # tuple above -- that's what "5.3.0-rc.1" vs a numbered release
+        # looks like to a human reading Explorer's Details tab.
         file_version=version,
         internal_name=Path(ORIGINAL_FILENAME).stem,
         copyright=LEGAL_COPYRIGHT,

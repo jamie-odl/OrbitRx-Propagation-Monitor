@@ -55,8 +55,9 @@ a = Analysis(
     binaries=[],
     # Onedir: Qt libraries sit next to the exe so they can be replaced.
     # Basemap is only the Natural Earth render. Legacy JPEG and v2 images
-    # are not datas. Licence texts are copied; they are not a published
-    # source offer.
+    # are not datas. Licence texts are copied for reference; the
+    # Corresponding Source offer itself is the NOTICE paragraph (see NOTICE),
+    # not these copied licence texts.
     #
     # Option B (2026-11-09): Qt WebEngine is no longer bundled (see excludes
     # above), so its vendor notices (LICENSE.Chromium,
@@ -83,6 +84,7 @@ a = Analysis(
         ('third_party/pyserial/LICENSE.txt', 'third_party/pyserial'),
         ('third_party/pywin32/License.txt', 'third_party/pywin32'),
         ('third_party/pyinstaller/COPYING.txt', 'third_party/pyinstaller'),
+        ('third_party/openssl/LICENSE.txt', 'third_party/openssl'),
     ],
     hiddenimports=hiddenimports,
     hookspath=[],

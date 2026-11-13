@@ -105,7 +105,8 @@ def test_docs_and_ci_match_the_present_map_and_stay_unpublished():
     assert "Historical `orbitrx/paths.py`" in map_doc
     assert "does not choose one" not in deps
     assert "does not choose LicenseRef-Qt-Commercial, LGPL, or GPL" not in notice
-    assert "private prospective packaging route is LGPL-3.0-only" in notice
+    assert "packaging route is LGPL-3.0-only" in notice
+    assert "private prospective" not in notice
     assert "not a commercial grant" in notice
     assert "win10toast imports it" not in notice
     assert "omnirig.py" in notice and "win32com.client" in notice

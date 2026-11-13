@@ -19,7 +19,8 @@
     "third_party/matplotlib/LICENSE": "5a1a81ea301728c8bba2933da832c0cd62229daf20893a024ab3d53244468dbc",
     "third_party/pyserial/LICENSE.txt": "f91cb9813de6a5b142b8f7f2dede630b5134160aedaeaf55f4d6a7e2593ca3f3",
     "third_party/pywin32/License.txt": "ae254460373deef5dff3e08104f4c1f03a045c2ae1b34760b5c30f7efcef9078",
-    "third_party/pyinstaller/COPYING.txt": "0598064c7d2718e38d7914a7d08343b2fa008e3bea9ebba2aa7a6ffa5900dd64"
+    "third_party/pyinstaller/COPYING.txt": "0598064c7d2718e38d7914a7d08343b2fa008e3bea9ebba2aa7a6ffa5900dd64",
+    "third_party/openssl/LICENSE.txt": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a"
   },
   "windows_onedir_evidence": {
     "run": "42362357356",
@@ -52,14 +53,14 @@
   "ship_set": {
     "note": "F1 (2026-11-12): empirical trim of unused Qt binaries. Policy lives in tools/ship_set.py (filter_binaries), applied in OrbitRxMonitor.spec after Analysis; the Windows CI gate re-checks the built dist/ tree with the same module.",
     "shipped_qt_dlls": ["Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll", "Qt6Svg.dll"],
-    "also_shipped": ["opengl32sw.dll"],
+    "also_shipped": ["libcrypto-3.dll", "libssl-3.dll", "libcrypto-3-x64.dll", "libssl-3-x64.dll"],
     "banned_patterns": [
       "*qt6pdf*.dll", "*plugins/imageformats/qpdf.dll",
       "*qt6virtualkeyboard*.dll", "*plugins/platforminputcontexts/qtvirtualkeyboardplugin.dll",
       "*qt6quick*.dll", "*qt6qml*.dll", "*qt6opengl*.dll",
       "*qt6webengine*.dll", "*qtwebengineprocess*", "*qt6webchannel*.dll",
       "*qt6positioning*.dll", "*qt6location*.dll", "*/qml/*", "*qml/*",
-      "*qtwebengine_resources*", "*qtwebengine*locales*"
+      "*qtwebengine_resources*", "*qtwebengine*locales*", "*opengl32sw.dll"
     ]
   },
   "corresponding_source": {

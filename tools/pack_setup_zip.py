@@ -40,6 +40,11 @@ HISTORICAL_EXE_SHA256 = "4cb3c4d0774218b0b39e05d9f4ca3dc2609c367349f1383f60d378a
 HISTORICAL_DOS_TIME = 20601  # 2026-11-05 10:03:50
 HISTORICAL_DOS_DATE = 23909
 MEMBER_NAME = b"OrbitRxMonitor-Setup.exe"
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def default_zip_name(version: str) -> str:
+    return f"OrbitRx-Setup-{version}.zip"
 
 
 def deflate_raw_level9(data: bytes) -> bytes:
@@ -110,13 +115,19 @@ def future_zip(data: bytes, when: datetime) -> bytes:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("installer", type=Path)
-    parser.add_argument("-o", "--output", type=Path, required=True)
+    parser.add_argument(
+        "-o", "--output", type=Path, default=None,
+        help="Defaults to OrbitRx-Setup-<VERSION>.zip in the current directory.",
+    )
     parser.add_argument(
         "--historical-observed",
         action="store_true",
         help="Use the 2026-11-05 10:03:50 headers measured on the published zip.",
     )
     args = parser.parse_args(argv)
+    if args.output is None:
+        version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+        args.output = Path(default_zip_name(version))
     data = args.installer.read_bytes()
     if args.historical_observed:
         blob = historical_observed_zip(data)

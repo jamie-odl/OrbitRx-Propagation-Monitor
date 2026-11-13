@@ -71,16 +71,17 @@ def test_version_tuple4_pads_and_truncates_to_four_ints():
     assert version_tuple4("5.1.0") == (5, 1, 0, 0)
     assert version_tuple4("5.1") == (5, 1, 0, 0)
     assert version_tuple4("5.1.0.3") == (5, 1, 0, 3)
+    assert version_tuple4("5.2.0") == (5, 2, 0, 0)
 
 
 def test_version_tuple4_takes_the_build_number_from_a_prerelease_suffix():
-    """F1 (2026-11-12): a prototype build is tagged "X.Y.Z-prototype.N" so it
-    is never mistaken for a numbered release; Windows' VS_FIXEDFILEINFO has
-    no field for the suffix text, so the trailing digits of the suffix
-    become the 4th numeric component instead."""
+    """A pre-release build is tagged "X.Y.Z-suffix.N" so it is never mistaken
+    for a numbered release; Windows' VS_FIXEDFILEINFO has no field for the
+    suffix text, so the trailing digits of the suffix become the 4th
+    numeric component instead."""
     from tools.make_version_info import version_tuple4
-    assert version_tuple4("5.2.0-prototype.1") == (5, 2, 0, 1)
-    assert version_tuple4("5.2.0-prototype.12") == (5, 2, 0, 12)
+    assert version_tuple4("5.3.0-rc.1") == (5, 3, 0, 1)
+    assert version_tuple4("5.3.0-rc.12") == (5, 3, 0, 12)
 
 
 def test_build_version_info_text_has_expected_fields_and_parses():
@@ -99,16 +100,26 @@ def test_build_version_info_text_has_expected_fields_and_parses():
 
 
 def test_build_version_info_text_keeps_full_prerelease_string_in_stringstructs():
-    """F1: FileVersion/ProductVersion must show "5.2.0-prototype.1", not the
-    numeric-only "5.2.0.1" -- that numeric form is reserved for the binary
+    """FileVersion/ProductVersion must show "5.3.0-rc.1", not the
+    numeric-only "5.3.0.1" -- that numeric form is reserved for the binary
     filevers/prodvers tuple, which Windows requires to be strictly numeric."""
     from tools.make_version_info import build_version_info_text
 
-    text = build_version_info_text("5.2.0-prototype.1")
-    assert "u'FileVersion', u'5.2.0-prototype.1'" in text
-    assert "u'ProductVersion', u'5.2.0-prototype.1'" in text
-    assert "filevers=(5, 2, 0, 1)" in text
-    assert "prodvers=(5, 2, 0, 1)" in text
+    text = build_version_info_text("5.3.0-rc.1")
+    assert "u'FileVersion', u'5.3.0-rc.1'" in text
+    assert "u'ProductVersion', u'5.3.0-rc.1'" in text
+    assert "filevers=(5, 3, 0, 1)" in text
+    assert "prodvers=(5, 3, 0, 1)" in text
+
+
+def test_build_version_info_text_for_the_plain_5_2_0_release():
+    from tools.make_version_info import build_version_info_text
+
+    text = build_version_info_text("5.2.0")
+    assert "u'FileVersion', u'5.2.0'" in text
+    assert "u'ProductVersion', u'5.2.0'" in text
+    assert "filevers=(5, 2, 0, 0)" in text
+    assert "prodvers=(5, 2, 0, 0)" in text
 
 
 def test_screenshot_rig_wizard_tool_exists_and_uses_real_enumeration(): # M9 evidence
@@ -176,6 +187,20 @@ def test_ci_never_uploads_a_ship_set_artifact():
     assert "upload-artifact" not in release
     assert "OrbitRx-native-prototype-unsigned" not in release
     assert "OrbitRx-windows-unsigned" not in release
+
+
+def test_no_upload_artifact_step_in_ci_has_a_distributable_path():
+    """Dedicated, narrowly-scoped check (independent of the broader ship-set
+    test above): no `uses: actions/upload-artifact@v4` step's `path:` may
+    contain dist/, .exe, .zip or OrbitRxMonitor/."""
+    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    blocks = text.split("uses: actions/upload-artifact@v4")[1:]
+    assert blocks, "no upload-artifact steps found in ci.yml"
+    for block in blocks:
+        step = block.split("\n      - ")[0]
+        path_part = step.split("path:", 1)[1]
+        for banned in ("dist/", ".exe", ".zip", "OrbitRxMonitor/"):
+            assert banned not in path_part, (banned, step)
 
 
 def test_write_version_info_reads_version_file(tmp_path):

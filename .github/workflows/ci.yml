@@ -102,7 +102,7 @@ jobs:
         run: |
           $ver = (Get-Content VERSION).Trim()
           # VersionInfoVersion must be strictly numeric; $ver may carry a
-          # pre-release suffix (e.g. 5.2.0-prototype.1), so derive the
+          # pre-release suffix (e.g. 5.3.0-rc.1), so derive the
           # 4-part numeric version the same way the exe's own resource does.
           $verNumeric = python -c "from tools.make_version_info import version_tuple4; print('.'.join(str(n) for n in version_tuple4('$ver')))"
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
@@ -129,6 +129,19 @@ jobs:
           Get-ChildItem -Path $root -Recurse -File | Sort-Object FullName | ForEach-Object {
             "{0}`t{1}" -f $_.FullName.Substring($root.Length + 1).Replace('\','/'), $_.Length
           } | Out-File $inv -Append -Encoding utf8
+          # Record FileVersion/ProductName of the four OpenSSL DLLs (NOTICE)
+          # so the shipped OpenSSL build is on record alongside the hashes.
+          foreach ($name in 'libcrypto-3.dll', 'libssl-3.dll', 'libcrypto-3-x64.dll', 'libssl-3-x64.dll') {
+            $dll = Get-ChildItem -Path $root -Recurse -Filter $name -File -ErrorAction SilentlyContinue | Select-Object -First 1
+            $line = if ($dll) {
+              $v = $dll.VersionInfo
+              "$name FileVersion=$($v.FileVersion) ProductName=$($v.ProductName)"
+            } else {
+              "$name not found in ship set"
+            }
+            Write-Host $line
+            $line | Out-File $inv -Append -Encoding utf8
+          }
           Write-Host "Ship-set inventory: $((Get-Content $inv).Count) lines (not uploaded as binaries)"
       # F1 ship-set gate: fails the build if a banned Qt binary (Pdf, Virtual
       # Keyboard, Quick/Qml, OpenGL, WebEngine/WebChannel, ...) reached the

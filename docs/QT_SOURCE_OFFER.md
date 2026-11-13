@@ -22,13 +22,16 @@ so a republished archive can never silently shadow an older one at the same name
 | --- | --- | --- | --- |
 | `pyside-setup-everywhere-src-6.12.0.tar.xz` | 18,211,772 | `099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751` | PySide6 6.12.0 |
 | `qt-everywhere-src-6.12.0.tar.xz` | 443,394,020 | `98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165` | Qt 6.12.0 |
-| `qtwebengine-everywhere-src-6.140.0-rc-d505fc23640d-39352427a324.tar.xz` | 580,351,144 | `61257967afd9803a1db6403e86ea25c4efff8fad479bda365a9d81bfd709f621` | qtwebengine `d505fc23640d2bd6345e6483eb73daf4e19f5829` (tag v6.140.0-rc) + chromium `39352427a3245a19fb395547b3aa38be9d091ec4`, bundled as one official full-tree tarball |
+| `qtwebengine-everywhere-src-6.140.0-rc.tar.xz` | 580,351,144 | `61257967afd9803a1db6403e86ea25c4efff8fad479bda365a9d81bfd709f621` | qtwebengine `d505fc23640d2bd6345e6483eb73daf4e19f5829` (tag v6.140.0-rc) + chromium `39352427a3245a19fb395547b3aa38be9d091ec4`, bundled as one official full-tree tarball |
 
-The hosted qtwebengine filename above is a rename of the file as fetched from
+The hosted file is the upstream filename, unchanged bytes, fetched from
 `download.qt.io/development_releases/qtwebengine/6.140.0-rc/qtwebengine-everywhere-src-6.140.0-rc.tar.xz`
-(bytes/hash unchanged by the rename) -- it replaces the two separate archives
+-- it replaces the two separate archives
 (`qtwebengine-6.12-d4735ce.tar.xz` + `qtwebengine-chromium-71a2fa55.tar`) named in the
 old draft, which pinned the wrong commits.
+
+This offer covers the WebEngine-era 5.1.0 binary only; 5.2.0 ships no Qt
+WebEngine.
 
 `chromium_attributions.qdoc` is **not** included in this offer yet: the retained copy
 (sha256 `b2382a81239e6c100a3f96342909c6c7e7ecec12fb93e6fe91a5aa3bf756c0ec`) was generated
@@ -99,7 +102,7 @@ https://downloads.thevenom.dev/orbitrx/ .
 SHA-256:
 099c1a597cf33c1b000e11cf68a0b82d216fb802bf81726efc720394f10c7751  pyside-setup-everywhere-src-6.12.0.tar.xz
 98ff4f44bac6ec3e1e62ee2a4316ae0e3d15badb015d753cc0268a20db52f165  qt-everywhere-src-6.12.0.tar.xz
-61257967afd9803a1db6403e86ea25c4efff8fad479bda365a9d81bfd709f621  qtwebengine-everywhere-src-6.140.0-rc-d505fc23640d-39352427a324.tar.xz
+61257967afd9803a1db6403e86ea25c4efff8fad479bda365a9d81bfd709f621  qtwebengine-everywhere-src-6.140.0-rc.tar.xz
 <CREDITS_SHA256>  chromium_attributions.qdoc
 
 The Qt libraries are conveyed under LGPL-3.0-only, one alternative in the
@@ -126,8 +129,10 @@ a further three years from each later conveyance of the binary.
   and license-clause mappings only.
 - Not legal advice. Anyone relying on the offer below for compliance purposes
   should have the clause mapping above independently reviewed.
-- Not a statement that hosting exists yet. `downloads.thevenom.dev/orbitrx/` is
-  the intended destination; uploading to it is a coordinator action outside this
-  repository (see old-offer-draft.md "Hosting action" and STAGE1_GATE.md).
+- Hosting now exists for the three archives in the table: on 13 November 2026
+  `https://downloads.thevenom.dev/orbitrx/` returned HTTP 200 for
+  `pyside-setup-everywhere-src-6.12.0.tar.xz`, `qt-everywhere-src-6.12.0.tar.xz`
+  and `qtwebengine-everywhere-src-6.140.0-rc.tar.xz`. `chromium_attributions.qdoc`
+  is not hosted (HTTP 404) and stays a placeholder.
 - Not a statement that `chromium_attributions.qdoc` has been regenerated yet --
   `<CREDITS_SHA256>` above is a placeholder (see docs/REMOTE_APPLY.md).

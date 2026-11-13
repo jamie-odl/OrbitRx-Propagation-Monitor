@@ -77,7 +77,7 @@ def _notice_url() -> str:
 
 def _version_line() -> str:
     commit = _build_commit()
-    base = f"Version {__version__} (prototype, not a release)"
+    base = f"Version {__version__}"
     return f"{base} ({commit})" if commit else base
 
 

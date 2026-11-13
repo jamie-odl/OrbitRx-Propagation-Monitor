@@ -6,7 +6,7 @@ reports on one map, so you can see what is open and who is hearing whom.
 
 ![OrbitRx main window with Live Spots](docs/screenshots/01-main-static.png)
 
-> Status: 5.1.0 in development. Windows is the primary target; Linux and macOS run from source.
+> Status: 5.1.0 is the current public release. 5.2.0 (native map, no embedded browser) is prepared but not yet published. Windows is the primary target; Linux and macOS run from source.
 
 ## Features
 
@@ -35,7 +35,7 @@ reports on one map, so you can see what is open and who is hearing whom.
 ## Install
 
 **Windows:** download `OrbitRxMonitor.exe` (or the installer) from the project's Releases
-page once 5.1.0 is published. Releases are unsigned: verify each download against
+page; 5.1.0 is published there. Releases are unsigned: verify each download against
 `SHA256SUMS.txt` (for example `Get-FileHash OrbitRxMonitor.exe -Algorithm SHA256` in
 PowerShell) before running it. Windows SmartScreen may warn on first run; choose
 "More info" then "Run anyway".
