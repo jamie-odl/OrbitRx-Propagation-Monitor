@@ -83,9 +83,12 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      # P1/P3: the build interpreter is pinned to the exact CPython whose
+      # OpenSSL pair (FileVersion + sha256) and LICENSE.txt are recorded in
+      # packaging/distribution_manifest.json and third_party/python/.
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.12.10"
           cache: pip
       - run: pip install -r requirements.txt
       - name: Stamp commit SHA into About metadata (N4)
@@ -129,13 +132,16 @@ jobs:
           Get-ChildItem -Path $root -Recurse -File | Sort-Object FullName | ForEach-Object {
             "{0}`t{1}" -f $_.FullName.Substring($root.Length + 1).Replace('\','/'), $_.Length
           } | Out-File $inv -Append -Encoding utf8
-          # Record FileVersion/ProductName of the four OpenSSL DLLs (NOTICE)
-          # so the shipped OpenSSL build is on record alongside the hashes.
-          foreach ($name in 'libcrypto-3.dll', 'libssl-3.dll', 'libcrypto-3-x64.dll', 'libssl-3-x64.dll') {
+          # P1: record FileVersion, ProductName and sha256 of the shipped
+          # OpenSSL DLLs (CPython's own pair only) in the text inventory. The
+          # pin is enforced by the "OpenSSL pin" step below.
+          $pin = (Get-Content packaging\distribution_manifest.json -Raw | ConvertFrom-Json).ship_set.openssl
+          foreach ($name in $pin.dlls.PSObject.Properties.Name) {
             $dll = Get-ChildItem -Path $root -Recurse -Filter $name -File -ErrorAction SilentlyContinue | Select-Object -First 1
             $line = if ($dll) {
               $v = $dll.VersionInfo
-              "$name FileVersion=$($v.FileVersion) ProductName=$($v.ProductName)"
+              $h = (Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLower()
+              "$name FileVersion=$($v.FileVersion) ProductName=$($v.ProductName) sha256=$h"
             } else {
               "$name not found in ship set"
             }
@@ -143,6 +149,57 @@ jobs:
             $line | Out-File $inv -Append -Encoding utf8
           }
           Write-Host "Ship-set inventory: $((Get-Content $inv).Count) lines (not uploaded as binaries)"
+      # P1 (Risk 161d6e5 screen): fail, not log, if CPython's OpenSSL pair is
+      # missing or its FileVersion/sha256 differs from the manifest pin, or if
+      # any other OpenSSL DLL (e.g. the runner's libcrypto-3-x64/libssl-3-x64)
+      # or Qt's qopensslbackend.dll reached the onedir. The ship-set gate
+      # below enforces the same exact-set rule from tools/ship_set.py.
+      - name: OpenSSL pin (CPython pair only, FileVersion and sha256 must match)
+        shell: pwsh
+        run: |
+          $root = (Resolve-Path dist\OrbitRxMonitor).Path
+          $pin = (Get-Content packaging\distribution_manifest.json -Raw | ConvertFrom-Json).ship_set.openssl
+          $pyver = (python -c "import platform; print(platform.python_version())").Trim()
+          if ($pyver -ne $pin.python) { throw "Build Python is $pyver, manifest pins $($pin.python)" }
+          $expected = @($pin.dlls.PSObject.Properties.Name | ForEach-Object { $_.ToLower() } | Sort-Object)
+          $found = @(Get-ChildItem -Path $root -Recurse -File | Where-Object { $_.Name -match '^(libcrypto|libssl|libeay|ssleay|openssl).*\.dll$' })
+          $foundNames = @($found | ForEach-Object { $_.Name.ToLower() } | Sort-Object)
+          Write-Host "OpenSSL DLLs in ship set: $($found | ForEach-Object { $_.FullName.Substring($root.Length + 1) })"
+          if (($foundNames -join ',') -ne ($expected -join ',')) { throw "OpenSSL DLL set changed: expected $($expected -join ', '), found $($foundNames -join ', ')" }
+          foreach ($prop in $pin.dlls.PSObject.Properties) {
+            $dll = $found | Where-Object { $_.Name -ieq $prop.Name } | Select-Object -First 1
+            if (-not $dll) { throw "$($prop.Name) missing from ship set" }
+            if ($dll.DirectoryName -ne (Join-Path $root '_internal')) { throw "$($prop.Name) is not at _internal\$($prop.Name)" }
+            $ver = "$($dll.VersionInfo.FileVersion)".Trim()
+            $h = (Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLower()
+            Write-Host "$($prop.Name) FileVersion=$ver sha256=$h"
+            if ($ver -ne $prop.Value.file_version) { throw "$($prop.Name) FileVersion $ver != pinned $($prop.Value.file_version)" }
+            if ($h -ne $prop.Value.sha256) { throw "$($prop.Name) sha256 $h != pinned $($prop.Value.sha256)" }
+          }
+          if (Get-ChildItem -Path $root -Recurse -File -Filter qopensslbackend.dll) { throw "qopensslbackend.dll reached the ship set" }
+          Write-Host "OPENSSL-PIN: PASS"
+      # P3: CPython's LICENSE.txt and Qt's third-party attributions ship in
+      # the onedir with the manifest hashes, and the vendored CPython licence
+      # is byte-identical to the build interpreter's own LICENSE.txt.
+      - name: Shipped notices (CPython LICENSE, Qt third-party attributions)
+        shell: pwsh
+        run: |
+          $root = (Resolve-Path dist\OrbitRxMonitor).Path
+          $texts = (Get-Content packaging\distribution_manifest.json -Raw | ConvertFrom-Json).present_texts
+          foreach ($rel in 'third_party/python/LICENSE.txt', 'third_party/qt/QT_THIRD_PARTY_ATTRIBUTIONS.txt', 'third_party/openssl/LICENSE.txt') {
+            $shipped = Join-Path $root ('_internal/' + $rel)
+            if (-not (Test-Path $shipped)) { throw "$rel is not in the onedir at _internal/$rel" }
+            $h = (Get-FileHash $shipped -Algorithm SHA256).Hash.ToLower()
+            Write-Host "_internal/$rel sha256=$h"
+            if ($h -ne $texts.$rel) { throw "_internal/$rel sha256 $h != manifest $($texts.$rel)" }
+          }
+          $base = (python -c "import sys; print(sys.base_prefix)").Trim()
+          $runnerLicence = Join-Path $base 'LICENSE.txt'
+          if (-not (Test-Path $runnerLicence)) { throw "build interpreter has no LICENSE.txt at $runnerLicence" }
+          $rh = (Get-FileHash $runnerLicence -Algorithm SHA256).Hash.ToLower()
+          Write-Host "build interpreter LICENSE.txt sha256=$rh"
+          if ($rh -ne $texts.'third_party/python/LICENSE.txt') { throw "vendored third_party/python/LICENSE.txt differs from the build interpreter's LICENSE.txt" }
+          Write-Host "SHIPPED-NOTICES: PASS"
       # F1 ship-set gate: fails the build if a banned Qt binary (Pdf, Virtual
       # Keyboard, Quick/Qml, OpenGL, WebEngine/WebChannel, ...) reached the
       # onedir, or if a Qt library this build must keep is missing. Only a
@@ -151,10 +208,11 @@ jobs:
       - name: Ship-set gate (no unused Qt binaries, required Qt libraries present)
         shell: pwsh
         run: |
-          python tools/ship_set.py --check dist\OrbitRxMonitor --write-qt-list release-shots\ship-set-qt.txt
-          if ($LASTEXITCODE -ne 0) { throw "ship-set gate failed: banned Qt binary present or a required Qt library is missing" }
+          python tools/ship_set.py --check dist\OrbitRxMonitor --write-qt-list release-shots\ship-set-qt.txt --write-tls-list release-shots\ship-set-tls.txt
+          if ($LASTEXITCODE -ne 0) { throw "ship-set gate failed: banned binary present, a required Qt library is missing, or the OpenSSL/TLS plugin set changed" }
           Write-Host "SHIP-SET-GATE: PASS"
           Get-Content release-shots\ship-set-qt.txt
+          Get-Content release-shots\ship-set-tls.txt
       # Distributable upload stays off while packaging/distribution_manifest.json
       # lists release_blockers. release.yml runs that gate and uploads nothing.
       # release-shots later in this job are screenshots and text, not the exe.

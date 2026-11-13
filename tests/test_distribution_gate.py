@@ -112,7 +112,8 @@ def test_docs_and_ci_match_the_present_map_and_stay_unpublished():
     assert "omnirig.py" in notice and "win32com.client" in notice
     assert "alerts.py" in notice
     assert "140.0.7339.264" in draft and "151.0.7922.108" in draft
-    assert draft.startswith("# Verified corresponding source offer")
+    assert draft.startswith("> **Superseded (13 November 2026).**")
+    assert "\n# Verified corresponding source offer\n" in draft
     assert not (ROOT / "third_party" / "qt" / "LICENSES" / "LicenseRef-Qt-Commercial.txt").exists()
     assert "('basemap/ne_110m_dark.png', '.')" in spec
     assert "next to the executable" in readme
@@ -289,3 +290,43 @@ def test_renderer_matches_the_committed_png_and_refuses_legacy_names():
     assert provenance["pillow"] == "13.0.0"
     assert provenance["output_sha256"] == MAP_SHA256
     assert (ROOT / "docs" / "basemap_ne_110m_preview.png").is_file()
+
+
+# --- P2 (Risk screen of 161d6e5): published source-offer doc ----------------
+
+
+def test_qt_source_offer_doc_is_published_and_split_by_release():
+    offer = (ROOT / "docs" / "QT_SOURCE_OFFER.md").read_text(encoding="utf-8")
+    assert offer.startswith("# Qt corresponding source (published)\n")
+    for gone in ("Stage 2 draft", "NOT published", "must not be\ncopied",
+                 "until hosting actually\nexists", "Text ready to publish once hosting exists"):
+        assert gone not in offer, gone
+    assert "### 5.2.0\n" in offer
+    assert "### 5.1.0 (WebEngine era) only\n" in offer
+    five_two = offer.split("### 5.2.0\n")[1].split("### 5.1.0")[0]
+    five_one = offer.split("### 5.1.0 (WebEngine era) only\n")[1].split("### Open item")[0]
+    assert "pyside-setup-everywhere-src-6.12.0.tar.xz" in five_two
+    assert "qt-everywhere-src-6.12.0.tar.xz" in five_two
+    assert "qtwebengine" not in five_two
+    assert "the offer in NOTICE" in five_two
+    assert "same two archives above plus this one" in five_one
+    qtwe_rows = [l for l in five_one.splitlines() if l.startswith("| `qtwebengine-everywhere-src-6.140.0-rc.tar.xz`")]
+    assert len(qtwe_rows) == 1
+    assert "Covers the WebEngine-era 5.1.0 binary only; 5.2.0 ships no Qt WebEngine." in qtwe_rows[0]
+    # The 5.1.0-only sentence lives on the qtwebengine row only.
+    assert offer.count("WebEngine-era 5.1.0 binary only") == 1
+    open_item = offer.split("### Open item (5.1.0 only, not part of 5.2.0)\n")[1].split("## ")[0]
+    assert "chromium_attributions.qdoc" in open_item
+    assert "not part of the\n5.2.0 offer" in open_item
+    assert "stay hosted, unchanged, for as long as copies of 5.1.0 are\noffered" in offer
+
+
+def test_superseded_draft_is_kept_and_no_doc_points_to_it_as_current():
+    draft = ROOT / "docs" / "QT_SOURCE_OFFER_DRAFT.md"
+    assert draft.is_file()
+    assert "docs/QT_SOURCE_OFFER.md" in draft.read_text(encoding="utf-8")[:400]
+    distribution = (ROOT / "docs" / "DISTRIBUTION.md").read_text(encoding="utf-8")
+    for line in distribution.splitlines():
+        if "QT_SOURCE_OFFER_DRAFT.md" in line:
+            for chunk in line.split("QT_SOURCE_OFFER_DRAFT.md")[1:]:
+                assert chunk.lstrip("`").lstrip().startswith(("is superseded", ")")), chunk[:60]

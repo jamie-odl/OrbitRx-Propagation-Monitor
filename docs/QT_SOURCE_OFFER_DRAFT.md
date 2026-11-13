@@ -1,3 +1,8 @@
+> **Superseded (13 November 2026).** This file is kept only as history. The
+> current, published record of the Qt corresponding source is
+> `docs/QT_SOURCE_OFFER.md`, and the 5.2.0 offer itself is the Qt paragraph in
+> `NOTICE`. Do not use the text below as a current offer.
+
 # Verified corresponding source offer
 
 The three archives and the notices text below are hosted at a public URL. The hashes in the table were re-verified against a public HTTPS GET to that host on 2026-11-08 (~19:35 GMT, UTC+0); see `RECEIPT_public_get.txt`-style evidence recorded in `packaging/distribution_manifest.json`. That verification establishes hosting and byte identity. It is not a statement of legal clearance: packaging Qt under the LGPL-3.0-only alternative and hosting corresponding source do not by themselves resolve every open item tracked in `docs/DISTRIBUTION.md`.

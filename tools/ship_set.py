@@ -41,6 +41,15 @@ BANNED_PATTERNS = (
     # in orbitrx/ or app.py uses OpenGL, QOpenGLWidget, Qt Quick or RHI
     # widgets, so a QOpenGLContext never falls back to software GL here.
     "*opengl32sw.dll",
+    # P1 (Risk 161d6e5 screen): the second, runner-sourced OpenSSL build
+    # (3.5.9, libcrypto-3-x64/libssl-3-x64) was collected only for Qt's TLS
+    # plugin qopensslbackend.dll. OrbitRx makes no QtNetwork/QSsl calls; all
+    # HTTPS goes through urllib/_ssl.pyd with CPython's own OpenSSL pair
+    # (libcrypto-3.dll/libssl-3.dll). Qt keeps qschannelbackend and
+    # qcertonlybackend.
+    "*plugins/tls/qopensslbackend.dll",
+    "*libcrypto-3-x64.dll",
+    "*libssl-3-x64.dll",
 )
 
 # Qt libraries this build must keep. Checked by name stem (case-insensitive),
@@ -52,6 +61,60 @@ REQUIRED_QT_DLLS = (
     "Qt6Network.dll",
     "Qt6Svg.dll",
 )
+
+
+# P1: the exact OpenSSL DLL set the ship set may contain (CPython 3.12's own
+# pair, loaded by _ssl.pyd), and the exact Qt TLS plugin set. Any addition,
+# removal or rename fails the CI ship-set gate, so a different OpenSSL build
+# can never reach the package unnoticed. Basenames, case-insensitive.
+EXPECTED_OPENSSL_DLLS = ("libcrypto-3.dll", "libssl-3.dll")
+EXPECTED_TLS_PLUGINS = ("qcertonlybackend.dll", "qschannelbackend.dll")
+
+
+def _is_openssl_dll(name: str) -> bool:
+    lower = name.lower()
+    return lower.endswith(".dll") and (
+        lower.startswith("libcrypto") or lower.startswith("libssl")
+        or lower.startswith("openssl") or lower.startswith("ssleay")
+        or lower.startswith("libeay")
+    )
+
+
+def openssl_dlls(root: Path) -> list[str]:
+    """Relative paths of every OpenSSL-looking DLL under ``root``."""
+    return sorted(
+        p.relative_to(root).as_posix() for p in root.rglob("*")
+        if p.is_file() and _is_openssl_dll(p.name)
+    )
+
+
+def tls_plugins(root: Path) -> list[str]:
+    """Basenames of the Qt TLS plugins shipped under ``root``."""
+    return sorted(
+        p.name for p in root.rglob("*.dll")
+        if p.parent.name.lower() == "tls" and p.parent.parent.name.lower() == "plugins"
+    )
+
+
+def check_tls_set(root: Path) -> list[str]:
+    """P1 gate: the OpenSSL DLLs and Qt TLS plugins are exactly the expected set."""
+    problems: list[str] = []
+    found = openssl_dlls(root)
+    names = sorted(Path(rel).name.lower() for rel in found)
+    expected = sorted(n.lower() for n in EXPECTED_OPENSSL_DLLS)
+    if names != expected:
+        problems.append(
+            "OpenSSL DLL set changed: expected "
+            f"{', '.join(EXPECTED_OPENSSL_DLLS)}; found {', '.join(found) or 'none'}"
+        )
+    plugins = sorted(n.lower() for n in tls_plugins(root))
+    expected_plugins = sorted(n.lower() for n in EXPECTED_TLS_PLUGINS)
+    if plugins != expected_plugins:
+        problems.append(
+            "Qt TLS plugin set changed: expected "
+            f"{', '.join(EXPECTED_TLS_PLUGINS)}; found {', '.join(plugins) or 'none'}"
+        )
+    return problems
 
 
 def _dest_name(entry) -> str:
@@ -93,6 +156,7 @@ def check_ship_set(root: Path) -> list[str]:
     for required in REQUIRED_QT_DLLS:
         if required not in present:
             problems.append(f"required Qt library missing: {required}")
+    problems.extend(check_tls_set(root))
     return problems
 
 
@@ -103,8 +167,16 @@ def main(argv: list[str] | None = None) -> int:
         "--write-qt-list", metavar="FILE", type=Path, default=None,
         help="Write the shipped Qt6*.dll basenames (one per line) to FILE.",
     )
+    parser.add_argument(
+        "--write-tls-list", metavar="FILE", type=Path, default=None,
+        help="Write the shipped OpenSSL DLLs and Qt TLS plugins to FILE.",
+    )
     args = parser.parse_args(argv)
     problems = check_ship_set(args.check)
+    if args.write_tls_list is not None:
+        lines = [f"openssl {rel}" for rel in openssl_dlls(args.check)]
+        lines += [f"tls-plugin {name}" for name in tls_plugins(args.check)]
+        args.write_tls_list.write_text("\n".join(lines) + "\n", encoding="utf-8")
     if args.write_qt_list is not None:
         args.write_qt_list.write_text(
             "\n".join(shipped_qt_dlls(args.check)) + "\n", encoding="utf-8"

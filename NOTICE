@@ -104,13 +104,31 @@ Details and the files that were read are in docs/DEPENDENCY_LICENCES.md.
     more detail; it is also a source-repository document and is not
     included in this download.
   OpenSSL 3: _internal/libcrypto-3.dll and _internal/libssl-3.dll are the
-    CPython 3.12 runtime's own OpenSSL build, loaded by _ssl.pyd for every
-    urllib HTTPS request OrbitRx makes (NOAA, HamQSL, PSKReporter, QRZ,
-    ipinfo.io). _internal/libcrypto-3-x64.dll and _internal/libssl-3-x64.dll
-    are a second copy, collected by PyInstaller's Qt hook for the Qt tls
-    plugin qopensslbackend.dll. All four are OpenSSL 3, Apache License 2.0;
-    the licence text ships at third_party/openssl/LICENSE.txt (also
-    packaged as _internal/third_party/openssl/LICENSE.txt).
+    only OpenSSL files shipped. They are the CPython 3.12 runtime's own
+    OpenSSL build (OpenSSL 3.0.16 in the release build, CPython 3.12.10),
+    loaded by _ssl.pyd for every urllib HTTPS request OrbitRx makes (NOAA,
+    HamQSL, PSKReporter, QRZ, ipinfo.io). OpenSSL 3 is licensed under the
+    Apache License 2.0; the licence text ships at
+    third_party/openssl/LICENSE.txt (packaged as
+    _internal/third_party/openssl/LICENSE.txt). Qt's OpenSSL
+    TLS plugin (qopensslbackend.dll) and the separate OpenSSL build it would
+    load are not shipped: OrbitRx makes no Qt network or Qt TLS calls, and
+    the Qt tls plugins shipped are qschannelbackend.dll and
+    qcertonlybackend.dll only.
+  CPython 3.12 (python312.dll, python3.dll and the standard-library
+    extension modules with their bundled libraries, e.g. libffi-8.dll,
+    sqlite3.dll, _bz2, _lzma): the Python Software Foundation License and
+    the notices for the components bundled in the Windows build ship as
+    third_party/python/LICENSE.txt (packaged as
+    _internal/third_party/python/LICENSE.txt), a byte copy of the
+    LICENSE.txt in the python.org CPython 3.12.10 Windows build.
+  Third-party code inside Qt: the Qt libraries and plugins shipped here
+    (qtbase, qtsvg and qtimageformats) contain third-party components such
+    as FreeType, HarfBuzz, libpng, libjpeg-turbo, libwebp, libtiff, PCRE2,
+    zlib and MD4C. Their names, versions, copyright lines and licence texts,
+    generated from Qt 6.12.0's qt_attribution.json data ("Licenses Used in
+    Qt"), ship as third_party/qt/QT_THIRD_PARTY_ATTRIBUTIONS.txt (packaged
+    as _internal/third_party/qt/QT_THIRD_PARTY_ATTRIBUTIONS.txt).
 pystray is not imported and is not in the frozen exe. It is not an
   obligation of that binary. customtkinter is not a dependency of this commit.
 The MIT sentence in LICENSE covers the OrbitRx application source named

@@ -20,7 +20,9 @@
     "third_party/pyserial/LICENSE.txt": "f91cb9813de6a5b142b8f7f2dede630b5134160aedaeaf55f4d6a7e2593ca3f3",
     "third_party/pywin32/License.txt": "ae254460373deef5dff3e08104f4c1f03a045c2ae1b34760b5c30f7efcef9078",
     "third_party/pyinstaller/COPYING.txt": "0598064c7d2718e38d7914a7d08343b2fa008e3bea9ebba2aa7a6ffa5900dd64",
-    "third_party/openssl/LICENSE.txt": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a"
+    "third_party/openssl/LICENSE.txt": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a",
+    "third_party/python/LICENSE.txt": "e502c6b880ff58d614901495a9009c136539cd0b1e2a2abb8fc00b934c203419",
+    "third_party/qt/QT_THIRD_PARTY_ATTRIBUTIONS.txt": "d090906b2d6659ad9a060fa61561c27884e506713d5f7409cbebb71c02d56f7d"
   },
   "windows_onedir_evidence": {
     "run": "42362357356",
@@ -53,14 +55,24 @@
   "ship_set": {
     "note": "F1 (2026-11-12): empirical trim of unused Qt binaries. Policy lives in tools/ship_set.py (filter_binaries), applied in OrbitRxMonitor.spec after Analysis; the Windows CI gate re-checks the built dist/ tree with the same module.",
     "shipped_qt_dlls": ["Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll", "Qt6Svg.dll"],
-    "also_shipped": ["libcrypto-3.dll", "libssl-3.dll", "libcrypto-3-x64.dll", "libssl-3-x64.dll"],
+    "also_shipped": ["libcrypto-3.dll", "libssl-3.dll"],
+    "openssl": {
+      "note": "P1 (Risk screen of 161d6e5): only CPython 3.12's own OpenSSL pair ships, loaded by _ssl.pyd for every urllib HTTPS request. The runner-sourced second build (libcrypto-3-x64.dll / libssl-3-x64.dll, OpenSSL 3.5.9) and Qt's plugins/tls/qopensslbackend.dll are banned; OrbitRx makes no QtNetwork/QSsl calls. tools/ship_set.py fails the CI gate if the OpenSSL DLL set or the Qt TLS plugin set changes, and the CI OpenSSL step fails if either DLL is missing or its FileVersion or sha256 differs from the values here. Expected values are those of the python.org CPython 3.12.10 Windows x64 build (python-3.12.10-embed-amd64.zip); the Windows build job pins Python 3.12.10.",
+      "python": "3.12.10",
+      "dlls": {
+        "libcrypto-3.dll": {"file_version": "3.0.16", "sha256": "ccfffddcd3defb8d899026298af9af43bc186130f8483d77e97c93233d5f27d7"},
+        "libssl-3.dll": {"file_version": "3.0.16", "sha256": "007142039f04d04e0ed607bda53de095e5bc6a8a10d26ecedde94ea7d2d7eefe"}
+      },
+      "tls_plugins": ["qcertonlybackend.dll", "qschannelbackend.dll"]
+    },
     "banned_patterns": [
       "*qt6pdf*.dll", "*plugins/imageformats/qpdf.dll",
       "*qt6virtualkeyboard*.dll", "*plugins/platforminputcontexts/qtvirtualkeyboardplugin.dll",
       "*qt6quick*.dll", "*qt6qml*.dll", "*qt6opengl*.dll",
       "*qt6webengine*.dll", "*qtwebengineprocess*", "*qt6webchannel*.dll",
       "*qt6positioning*.dll", "*qt6location*.dll", "*/qml/*", "*qml/*",
-      "*qtwebengine_resources*", "*qtwebengine*locales*", "*opengl32sw.dll"
+      "*qtwebengine_resources*", "*qtwebengine*locales*", "*opengl32sw.dll",
+      "*plugins/tls/qopensslbackend.dll", "*libcrypto-3-x64.dll", "*libssl-3-x64.dll"
     ]
   },
   "corresponding_source": {

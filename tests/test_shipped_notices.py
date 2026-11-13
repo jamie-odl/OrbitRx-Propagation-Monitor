@@ -211,9 +211,121 @@ def test_notice_makes_one_consistent_statement_about_the_source_offer():
 def test_notice_names_openssl_3_and_its_licence_text():
     assert "OpenSSL 3" in NOTICE
     assert "Apache License 2.0" in NOTICE or "Apache-2.0" in NOTICE
-    for dll in ("libcrypto-3.dll", "libssl-3.dll", "libcrypto-3-x64.dll", "libssl-3-x64.dll"):
+    for dll in ("_internal/libcrypto-3.dll", "_internal/libssl-3.dll"):
         assert dll in NOTICE
     assert "third_party/openssl/LICENSE.txt" in NOTICE
+
+
+def test_notice_names_only_the_cpython_openssl_pair_and_its_version():
+    """P1 (Risk screen of 161d6e5): the runner-sourced 3.5.9 pair is banned,
+    so NOTICE must not call anything 'a second copy' or list it as shipped."""
+    flat = " ".join(NOTICE.split())
+    assert "second copy" not in flat
+    for gone in ("libcrypto-3-x64.dll", "libssl-3-x64.dll"):
+        assert gone not in NOTICE
+    assert "only OpenSSL files shipped" in flat
+    assert "OpenSSL 3.0.16 in the release build, CPython 3.12.10" in flat
+    assert "qopensslbackend.dll) and the separate OpenSSL build it would load are not shipped" in flat
+    assert "qschannelbackend.dll and qcertonlybackend.dll only" in flat
+    deps_flat = " ".join(DEPS.split())
+    assert "second copy" not in deps_flat
+    assert "Only `_internal/libcrypto-3.dll` and `_internal/libssl-3.dll` ship" in deps_flat
+    assert "3.0.16" in deps_flat
+
+
+# --- P3 (Risk screen of 161d6e5): CPython and Qt third-party notices --------
+
+PY_LICENCE = ROOT / "third_party" / "python" / "LICENSE.txt"
+QT_ATTR = ROOT / "third_party" / "qt" / "QT_THIRD_PARTY_ATTRIBUTIONS.txt"
+
+
+def test_cpython_licence_is_the_python_org_3_12_10_windows_text():
+    data = PY_LICENCE.read_bytes()
+    # Byte copy of LICENSE.txt from python-3.12.10-embed-amd64.zip (CRLF kept
+    # by .gitattributes "-text", so the hash is the upstream one on every OS).
+    assert hashlib.sha256(data).hexdigest() == (
+        "e502c6b880ff58d614901495a9009c136539cd0b1e2a2abb8fc00b934c203419"
+    )
+    text = data.decode("utf-8")
+    assert "PYTHON SOFTWARE FOUNDATION LICENSE VERSION 2" in text
+    assert "Additional Conditions for this Windows binary build" in text
+    attrs = (ROOT / ".gitattributes").read_text(encoding="utf-8")
+    assert "third_party/python/LICENSE.txt -text" in attrs
+
+
+def test_qt_attributions_cover_the_shipped_modules_and_named_components():
+    text = QT_ATTR.read_text(encoding="utf-8")
+    assert text.startswith("OrbitRx Propagation Monitor: third-party components bundled in Qt")
+    for module in ("qtbase v6.12.0", "qtsvg v6.12.0", "qtimageformats v6.12.0"):
+        assert module in text
+    for component in (
+        "Freetype 2", "HarfBuzz-NG", "LibPNG", "LibJPEG-turbo", "WebP (libwebp)",
+        "TIFF Software Distribution (libtiff)", "PCRE2", "Data Compression Library (zlib)",
+        "MD4C",
+    ):
+        assert f"\n{component}" in text, component
+    # Every component block carries at least one licence text.
+    blocks = text.split("=" * 78)[1:]
+    assert len(blocks) >= 80
+    assert all("\n--- " in block for block in blocks)
+    assert "/tmp/" not in text and "\\Users\\" not in text
+
+
+def test_p3_notices_are_packaged_hashed_and_pointed_to_by_notice():
+    import json
+
+    spec = (ROOT / "OrbitRxMonitor.spec").read_text(encoding="utf-8")
+    assert "('third_party/python/LICENSE.txt', 'third_party/python')" in spec
+    assert "('third_party/qt/QT_THIRD_PARTY_ATTRIBUTIONS.txt', 'third_party/qt')" in spec
+    manifest = json.loads(
+        (ROOT / "packaging" / "distribution_manifest.json").read_text(encoding="utf-8")
+    )
+    texts = manifest["present_texts"]
+    for path in (PY_LICENCE, QT_ATTR):
+        rel = path.relative_to(ROOT).as_posix()
+        assert texts[rel] == hashlib.sha256(path.read_bytes()).hexdigest(), rel
+    flat = " ".join(NOTICE.split())
+    assert "_internal/third_party/python/LICENSE.txt" in flat
+    assert "_internal/third_party/qt/QT_THIRD_PARTY_ATTRIBUTIONS.txt" in flat
+    for name in ("FreeType", "HarfBuzz", "libpng", "libjpeg-turbo", "libwebp", "libtiff",
+                 "PCRE2", "zlib", "MD4C"):
+        assert name in flat, name
+
+
+def test_ci_checks_the_shipped_p3_notices_against_the_manifest():
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    step = ci.split("name: Shipped notices")[1].split("\n      - name:")[0]
+    for needle in ("third_party/python/LICENSE.txt",
+                   "third_party/qt/QT_THIRD_PARTY_ATTRIBUTIONS.txt",
+                   "present_texts", "sys.base_prefix", "throw", "SHIPPED-NOTICES: PASS"):
+        assert needle in step, needle
+    assert "upload-artifact" not in step
+
+
+def test_qt_attribution_generator_reproduces_the_committed_file(tmp_path):
+    """The generator's rendering is deterministic for a given set of
+    qt_attribution.json inputs (checked here on a synthetic module)."""
+    from tools.gen_qt_attributions import collect, render
+
+    mod = tmp_path / "qtbase"
+    (mod / "LICENSES").mkdir(parents=True)
+    (mod / "LICENSES" / "MIT.txt").write_text("MIT text\n", encoding="utf-8")
+    lib = mod / "src" / "3rdparty" / "demo"
+    lib.mkdir(parents=True)
+    (lib / "qt_attribution.json").write_text(
+        '{"Name": "Demo", "Version": "1.0", "LicenseId": "MIT", '
+        '"Copyright": "Copyright (c) Demo", "QtParts": ["libs"]}', encoding="utf-8")
+    tool = mod / "cmake" / "3rdparty" / "tool"
+    tool.mkdir(parents=True)
+    (tool / "qt_attribution.json").write_text(
+        '{"Name": "BuildOnly", "LicenseId": "MIT", "QtParts": ["tools"]}', encoding="utf-8")
+    modules = [("qtbase", mod, "abc123")]
+    entries = collect(modules)
+    assert [e["name"] for e in entries] == ["Demo"]
+    out = render("v6.12.0", modules, entries)
+    assert out == render("v6.12.0", modules, collect(modules))
+    assert "Demo 1.0" in out and "Licence: MIT" in out and "MIT text" in out
+    assert "BuildOnly" not in out
 
 
 def test_spec_datas_include_the_openssl_licence_text():

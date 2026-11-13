@@ -10,6 +10,18 @@ as 5.2.0 everywhere (exe version resource, installer, window title, About).
 Prepared as the next release candidate; not published until a release go.
 See NOTICE for the trimmed Qt ship set.
 
+### Packaging and notices (Risk publish conditions P1-P3, 2026-11-13)
+- Only CPython's own OpenSSL pair (`libcrypto-3.dll`, `libssl-3.dll`,
+  OpenSSL 3.0.16) ships. The runner-sourced OpenSSL 3.5.9 pair
+  (`libcrypto-3-x64.dll`, `libssl-3-x64.dll`) and Qt's `qopensslbackend.dll`
+  TLS plugin are banned; CI fails if the OpenSSL DLL set, their FileVersion or
+  sha256, or the Qt TLS plugin set changes. The Windows build pins Python 3.12.10.
+- The CPython 3.12.10 `LICENSE.txt` and a Qt third-party attribution file
+  (qtbase, qtsvg, qtimageformats at 6.12.0) now ship under
+  `_internal/third_party/`, and NOTICE points to them.
+- `docs/QT_SOURCE_OFFER.md` is the published record, with separate 5.2.0 and
+  5.1.0-only rows; `docs/QT_SOURCE_OFFER_DRAFT.md` is marked superseded.
+
 ### Fixed (design review V2 follow-ups)
 - Removed the duplicate "Click a spot to tune" hint on the Leaflet map header.
 - Station > Location privacy text is fully visible at the default Settings size
