@@ -14,10 +14,12 @@ tests/test_build_release_local.py.
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 import pytest
@@ -29,11 +31,27 @@ HELPERS = ROOT / "tools" / "build_release_local.helpers.ps1"
 PWSH = shutil.which("pwsh")
 pytestmark = pytest.mark.skipif(PWSH is None, reason="pwsh is not on PATH")
 
+# Prepended to every -Command we run: forces plain, uncoloured, non-wrapped
+# error rendering so a thrown message's text is not interrupted by ANSI SGR
+# codes or pwsh's ConciseView "     | " line-wrap continuation gutters (both
+# of which it emits in CI's non-interactive, no-real-console runs). $PSStyle
+# only exists on PowerShell 7.2+, hence the guard.
+_PWSH_PLAIN_OUTPUT_PREAMBLE = (
+    "if ($PSStyle) { $PSStyle.OutputRendering = 'PlainText' }\n"
+    "$ErrorView = 'NormalView'\n"
+)
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
 
 def run_pwsh(command: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+    env = dict(os.environ)
+    env["NO_COLOR"] = "1"
+    env["TERM"] = "dumb"
+    full_command = _PWSH_PLAIN_OUTPUT_PREAMBLE + command
     return subprocess.run(
-        [PWSH, "-NoProfile", "-NonInteractive", "-Command", command],
-        cwd=cwd, capture_output=True, text=True,
+        [PWSH, "-NoProfile", "-NonInteractive", "-Command", full_command],
+        cwd=cwd, capture_output=True, text=True, env=env,
     )
 
 
@@ -43,11 +61,15 @@ def run_helper(body: str) -> subprocess.CompletedProcess:
 
 
 def combined_text(result: subprocess.CompletedProcess) -> str:
-    """stdout+stderr with pwsh's error-pretty-printer line wrapping undone,
-    so a multi-word phrase from a thrown message can be matched even when
-    pwsh split it across lines with a '     | ' continuation prefix."""
+    """stdout+stderr with ANSI escapes stripped and pwsh's error-pretty-
+    printer line wrapping undone, so a multi-word phrase from a thrown
+    message can be matched even when pwsh split it across lines (with a
+    '     | ' continuation prefix) and/or coloured it with SGR codes."""
     text = result.stdout + result.stderr
-    return re.sub(r"\n\s*\|\s*", " ", text)
+    text = _ANSI_ESCAPE_RE.sub("", text)
+    text = re.sub(r"\n\s*\|\s*", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text
 
 
 # --- Hash / pin comparison helpers -------------------------------------------
@@ -305,6 +327,22 @@ def test_test_path_has_reparse_point_ancestor_detects_a_junction(tmp_path):
     assert "True" in probe.stdout
 
 
+def test_convert_from_subst_output_parses_canned_subst_text():
+    # Real `subst` (no args) output format: "<letter>:\: => <path>" -- the
+    # colon appears both before AND after the backslash. This is a pure
+    # parse function, so it is exercised with canned text on every OS, not
+    # just Windows (where the only live source of this text is itself).
+    lines = [
+        r"Z:\: => C:\Users\runneradmin\AppData\Local\Temp\subst-target",
+        r"Y:\: => D:\other\path",
+        "not a subst line",
+    ]
+    ps_array = "@(" + ",".join(f"'{line}'" for line in lines) + ")"
+    result = run_helper(f"Write-Host ((ConvertFrom-SubstOutput -Lines {ps_array}) -join ',')")
+    assert result.returncode == 0, result.stderr
+    assert "Z,Y" in result.stdout
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="subst is a Windows-only concept")
 def test_get_subst_drive_letters_sees_a_live_subst(tmp_path):
     target = tmp_path / "subst-target"
@@ -445,15 +483,65 @@ def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True)
 
 
+def _is_under(path: str, ancestor: str) -> bool:
+    if not path or not ancestor:
+        return False
+    try:
+        return Path(path).resolve().is_relative_to(Path(ancestor).resolve())
+    except (OSError, ValueError):
+        return str(Path(path)).lower().startswith(str(Path(ancestor)).lower())
+
+
+def _make_non_profile_base() -> Path:
+    """A fresh directory outside $env:USERPROFILE to host the fake repo and
+    -BuildRoot for the main-script tests below. On Windows, pytest's own
+    tmp_path lives under C:\\Users\\<runner>\\AppData\\Local\\Temp -- i.e.
+    under USERPROFILE -- which makes Assert-BuildRootOutsideUserProfile
+    refuse the build before the check each of these tests exists to exercise
+    even runs. Prefer $env:RUNNER_TEMP (GitHub-hosted Windows runners set it
+    to a non-profile path, e.g. D:\\a\\_temp); fall back to a unique folder
+    at the system drive root."""
+    runner_temp = os.environ.get("RUNNER_TEMP", "")
+    userprofile = os.environ.get("USERPROFILE", "")
+    name = f"orx-pwsh-test-{uuid.uuid4().hex[:12]}"
+    if runner_temp and not _is_under(runner_temp, userprofile):
+        base = Path(runner_temp) / name
+    else:
+        system_drive = os.environ.get("SystemDrive", "C:")
+        base = Path(f"{system_drive}\\{name}")
+    try:
+        base.mkdir(parents=True)
+    except OSError as exc:
+        pytest.skip(f"cannot create a non-profile base directory ({base}) for BuildRoot tests: {exc}")
+    return base
+
+
 @pytest.fixture
-def fake_repo(tmp_path):
+def non_profile_tmp_path(tmp_path):
+    """Like tmp_path, but outside $env:USERPROFILE on Windows (see
+    _make_non_profile_base); on other platforms this is just tmp_path, which
+    pytest already manages and cleans up itself."""
+    if sys.platform != "win32":
+        yield tmp_path
+        return
+    base = _make_non_profile_base()
+    try:
+        yield base
+    finally:
+        shutil.rmtree(base, ignore_errors=True)
+
+
+@pytest.fixture
+def fake_repo(non_profile_tmp_path):
     """A minimal git repo with just enough of this repo's shape (VERSION,
     tools/build_release_local.ps1 + helpers, packaging/local_build_pins.json)
     for the main script's early checks to run against -- without needing a
     real clone, dependencies, PyInstaller or Inno Setup. Every scenario this
     fixture backs fails before section c (Python installer pins) or earlier,
-    so pip/pyinstaller are never reached."""
-    repo = tmp_path / "repo"
+    so pip/pyinstaller are never reached. Lives under non_profile_tmp_path
+    (not plain tmp_path) so the N4 path guards never refuse the repo root
+    itself on Windows."""
+    repo = non_profile_tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q")
     _git(repo, "config", "user.email", "test@example.invalid")
@@ -485,82 +573,96 @@ def _write_inventory(path: Path, version: str, commit: str) -> None:
 
 def _run_script(repo: Path, extra_args: list[str], build_root: Path) -> subprocess.CompletedProcess:
     args = " ".join(extra_args)
-    command = (
+    script_call = (
         f"& '{repo / 'tools' / 'build_release_local.ps1'}' {args} "
-        f"-BuildRoot '{build_root}'; exit $LASTEXITCODE"
+        f"-BuildRoot '{build_root}'"
+    )
+    # try/catch so a thrown error always yields a clean non-zero exit code
+    # (rather than depending on a stale $LASTEXITCODE from some earlier
+    # native command, or on the host's default uncaught-exception handling).
+    command = (
+        "try {\n"
+        f"    {script_call}\n"
+        "    if ($null -eq $LASTEXITCODE) { exit 0 } else { exit $LASTEXITCODE }\n"
+        "} catch {\n"
+        "    Write-Error $_.Exception.Message\n"
+        "    exit 1\n"
+        "}"
     )
     return run_pwsh(command, cwd=repo)
 
 
-def test_main_script_requires_attest_personal_kit(fake_repo, tmp_path):
+def test_main_script_requires_attest_personal_kit(fake_repo, tmp_path, non_profile_tmp_path):
     repo, sha = fake_repo
     inv = tmp_path / "inv.txt"
     _write_inventory(inv, "5.2.0", sha)
     result = _run_script(
-        repo, [f"-ExpectedSha {sha}", f"-CiInventory '{inv}'"], tmp_path / "build-root"
+        repo, [f"-ExpectedSha {sha}", f"-CiInventory '{inv}'"], non_profile_tmp_path / "build-root"
     )
     assert result.returncode != 0
     assert "AttestPersonalKit must be passed" in combined_text(result)
 
 
-def test_main_script_rejects_a_non_hex_sha(fake_repo, tmp_path):
+def test_main_script_rejects_a_non_hex_sha(fake_repo, tmp_path, non_profile_tmp_path):
     repo, _sha = fake_repo
     result = _run_script(
-        repo, ["-ExpectedSha not-a-real-sha", "-AttestPersonalKit"], tmp_path / "build-root"
+        repo, ["-ExpectedSha not-a-real-sha", "-AttestPersonalKit"], non_profile_tmp_path / "build-root"
     )
     assert result.returncode != 0
     assert "40-hex" in combined_text(result)
 
 
-def test_main_script_rejects_a_wrong_sha(fake_repo, tmp_path):
+def test_main_script_rejects_a_wrong_sha(fake_repo, tmp_path, non_profile_tmp_path):
     repo, _sha = fake_repo
     wrong_sha = "f" * 40
     inv = tmp_path / "inv.txt"
     _write_inventory(inv, "5.2.0", wrong_sha)
     result = _run_script(
         repo, [f"-ExpectedSha {wrong_sha}", f"-CiInventory '{inv}'", "-AttestPersonalKit"],
-        tmp_path / "build-root",
+        non_profile_tmp_path / "build-root",
     )
     assert result.returncode != 0
     assert "HEAD is" in combined_text(result)
     assert "expected" in combined_text(result)
 
 
-def test_main_script_rejects_a_dirty_tree(fake_repo, tmp_path):
+def test_main_script_rejects_a_dirty_tree(fake_repo, tmp_path, non_profile_tmp_path):
     repo, sha = fake_repo
     (repo / "untracked.txt").write_text("surprise\n", encoding="utf-8")
     inv = tmp_path / "inv.txt"
     _write_inventory(inv, "5.2.0", sha)
     result = _run_script(
         repo, [f"-ExpectedSha {sha}", f"-CiInventory '{inv}'", "-AttestPersonalKit"],
-        tmp_path / "build-root",
+        non_profile_tmp_path / "build-root",
     )
     assert result.returncode != 0
     assert "Working tree is not clean" in combined_text(result)
 
 
-def test_main_script_requires_ci_inventory(fake_repo, tmp_path):
+def test_main_script_requires_ci_inventory(fake_repo, tmp_path, non_profile_tmp_path):
     repo, sha = fake_repo
     result = _run_script(
-        repo, [f"-ExpectedSha {sha}", "-AttestPersonalKit"], tmp_path / "build-root"
+        repo, [f"-ExpectedSha {sha}", "-AttestPersonalKit"], non_profile_tmp_path / "build-root"
     )
     assert result.returncode != 0
     assert "-CiInventory is required" in combined_text(result)
 
 
-def test_main_script_rejects_a_ci_inventory_with_the_wrong_commit(fake_repo, tmp_path):
+def test_main_script_rejects_a_ci_inventory_with_the_wrong_commit(fake_repo, tmp_path, non_profile_tmp_path):
     repo, sha = fake_repo
     inv = tmp_path / "inv.txt"
     _write_inventory(inv, "5.2.0", "c" * 40)  # well-formed, but not this build's commit
     result = _run_script(
         repo, [f"-ExpectedSha {sha}", f"-CiInventory '{inv}'", "-AttestPersonalKit"],
-        tmp_path / "build-root",
+        non_profile_tmp_path / "build-root",
     )
     assert result.returncode != 0
     assert "does not match -ExpectedSha" in combined_text(result)
 
 
-def test_main_script_rejects_a_bad_installer_hash_without_reaching_pip_or_pyinstaller(fake_repo, tmp_path):
+def test_main_script_rejects_a_bad_installer_hash_without_reaching_pip_or_pyinstaller(
+    fake_repo, tmp_path, non_profile_tmp_path
+):
     repo, sha = fake_repo
     inv = tmp_path / "inv.txt"
     _write_inventory(inv, "5.2.0", sha)
@@ -572,7 +674,7 @@ def test_main_script_rejects_a_bad_installer_hash_without_reaching_pip_or_pyinst
             f"-ExpectedSha {sha}", f"-CiInventory '{inv}'", "-AttestPersonalKit",
             f"-PythonInstaller '{fake_installer}'",
         ],
-        tmp_path / "build-root",
+        non_profile_tmp_path / "build-root",
     )
     assert result.returncode != 0
     combined = combined_text(result)

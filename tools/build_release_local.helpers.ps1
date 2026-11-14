@@ -142,6 +142,21 @@ function Test-PathHasReparsePointAncestor {
     return $false
 }
 
+function ConvertFrom-SubstOutput {
+    # subst with no arguments lists each mapping as "<letter>:\: => <path>"
+    # (the colon appears both before and after the backslash); the pattern
+    # below also accepts "<letter>: => <path>" in case some locale or
+    # Windows build drops the backslash or the second colon.
+    param([string[]]$Lines)
+    $letters = @()
+    foreach ($line in @($Lines)) {
+        if ($line -match '^([A-Za-z]):\\?:?\s*=>') {
+            $letters += $Matches[1].ToUpper()
+        }
+    }
+    return $letters
+}
+
 function Get-SubstDriveLetters {
     if (-not (Get-Command subst -ErrorAction SilentlyContinue)) { return @() }
     try {
@@ -150,13 +165,7 @@ function Get-SubstDriveLetters {
     catch {
         return @()
     }
-    $letters = @()
-    foreach ($line in @($out)) {
-        if ($line -match '^([A-Za-z]):\\?\s*=>') {
-            $letters += $Matches[1].ToUpper()
-        }
-    }
-    return $letters
+    return ConvertFrom-SubstOutput -Lines $out
 }
 
 function Test-SubstOrNetworkDrivePath {
