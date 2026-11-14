@@ -64,6 +64,7 @@ has been unpacked.
 from __future__ import annotations
 
 import argparse
+import calendar
 import hashlib
 import os
 import struct
@@ -202,18 +203,38 @@ def _run_legacy(args: argparse.Namespace) -> int:
 
 # --- Option-B: deterministic two-root zip (onedir + installer) -------------
 
+# 1980-01-01 00:00:00 UTC: the earliest date the ZIP DOS format can represent.
+DOS_EPOCH = 315532800
+# 2107-12-31 23:59:59 UTC: the latest date it can represent (the DOS date's
+# year field is 7 bits, 1980 + 127 = 2107). ``calendar.timegm`` is pure
+# arithmetic -- unlike ``time.gmtime``/``datetime.fromtimestamp`` it never
+# makes a platform time_t call, so computing this bound can't itself hit the
+# same kind of OSError this clamp exists to avoid.
+DOS_EPOCH_MAX = calendar.timegm((2107, 12, 31, 23, 59, 59, 0, 0, 0))
+
 
 def epoch_to_dos_date_time(epoch: int) -> tuple[int, int, int, int, int, int]:
     """UTC (GMT) DOS date/time for ``epoch``, used as the single fixed
     timestamp for every member. DOS time stores seconds // 2, so an odd
     second is rounded down here explicitly (rather than relying on the
-    zipfile module to truncate it); the result is clamped forward to
-    1980-01-01 00:00:00, the earliest date the ZIP format can represent.
-    ``time.gmtime`` is used, not the host's local time zone, so this value
-    never depends on where the build runs."""
+    zipfile module to truncate it); the epoch is clamped forward to
+    DOS_EPOCH (1980-01-01 00:00:00 UTC, the earliest date the ZIP format
+    can represent) *before* it reaches ``time.gmtime`` -- some platforms
+    (observed on windows-latest CI) raise OSError out of ``gmtime`` for a
+    negative value, so the clamp cannot be applied to its result. Epochs
+    past the last representable DOS date (2107-12-31 23:59:59 UTC, the
+    7-bit year field's limit) fail closed with ValueError rather than
+    risking the same kind of platform error for an out-of-range high
+    value. ``time.gmtime`` is used, not the host's local time zone, so
+    this value never depends on where the build runs."""
+    if epoch < DOS_EPOCH:
+        epoch = DOS_EPOCH
+    elif epoch > DOS_EPOCH_MAX:
+        raise ValueError(
+            f"epoch {epoch} is after 2107-12-31 23:59:59 UTC, the latest "
+            "date the ZIP DOS format can represent"
+        )
     t = time.gmtime(epoch)
-    if t.tm_year < 1980:
-        return (1980, 1, 1, 0, 0, 0)
     return (t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec - (t.tm_sec % 2))
 
 
@@ -444,7 +465,7 @@ def _run_pack(args: argparse.Namespace) -> int:
         epoch = resolve_epoch(args.epoch, args.source_date_epoch)
         build_deterministic_zip(args.onedir, args.installer, args.out, epoch)
         problems = verify_zip_layout(args.out, expect_epoch=epoch)
-    except PackError as exc:
+    except (PackError, ValueError) as exc:
         print(f"pack failed: {exc}", file=sys.stderr)
         return 1
     if problems:

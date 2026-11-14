@@ -7,6 +7,7 @@ downloaded. Must pass on ubuntu-latest and windows-latest.
 
 from __future__ import annotations
 
+import calendar
 import hashlib
 import os
 import sys
@@ -219,10 +220,27 @@ def test_odd_epoch_rounds_down_to_an_even_second():
 
 
 def test_pre_1980_epoch_clamps_to_the_dos_epoch():
-    assert epoch_to_dos_date_time(0) == (1980, 1, 1, 0, 0, 0)
-    assert epoch_to_dos_date_time(-100000) == (1980, 1, 1, 0, 0, 0)
+    assert epoch_to_dos_date_time(0) == (1980, 1, 1, 0, 0, 0)  # pre-1980, positive epoch
+    assert epoch_to_dos_date_time(-100000) == (1980, 1, 1, 0, 0, 0)  # negative epoch
     assert epoch_to_dos_date_time(315532799) == (1980, 1, 1, 0, 0, 0)  # one second before
     assert epoch_to_dos_date_time(315532800) == (1980, 1, 1, 0, 0, 0)  # exactly at it
+
+
+def test_far_negative_epoch_does_not_reach_gmtime_unclamped():
+    # Regression: windows-latest's gmtime() raises OSError for a negative
+    # value, so the clamp must happen on the int epoch before gmtime runs,
+    # not on its result.
+    assert epoch_to_dos_date_time(-(2**31)) == (1980, 1, 1, 0, 0, 0)
+
+
+def test_out_of_range_high_epoch_raises_value_error():
+    # One second past the last date the DOS year field (7 bits, 1980-2107)
+    # can represent.
+    too_high = calendar.timegm((2108, 1, 1, 0, 0, 0, 0, 0, 0))
+    with pytest.raises(ValueError):
+        epoch_to_dos_date_time(too_high)
+    # The boundary itself must still succeed.
+    assert epoch_to_dos_date_time(too_high - 1) == (2107, 12, 31, 23, 59, 58)
 
 
 # --- --expect-inventory -------------------------------------------------------
