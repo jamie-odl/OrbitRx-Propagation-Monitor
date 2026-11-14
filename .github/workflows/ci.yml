@@ -43,6 +43,33 @@ jobs:
         with:
           name: pytest-${{ matrix.os }}
           path: pytest-${{ matrix.os }}.xml
+      # The local-build script is never executed by CI (it is for Jamie's own
+      # PC), but a parse error in it should still fail CI, not surface only
+      # when someone next tries to run it. PSScriptAnalyzer runs only if it is
+      # already present on the runner image; this step never installs modules
+      # from the network.
+      - name: Parse-check tools/build_release_local.ps1 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("tools\build_release_local.ps1", [ref]$null, [ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count -gt 0) {
+            $parseErrors | ForEach-Object { Write-Host $_.ToString() }
+            throw "tools/build_release_local.ps1 has $($parseErrors.Count) parse error(s)"
+          }
+          Write-Host "PS1-PARSE-CHECK: PASS"
+          if (Get-Module -ListAvailable -Name PSScriptAnalyzer) {
+            Import-Module PSScriptAnalyzer
+            $findings = Invoke-ScriptAnalyzer -Path tools\build_release_local.ps1 -Severity Error
+            if ($findings) {
+              $findings | Format-Table -AutoSize | Out-String | Write-Host
+              throw "PSScriptAnalyzer found $($findings.Count) Error-severity issue(s) in tools/build_release_local.ps1"
+            }
+            Write-Host "PSSCRIPTANALYZER: PASS"
+          } else {
+            Write-Host "PSScriptAnalyzer module is not installed on this runner; skipping (this step does not install modules from the network)."
+          }
 
   windows-screenshot:
     name: Rig wizard screenshot (Windows)

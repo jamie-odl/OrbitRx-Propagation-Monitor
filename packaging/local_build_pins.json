@@ -1,0 +1,11 @@
+{
+  "note": "Pins for tools/build_release_local.ps1 (the personal-PC local build). The DLL/licence pins for the installed interpreter itself live in packaging/distribution_manifest.json ship_set.openssl -- this file only pins the python.org installer download, so the build script does not hard-code the same hash in two places.",
+  "python": {
+    "version": "3.12.10",
+    "installer_filename": "python-3.12.10-amd64.exe",
+    "installer_sha256": "67b5635e80ea51072b87941312d00ec8927c4db9ba18938f7ad2d27b328b95fb",
+    "installer_md5": "5eddb0b6f12c852725de071ae681dde4",
+    "authenticode_signer_subject_contains": "Python Software Foundation",
+    "download_page": "https://www.python.org/downloads/release/python-31210/"
+  }
+}
