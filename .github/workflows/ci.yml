@@ -64,7 +64,7 @@ jobs:
           Write-Host "PS1-PARSE-CHECK: PASS"
           if (Get-Module -ListAvailable -Name PSScriptAnalyzer) {
             Import-Module PSScriptAnalyzer
-            $findings = Invoke-ScriptAnalyzer -Path $scripts -Severity Error
+            $findings = @(foreach ($s in $scripts) { Invoke-ScriptAnalyzer -Path $s -Severity Error })
             if ($findings) {
               $findings | Format-Table -AutoSize | Out-String | Write-Host
               throw "PSScriptAnalyzer found $($findings.Count) Error-severity issue(s)"
