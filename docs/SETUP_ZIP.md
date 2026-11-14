@@ -4,7 +4,11 @@
 
 This is prepared but not published; see `BUILD-RELEASE.md` for the full
 checklist. `tools/pack_setup_zip.py`'s Option-B mode (`--onedir --installer
---out --epoch`) builds a deterministic `OrbitRx-Setup-5.2.0.zip`:
+--out --epoch`) builds a deterministic zip. `tools/build_release_local.ps1`
+names it `OrbitRx-Setup-<VERSION>.zip`, reading `<VERSION>` from the repo's
+`VERSION` file rather than hard-coding `5.2.0` -- the provenance record next
+to it is likewise named `OrbitRx-<VERSION>-PROVENANCE.txt`. This doc uses
+`5.2.0` below only because that is the current `VERSION`.
 
 - Zip root is exactly two entries: the `OrbitRxMonitor/` onedir tree
   (unmodified) and a top-level `OrbitRxMonitor-Setup.exe`. Nothing else.
@@ -39,6 +43,15 @@ for the full rationale):
   directory or the absolute location of the inputs -- see
   `tests/test_pack_setup_zip_deterministic.py`.
 
+Byte identity is only guaranteed for the same interpreter and the same
+underlying `zlib` build: every member is compressed with `zlib.compressobj`
+at a fixed level, and a different DEFLATE implementation linked into a
+future CPython (for example one built against `zlib-ng` instead of stock
+`zlib`) can legally produce different, still-valid DEFLATE bytes for the
+same input and so a different zip sha256, even though every rule above
+still held. Re-run the determinism self-check (two packs, same inputs, same
+interpreter) rather than comparing across different Python builds.
+
 `--expect-inventory PATH` compares the zip's `OrbitRxMonitor/` member sizes
 against a CI-produced `ship-set-inventory.txt`, excluding both shipped
 exes (L5). `--verify ZIP` re-opens an existing zip and checks that shape
@@ -46,6 +59,18 @@ exes (L5). `--verify ZIP` re-opens an existing zip and checks that shape
 against an already-extracted `OrbitRxMonitor/` directory tree instead of a
 zip -- used to re-check the zip's contents once more after unpacking it
 (also L6).
+
+None of these checks prove that the `python.exe` used to build the onedir
+actually came from the pinned installer -- a size/name comparison can't see
+that. What mitigates it is everything `build_release_local.ps1` checks
+*about* that interpreter directly: its own Authenticode signature (signer
+subject recorded in the provenance), its reported version (`sys.version_info`
+pinned to 3.12.10), and its DLL/LICENSE pins (the OpenSSL DLL pair's
+FileVersion+sha256 and the vendored `third_party/python/LICENSE.txt` must
+match byte-for-byte). Those together are the actual provenance claim; the
+installer hash check is only evidence that the *installer* Jamie downloaded
+is the one from python.org, not that it is what produced this exact
+`python.exe`.
 
 The sha256 of the zip produced by a real local build is to be recorded
 here after that build runs; this section does not itself claim one.

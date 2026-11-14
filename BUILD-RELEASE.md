@@ -4,12 +4,63 @@ This is Jamie's own checklist for running `tools/build_release_local.ps1` on
 his personal PC. It does not upload, publish, tag or push anything -- it
 only produces a zip and a provenance record on the local disk.
 
-1. Use your own personal PC only. Not employer equipment, not over a VPN,
-   not inside a remote session (L1).
-2. Create a plain local folder, e.g. `C:\build\orbitrx-5.2.0\`. It must not
-   be under OneDrive or under your Desktop -- the script refuses to run
-   from either.
-3. In that folder, make a fresh clone of the public repo, then detach HEAD
+**This is a dry run until stated otherwise.** The first time Jamie runs this
+script -- at whatever commit he runs it at first -- it is a rehearsal, not a
+publish candidate. Its zip is not to be published or treated as release
+evidence. The console output and provenance record from that run go to
+QA/Risk for review (L10) alongside everything else in step 15's send-back
+list. Expect this first run to surface friction: a missing prerequisite, a
+path guard tripping on something unexpected, a stale pin. Fixing those is
+the point of the dry run. Only a later run -- at the final `<CLEARED_SHA>`
+QA and Risk have cleared, after L10 review of the dry run is done -- produces
+something that can become a publish candidate, and even that still needs
+Jamie's explicit publish go-ahead (P8) and the recorded N1 acceptance (P9)
+before anything is uploaded.
+
+## Prerequisites
+
+1. Your own personal PC only. Not employer equipment, not over a VPN, not
+   inside a remote session (L1). The script also runs a best-effort check
+   with `dsregcmd /status` (if present) and refuses to continue if the
+   machine reports as domain-joined, Azure AD-joined or Intune/MDM
+   ("Enterprise") joined; it only warns if the machine is "workplace
+   joined". This heuristic is not a substitute for actually knowing whose
+   PC this is.
+2. **Git for Windows** (for `git clone`, `git rev-parse`, etc.).
+3. **Python 3.12.10 for Windows (64-bit)**, downloaded yourself from
+   python.org and installed "for the current user". The script never
+   fetches or installs this.
+4. **Inno Setup 6** (the free/personal edition, from jrsoftware.org),
+   installed yourself. The script never installs this either. A "for me
+   only" (per-user) install lands under
+   `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`, not
+   `%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe` (the script's default) -- if
+   you installed it that way, pass `-Iscc "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe"`.
+5. **Disk space and time**: roughly 3 GB free (the venv, PyInstaller's
+   `build\`/`dist\` output and the packed zip together), and roughly
+   20-40 minutes end to end, most of it the PyInstaller build and the full
+   pytest suite.
+6. **PowerShell's execution policy.** If running the script directly gives
+   a "cannot be loaded because running scripts is disabled" error, either:
+   - in that PowerShell window only, run
+     `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass` before
+     calling the script (this affects only the current process, not your
+     machine- or user-wide policy and does not persist), or
+   - run `powershell -ExecutionPolicy Bypass -File tools\build_release_local.ps1 ...`
+     instead.
+   Do not change the machine or user execution policy to get this script to
+   run.
+
+## Steps
+
+7. Create a plain local folder, e.g. `C:\build\orbitrx-5.2.0\`. It must not
+   be under OneDrive or your Desktop, on a subst/mapped or UNC network
+   drive, behind a reparse point (junction/symlink) anywhere in its path,
+   or under `$env:USERPROFILE`. The script resolves the real full path
+   (expanding environment variables, 8.3 short names and relative paths)
+   and refuses all of the above itself -- this is just so you know what it
+   is checking and why, rather than guessing from the error message.
+8. In that folder, make a fresh clone of the public repo, then detach HEAD
    at the exact commit you are building (L2):
    ```
    git clone https://github.com/jamie-odl/OrbitRx-Propagation-Monitor.git
@@ -19,47 +70,114 @@ only produces a zip and a provenance record on the local disk.
    The clone must stay fresh: no leftover files from a previous attempt, no
    extra untracked or ignored files. The script checks this and refuses to
    build from a dirty tree.
-4. Download `python-3.12.10-amd64.exe` from the official python.org
+9. Download `python-3.12.10-amd64.exe` from the official python.org
    downloads page and install it "for the current user" (L3). Do not use
    any other source or version.
-5. Install Inno Setup 6 (the free/personal edition, from jrsoftware.org).
-   The script never installs this for you.
-6. Optional but recommended: download `ship-set-inventory.txt` from the
-   exact SHA's GitHub Actions run, from the `release-exe-captures`
-   artifact (it is a text file, not a binary). This lets the script check
-   your local build against what CI built from the same commit (L5).
-7. Open PowerShell in the cloned repo and run the build script, for
-   example:
-   ```
-   tools\build_release_local.ps1 `
-     -ExpectedSha <the 40-char commit SHA> `
-     -PythonInstaller C:\Downloads\python-3.12.10-amd64.exe `
-     -CiInventory C:\Downloads\ship-set-inventory.txt `
-     -AttestPersonalKit
-   ```
-   Add `-Iscc`, `-PythonExe` or `-BuildRoot` only if your installs are not
-   at the script's default locations.
-8. What PASS looks like: every gate prints its own `...: PASS` line
-   (clean-clone, Python pins, tests, the build-meta check, the ship-set and
-   OpenSSL/publisher/PE gates, the L6 pre-upload check and the determinism
-   self-check), and the script finishes by printing both exe hashes, the
-   zip's sha256 and size, and the reminders below. Any failure stops the
-   script immediately with a clear message and a non-zero exit code --
-   nothing is packed or left half-built.
-9. L7, by hand: launch `dist\OrbitRxMonitor\OrbitRxMonitor.exe` yourself and
-   confirm it completes a live SWPC fetch (the script does not do this for
-   you).
-10. Run your antivirus scan over `dist\OrbitRxMonitor\`, the installer exe
+10. Install Inno Setup 6 as described in the prerequisites above.
+11. **Get `ship-set-inventory.txt` -- this is mandatory (L5), not optional.**
+    The script refuses to run without it. To get it:
+    1. Open the GitHub Actions run for the **exact commit SHA** you are
+       building, on github.com (you need to be signed in to a GitHub
+       account to download run artifacts).
+    2. Download the `release-exe-captures` artifact from that run and unzip
+       it.
+    3. Take `ship-set-inventory.txt` from inside it -- that is the file to
+       pass as `-CiInventory`.
+    Artifacts expire 30 days after the run finished. If the artifact has
+    already expired, re-running CI at that SHA just to regenerate it is a
+    decision for QA/Risk to make, not something to do unilaterally --
+    ask first; do not build without it.
+12. Open PowerShell in the cloned repo and run the build script, for
+    example:
+    ```
+    tools\build_release_local.ps1 `
+      -ExpectedSha <the 40-char commit SHA> `
+      -PythonInstaller C:\Downloads\python-3.12.10-amd64.exe `
+      -CiInventory C:\Downloads\ship-set-inventory.txt `
+      -AttestPersonalKit `
+      *>&1 | Tee-Object -FilePath C:\build\orbitrx-5.2.0\build-console.txt
+    ```
+    Add `-Iscc`, `-PythonExe` or `-BuildRoot` only if your installs are not
+    at the script's default locations. `*>&1 | Tee-Object -FilePath ...`
+    (not `Start-Transcript`) saves a copy of everything the script printed,
+    for QA/Risk, without also stamping your username and computer name
+    into the saved file's own header the way `Start-Transcript` would.
+
+    **Which SHA?** Use `<CLEARED_SHA>` as a placeholder here, never a
+    commit you picked yourself. The actual value must be the final head
+    that QA and Risk have cleared and Jamie has approved for release --
+    after the fast-forward merge to `main`, that is `main`'s head commit.
+    Get the real value from the Chief of Staff or the Risk clearance note,
+    not by reading recent commits in this repo, and confirm it against the
+    clone itself with `git rev-parse HEAD` before you build.
+13. What PASS looks like: every gate prints its own `...: PASS` line (the
+    managed-device check, clean-clone, the CI-inventory header check,
+    Python pins, tests, the build-meta check, the ship-set and
+    OpenSSL/publisher/PE/PYZ-scan gates, the L5 and L6 checks and the
+    determinism self-check), and the script finishes by printing both exe
+    hashes, the zip's sha256 and size, and the reminders below.
+
+    Any failure stops the script immediately with a clear message and a
+    non-zero exit code. **This does not mean nothing was left on disk.** If
+    the failure happens after the commit-stamping step (f), the tracked
+    file `orbitrx/_build_meta.py` can be left locally modified, and
+    `dist\`, `build\`, the venv under `-BuildRoot`, and a partial `out\` can
+    all remain on disk. Re-running the script against the same clone will
+    then refuse immediately with the "working tree is not clean" error,
+    because that modified tracked file is exactly what the clean-clone
+    check (step b) is there to catch.
+
+    To recover:
+    - **Preferred:** delete the whole clone folder and the `-BuildRoot`
+      folder, and start again from a fresh `git clone` (step 8).
+    - **Or**, inside the existing clone: `git checkout -- .` followed by
+      `git clean -xdf` to restore the tracked file and remove untracked/
+      build output, then delete the `-BuildRoot` folder separately (it is
+      outside the clone, so `git clean` inside the clone does not touch
+      it).
+14. L7, by hand: launch `dist\OrbitRxMonitor\OrbitRxMonitor.exe` yourself
+    and confirm it completes a live SWPC fetch (the script does not do this
+    for you, and does not launch the GUI for you). The script prints
+    exactly what to capture as evidence when it finishes -- a screenshot or
+    a short written note of what you saw and when.
+
+    Note on what this run does *not* re-check: the local gates mirror CI's
+    *build-time* checks (pins, ship-set contents, the static PYZ scan for
+    the simulated-rig gate, publisher/PE checks). They do **not** repeat
+    CI's *runtime* gates -- the screenshot capture at 100%/150% scale, the
+    on-screen-fit check, the units check, or the DX cluster field-edge
+    measurement. Those rely on the CI run at this exact SHA having already
+    passed; this script does not re-run them locally.
+15. Run your antivirus scan over `dist\OrbitRxMonitor\`, the installer exe
     and the zip in `<BuildRoot>\out\`.
-11. Keep `OrbitRx-5.2.0-PROVENANCE.txt` (written beside the zip in
-    `<BuildRoot>\out\`) together with the zip. If you want a copy tracked
-    in the repo, add it under `docs/` later through a normal reviewed PR --
-    do not commit it straight from this process.
-12. L10: send the provenance record, the local `ship-set-inventory.txt` and
-    the script's PASS output to QA/Risk for review.
-13. Do not upload or publish anything yet. Wait for both: your own explicit
+16. Keep everything the script wrote together: `OrbitRx-<VERSION>-PROVENANCE.txt`
+    and the rest of `<BuildRoot>\out\` (the zip, `ship-set-inventory.txt`,
+    `installer-publisher.txt`, `ship-set-qt.txt`, `ship-set-tls.txt`, the
+    pyz-scan output, and the L5/L6 compare-result files), plus
+    `build-console.txt` from step 12. If you want a copy of the provenance
+    record tracked in the repo, add it under `docs/` later through a normal
+    reviewed PR -- do not commit it straight from this process.
+
+    **Send to QA/Risk (L10):**
+    - the provenance record (`OrbitRx-<VERSION>-PROVENANCE.txt`)
+    - `build-console.txt`
+    - `out\ship-set-inventory.txt` (the locally-built one)
+    - `out\installer-publisher.txt` (the PE check output)
+    - `out\ship-set-qt.txt` and `out\ship-set-tls.txt`
+    - the pyz-scan output (`out\pyz-scan.txt`)
+    - the L7 evidence (screenshot or note of the SWPC fetch)
+    - the antivirus scan result from step 15
+
+    `build-console.txt` can contain local paths (your username, folder
+    layout) and is for QA/Risk only -- never publish it. The provenance
+    record is the file written to be publish-safe (it self-checks for your
+    username, computer name, `$env:USERPROFILE`/`$env:HOME` and anything
+    that looks like a UK postcode, and refuses to write itself if it finds
+    any); send both, but only the provenance record is meant to ever leave
+    that reviewing circle.
+17. Do not upload or publish anything yet. Wait for both: your own explicit
     publish go-ahead (P8), and the recorded N1 acceptance (P9).
-14. Only once both of those are in hand: append the single line the script
+18. Only once both of those are in hand: append the single line the script
     printed to **both** SUMS locations, additively. Do not edit, reorder or
     remove the existing 5.1.0 line (L9).
 

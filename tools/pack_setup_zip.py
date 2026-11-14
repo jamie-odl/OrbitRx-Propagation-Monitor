@@ -238,23 +238,65 @@ def epoch_to_dos_date_time(epoch: int) -> tuple[int, int, int, int, int, int]:
     return (t.tm_year, t.tm_mon, t.tm_mday, t.tm_hour, t.tm_min, t.tm_sec - (t.tm_sec % 2))
 
 
-def resolve_epoch(epoch: int | None, source_date_epoch: int | None) -> int:
-    if epoch is not None:
-        return epoch
-    if source_date_epoch is not None:
-        return source_date_epoch
+def _parse_int_epoch(label: str, raw: str) -> int:
+    try:
+        return int(raw)
+    except ValueError:
+        raise PackError(f"{label} must be an integer, got {raw!r}") from None
+
+
+def resolve_optional_epoch(epoch: str | None, source_date_epoch: str | None) -> int | None:
+    """Resolve --epoch / --source-date-epoch / $SOURCE_DATE_EPOCH (in that
+    priority order) to an int, or None if none were given. Never lets a raw
+    ``int()`` ``ValueError`` escape -- every bad value is reported as a
+    ``PackError`` with a clean message instead."""
+    for label, raw in (("--epoch", epoch), ("--source-date-epoch", source_date_epoch)):
+        if raw is not None:
+            return _parse_int_epoch(label, raw)
     env = os.environ.get("SOURCE_DATE_EPOCH")
     if env:
-        return int(env)
-    raise PackError(
-        "an epoch is required for a deterministic pack: pass --epoch, "
-        "--source-date-epoch, or set SOURCE_DATE_EPOCH"
-    )
+        return _parse_int_epoch("SOURCE_DATE_EPOCH", env)
+    return None
+
+
+def resolve_epoch(epoch: str | None, source_date_epoch: str | None) -> int:
+    value = resolve_optional_epoch(epoch, source_date_epoch)
+    if value is None:
+        raise PackError(
+            "an epoch is required for a deterministic pack: pass --epoch, "
+            "--source-date-epoch, or set SOURCE_DATE_EPOCH"
+        )
+    return value
+
+
+def _is_reparse_point(path: Path) -> bool:
+    """True for a Windows junction or any other reparse point. Checked
+    separately from ``Path.is_symlink()`` because a directory junction is
+    not reported as a symlink by Python before 3.12 (and not always even on
+    3.12+ -- ``os.path.isjunction`` and the raw attribute bit are both
+    checked, so this is robust either way (N10)."""
+    try:
+        if hasattr(os.path, "isjunction") and os.path.isjunction(path):
+            return True
+    except OSError:
+        pass
+    try:
+        st = os.stat(path, follow_symlinks=False)
+    except OSError:
+        return False
+    attrs = getattr(st, "st_file_attributes", None)
+    if attrs is not None:
+        FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+        if attrs & FILE_ATTRIBUTE_REPARSE_POINT:
+            return True
+    return False
 
 
 def _reject_non_regular(path: Path) -> None:
     if path.is_symlink():
         raise PackError(f"refusing to pack a symlink: {path}")
+    if _is_reparse_point(path):
+        raise PackError(f"refusing to pack a junction/reparse point: {path}")
     if not path.is_file():
         raise PackError(f"refusing to pack a non-regular file: {path}")
 
@@ -262,16 +304,19 @@ def _reject_non_regular(path: Path) -> None:
 def collect_onedir_members(onedir: Path) -> list[tuple[str, Path]]:
     """``(archive_path, source_path)`` pairs for every file under
     ``onedir``, archive paths prefixed with ``OrbitRxMonitor/``. Symlinks
-    (files or directories) and anything that is not a regular file are
-    rejected, not silently skipped."""
-    if onedir.is_symlink() or not onedir.is_dir():
+    and junctions/reparse points (files or directories) and anything that is
+    not a regular file are rejected, not silently skipped (N10)."""
+    if onedir.is_symlink() or _is_reparse_point(onedir) or not onedir.is_dir():
         raise PackError(f"not a directory: {onedir}")
     members: list[tuple[str, Path]] = []
     for dirpath, dirnames, filenames in os.walk(onedir, followlinks=False):
         base = Path(dirpath)
         for name in dirnames:
-            if (base / name).is_symlink():
-                raise PackError(f"refusing to pack a symlinked directory: {base / name}")
+            full = base / name
+            if full.is_symlink():
+                raise PackError(f"refusing to pack a symlinked directory: {full}")
+            if _is_reparse_point(full):
+                raise PackError(f"refusing to pack a junction/reparse point directory: {full}")
         for name in filenames:
             full = base / name
             _reject_non_regular(full)
@@ -507,11 +552,12 @@ def _run_compare_tree(args: argparse.Namespace) -> int:
 
 
 def _run_verify(args: argparse.Namespace) -> int:
-    expect_epoch = args.epoch if args.epoch is not None else args.source_date_epoch
-    if expect_epoch is None:
-        env = os.environ.get("SOURCE_DATE_EPOCH")
-        expect_epoch = int(env) if env else None
-    problems = verify_zip_layout(args.verify, expect_epoch=expect_epoch)
+    try:
+        expect_epoch = resolve_optional_epoch(args.epoch, args.source_date_epoch)
+        problems = verify_zip_layout(args.verify, expect_epoch=expect_epoch)
+    except (PackError, ValueError) as exc:
+        print(f"verify failed for {args.verify}: {exc}", file=sys.stderr)
+        return 1
     if (args.onedir is None) != (args.installer is None):
         problems.append("--verify needs --onedir and --installer together, or neither")
     elif args.onedir is not None and args.installer is not None:
@@ -542,9 +588,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--onedir", type=Path, default=None, help="Option-B: the PyInstaller onedir root.")
     parser.add_argument("--installer", type=Path, default=None, help="Option-B: the installer exe.")
     parser.add_argument("--out", type=Path, default=None, help="Option-B: output zip path.")
-    parser.add_argument("--epoch", type=int, default=None, help="Option-B: unix seconds, e.g. commit time.")
     parser.add_argument(
-        "--source-date-epoch", dest="source_date_epoch", type=int, default=None,
+        "--epoch", type=str, default=None,
+        help="Option-B: unix seconds, e.g. commit time. Validated as an integer by this "
+        "tool (not by argparse), so a bad value fails closed with a clean message "
+        "in every mode, not a traceback.",
+    )
+    parser.add_argument(
+        "--source-date-epoch", dest="source_date_epoch", type=str, default=None,
         help="Option-B: same as --epoch; also read from $SOURCE_DATE_EPOCH if neither is given.",
     )
     parser.add_argument(

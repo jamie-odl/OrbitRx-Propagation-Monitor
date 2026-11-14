@@ -6,12 +6,20 @@
 .DESCRIPTION
     Mirrors the .github/workflows/ci.yml "test" and "build-windows" jobs,
     step by step, against a clean checkout of a known commit, then packs a
-    deterministic OrbitRx-Setup-5.2.0.zip with tools/pack_setup_zip.py.
+    deterministic OrbitRx-Setup-<VERSION>.zip with tools/pack_setup_zip.py.
 
     This script never uploads, publishes, tags or pushes anything, and never
-    contacts any network host other than pip's package index during
-    "pip install". It never auto-installs Python or Inno Setup -- if either
-    is missing or fails a pin check, it stops with a clear message.
+    contacts any network host at all during the build (dependencies install
+    from the committed, fully hash-pinned packaging/requirements-windows-build.lock.txt,
+    not from a live index). It never auto-installs Python or Inno Setup -- if
+    either is missing or fails a pin check, it stops with a clear message.
+
+    -CiInventory is REQUIRED (L5): this script will not build without the
+    exact SHA's ship-set-inventory.txt from CI. See BUILD-RELEASE.md.
+
+    IMPORTANT: a run of this script is a DRY RUN unless Jamie has explicitly
+    been told otherwise. Its zip is not a publish candidate by itself -- see
+    BUILD-RELEASE.md's "Dry run" note and L10.
 
     Run from a fresh clone, as described in BUILD-RELEASE.md. PowerShell
     5.1 and 7 are both supported.
@@ -31,18 +39,17 @@
 
 .PARAMETER BuildRoot
     A folder OUTSIDE the clone for the venv and build output (so the clone
-    stays clean). Must not be under OneDrive or Desktop either.
-
-.PARAMETER Constraints
-    Optional hash-pinned requirements file. If given, installs with
-    "pip install --require-hashes -r Constraints" instead of requirements.txt.
+    stays clean). Must not be under OneDrive or Desktop, on a subst/mapped or
+    UNC drive, behind a reparse point, or under $env:USERPROFILE.
 
 .PARAMETER Iscc
     Path to Inno Setup 6's ISCC.exe. Never installed by this script.
 
 .PARAMETER CiInventory
-    Optional path to the ship-set-inventory.txt downloaded from the exact
-    SHA's CI run (release-exe-captures artifact). Enforces L5 if given.
+    REQUIRED path to the ship-set-inventory.txt downloaded from the exact
+    SHA's CI run (release-exe-captures artifact). Enforces L5. Its header
+    line (version=<v> commit=<sha>) must match -ExpectedSha/-ExpectedVersion
+    exactly, checked before any build work starts.
 
 .PARAMETER AttestPersonalKit
     Required switch. Passing it is the builder's attestation that this
@@ -56,7 +63,6 @@ param(
     [string]$PythonInstaller,
     [string]$PythonExe = "$env:LOCALAPPDATA\Programs\Python\Python312\python.exe",
     [string]$BuildRoot = "C:\build\orbitrx-5.2.0-work",
-    [string]$Constraints,
     [string]$Iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
     [string]$CiInventory,
     [switch]$AttestPersonalKit
@@ -65,43 +71,13 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# --- Helpers -----------------------------------------------------------------
+# --- Pure helpers (path guard, provenance PII check, inventory header parse,
+# hash/pin helpers, SHA/attestation validation, publisher-check logic) live in
+# a dot-sourced file so tests/test_build_release_local_pwsh.py can call them
+# directly with pwsh. See tools/build_release_local.helpers.ps1.
+. (Join-Path $PSScriptRoot 'build_release_local.helpers.ps1')
 
-function Test-OneDriveOrDesktopPath {
-    param([string]$Path)
-    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
-    foreach ($envVar in @($env:OneDrive, $env:OneDriveConsumer, $env:OneDriveCommercial)) {
-        if ($envVar -and $Path.StartsWith($envVar, [System.StringComparison]::OrdinalIgnoreCase)) {
-            return $true
-        }
-    }
-    $desktop = [Environment]::GetFolderPath('Desktop')
-    if ($desktop -and $Path.StartsWith($desktop, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $true
-    }
-    foreach ($segment in ($Path -split '[\\/]')) {
-        if ($segment -ieq 'OneDrive') { return $true }
-        if ($segment -ieq 'Desktop') { return $true }
-    }
-    return $false
-}
-
-function Assert-SafeBuildPath {
-    param([string]$Path, [string]$Label)
-    if (Test-OneDriveOrDesktopPath $Path) {
-        throw "$Label ('$Path') is under OneDrive or Desktop. Use a plain local folder instead (see BUILD-RELEASE.md)."
-    }
-}
-
-function Get-Sha256Hex {
-    param([string]$Path)
-    return (Get-FileHash -Path $Path -Algorithm SHA256).Hash.ToLower()
-}
-
-function Get-Md5Hex {
-    param([string]$Path)
-    return (Get-FileHash -Path $Path -Algorithm MD5).Hash.ToLower()
-}
+# --- Local helpers that need real processes/files (not pure, not dot-sourced)
 
 function Invoke-Checked {
     param([string]$FilePath, [string[]]$ArgumentList, [string]$FailureMessage)
@@ -111,43 +87,145 @@ function Invoke-Checked {
     }
 }
 
-function Get-ProvenanceUnsafeMarkers {
-    param([string]$Text)
-    $found = @()
-    foreach ($var in @($env:USERNAME, $env:COMPUTERNAME, $env:USERPROFILE, $env:HOME)) {
-        if ($var -and $var.Trim().Length -gt 0 -and $Text.ToLower().Contains($var.ToLower())) {
-            $found += $var
-        }
+function Invoke-CheckedTee {
+    param([string]$FilePath, [string[]]$ArgumentList, [string]$FailureMessage, [string]$OutputFile)
+    & $FilePath @ArgumentList 2>&1 | Tee-Object -FilePath $OutputFile
+    if ($LASTEXITCODE -ne 0) {
+        throw "$FailureMessage (exit code $LASTEXITCODE)"
     }
-    # Simplified UK postcode pattern: one or two letters, a digit, an
-    # optional letter or digit, optional whitespace, a digit, two letters.
-    if ($Text -match '(?i)\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b') {
-        $found += 'UK-postcode-pattern'
-    }
-    return $found
 }
 
-# --- a. Refuse to run from a forbidden location -------------------------------
+function Invoke-OpenSslPinCheck {
+    param([string]$Root, [psobject]$Pin, [string]$VenvPython)
+    $pyVer = (& $VenvPython -c "import platform; print(platform.python_version())").Trim()
+    if ($pyVer -ne $Pin.python) {
+        throw "Build Python is $pyVer, manifest pins $($Pin.python)."
+    }
+    $expectedNames = @($Pin.dlls.PSObject.Properties.Name | ForEach-Object { $_.ToLower() } | Sort-Object)
+    $found = @(Get-ChildItem -Path $Root -Recurse -File | Where-Object { $_.Name -match '^(libcrypto|libssl|libeay|ssleay|openssl).*\.dll$' })
+    $foundNames = @($found | ForEach-Object { $_.Name.ToLower() } | Sort-Object)
+    if (($foundNames -join ',') -ne ($expectedNames -join ',')) {
+        throw "OpenSSL DLL set changed: expected $($expectedNames -join ', '), found $($foundNames -join ', ')."
+    }
+    foreach ($prop in $Pin.dlls.PSObject.Properties) {
+        $dll = $found | Where-Object { $_.Name -ieq $prop.Name } | Select-Object -First 1
+        if (-not $dll) {
+            throw "$($prop.Name) missing from ship set."
+        }
+        if ($dll.DirectoryName -ne (Join-Path $Root '_internal')) {
+            throw "$($prop.Name) is not at _internal\$($prop.Name)."
+        }
+        $fileVersion = "$($dll.VersionInfo.FileVersion)".Trim()
+        $dllHash = Get-Sha256Hex $dll.FullName
+        if ($fileVersion -ne $prop.Value.file_version) {
+            throw "$($prop.Name) FileVersion $fileVersion != pinned $($prop.Value.file_version)."
+        }
+        if ($dllHash -ne $prop.Value.sha256) {
+            throw "$($prop.Name) sha256 $dllHash != pinned $($prop.Value.sha256)."
+        }
+    }
+    if (Get-ChildItem -Path $Root -Recurse -File -Filter qopensslbackend.dll) {
+        throw 'qopensslbackend.dll reached the ship set.'
+    }
+    Write-Host "OPENSSL-PIN: PASS"
+}
 
-if (-not $AttestPersonalKit) {
-    throw "AttestPersonalKit must be passed: run this only after confirming the build is on your own personal PC, not employer equipment, VPN or a remote session (BUILD-RELEASE.md L1)."
+function Invoke-ShippedNoticesCheck {
+    param([string]$Root, [psobject]$Texts, [string]$VenvPython)
+    foreach ($rel in @('third_party/python/LICENSE.txt', 'third_party/qt/QT_THIRD_PARTY_ATTRIBUTIONS.txt', 'third_party/openssl/LICENSE.txt')) {
+        $shipped = Join-Path $Root ('_internal/' + $rel)
+        if (-not (Test-Path $shipped)) {
+            throw "$rel is not in the onedir at _internal/$rel."
+        }
+        $shippedHash = Get-Sha256Hex $shipped
+        if ($shippedHash -ne $Texts.$rel) {
+            throw "_internal/$rel sha256 $shippedHash != manifest $($Texts.$rel)."
+        }
+    }
+    $base = (& $VenvPython -c "import sys; print(sys.base_prefix)").Trim()
+    $runnerLicence = Join-Path $base 'LICENSE.txt'
+    if (-not (Test-Path $runnerLicence)) {
+        throw "Build interpreter has no LICENSE.txt at $runnerLicence."
+    }
+    if ((Get-Sha256Hex $runnerLicence) -ne $Texts.'third_party/python/LICENSE.txt') {
+        throw "Vendored third_party/python/LICENSE.txt differs from the build interpreter's LICENSE.txt."
+    }
+    Write-Host "SHIPPED-NOTICES: PASS"
+}
+
+function Invoke-PublisherCheck {
+    param([string[]]$Exes, [string]$ExpectedAppVersion)
+    foreach ($exePath in $Exes) {
+        $versionInfo = (Get-Item $exePath).VersionInfo
+        # @(...): a function returning an empty array collapses to $null across
+        # the call boundary in PowerShell; under Set-StrictMode that would make
+        # the very next ".Count" throw on every clean run (the common case).
+        $problems = @(Test-PublisherVersionInfo -VersionInfo $versionInfo -ExpectedAppVersion $ExpectedAppVersion -Label $exePath)
+        if ($problems.Count -gt 0) {
+            throw ($problems -join ' ')
+        }
+    }
+    Write-Host "PUBLISHER-CHECK: PASS"
+}
+
+# --- a. Attestation, employer-device heuristic (N9), SHA format ------------
+
+Assert-PersonalKitAttested -Attested:([bool]$AttestPersonalKit)
+
+$managedDeviceWarning = $null
+$dsregcmdDomainJoined = 'not available'
+$dsregcmdAzureAdJoined = 'not available'
+$dsregcmdEnterpriseJoined = 'not available'
+$dsregcmdWorkplaceJoined = 'not available'
+if (Get-Command dsregcmd -ErrorAction SilentlyContinue) {
+    $dsregLines = @(& dsregcmd /status)
+    $dsregFlags = ConvertFrom-DsregcmdStatus -Lines $dsregLines
+    if ($dsregFlags.ContainsKey('DomainJoined')) { $dsregcmdDomainJoined = $dsregFlags['DomainJoined'] }
+    if ($dsregFlags.ContainsKey('AzureAdJoined')) { $dsregcmdAzureAdJoined = $dsregFlags['AzureAdJoined'] }
+    if ($dsregFlags.ContainsKey('EnterpriseJoined')) { $dsregcmdEnterpriseJoined = $dsregFlags['EnterpriseJoined'] }
+    if ($dsregFlags.ContainsKey('WorkplaceJoined')) { $dsregcmdWorkplaceJoined = $dsregFlags['WorkplaceJoined'] }
+    $managedStatus = Test-ManagedDeviceStatus -Flags $dsregFlags
+    if ($managedStatus.Refuse) {
+        throw $managedStatus.Message
+    }
+    if ($managedStatus.Warning) {
+        Write-Warning $managedStatus.Warning
+        $managedDeviceWarning = $managedStatus.Warning
+    }
+    Write-Host "MANAGED-DEVICE-CHECK: PASS (DomainJoined=$dsregcmdDomainJoined AzureAdJoined=$dsregcmdAzureAdJoined EnterpriseJoined=$dsregcmdEnterpriseJoined WorkplaceJoined=$dsregcmdWorkplaceJoined)"
+}
+else {
+    Write-Host "MANAGED-DEVICE-CHECK: dsregcmd not available, skipping (recorded as 'not available' in provenance)"
+}
+
+$ExpectedSha = Assert-ValidExpectedSha -Sha $ExpectedSha
+
+if (-not $CiInventory) {
+    throw "-CiInventory is required (L5): download ship-set-inventory.txt from the exact -ExpectedSha's CI run (the release-exe-captures artifact) and pass it here. See BUILD-RELEASE.md."
+}
+if (-not (Test-Path $CiInventory)) {
+    throw "-CiInventory file not found: '$CiInventory'."
 }
 
 $buildStartUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-Assert-SafeBuildPath -Path $repoRoot -Label 'Repo root'
-Assert-SafeBuildPath -Path $BuildRoot -Label 'Build root (-BuildRoot)'
+
+# --- N4: path guards up front, before any other work ------------------------
+
+Assert-SafeBuildPath -Path $repoRoot -Label 'Repo root' | Out-Null
+$buildRootFull = Assert-SafeBuildPath -Path $BuildRoot -Label 'Build root (-BuildRoot)'
+Assert-SafeBuildPath -Path $CiInventory -Label '-CiInventory' | Out-Null
+Assert-SafeBuildPath -Path $PythonExe -Label '-PythonExe' | Out-Null
+if ($PythonInstaller) {
+    Assert-SafeBuildPath -Path $PythonInstaller -Label '-PythonInstaller' | Out-Null
+}
+Assert-BuildRootOutsideUserProfile -BuildRootFull $buildRootFull
 
 Write-Host "Repo root: $repoRoot"
 Write-Host "Build root: $BuildRoot"
 
-# --- b. Clean clone at the exact expected SHA ---------------------------------
-
-if (-not $ExpectedSha -or $ExpectedSha -notmatch '^[0-9a-fA-F]{40}$') {
-    throw "-ExpectedSha is required and must be a full 40-hex commit SHA."
-}
-$ExpectedSha = $ExpectedSha.ToLower()
+# --- b. Clean clone at the exact expected SHA, then VERSION -----------------
 
 Push-Location $repoRoot
 try {
@@ -169,6 +247,15 @@ finally {
     Pop-Location
 }
 Write-Host "CLEAN-CLONE-CHECK: PASS (HEAD=$headSha tree=$headTree VERSION=$version)"
+
+# --- R1 (L5 mandatory): parse and check the CI inventory header BEFORE any
+# build work starts, so a wrong/stale inventory fails fast, not after a
+# 20-40 minute build.
+
+$ciInventoryHeader = Get-ShipSetInventoryHeader -Path $CiInventory
+Assert-CiInventoryMatchesBuild -Header $ciInventoryHeader -ExpectedSha $ExpectedSha -ExpectedVersion $ExpectedVersion
+$ciInventorySha256 = Get-Sha256Hex $CiInventory
+Write-Host "CI-INVENTORY-HEADER-CHECK: PASS (version=$($ciInventoryHeader.Version) commit=$($ciInventoryHeader.Commit) sha256=$ciInventorySha256)"
 
 # --- c. Python installer and interpreter pins ---------------------------------
 
@@ -192,6 +279,8 @@ if ($installerSig.Status -ne 'Valid') {
 if ($installerSig.SignerCertificate.Subject -notmatch [regex]::Escape($pins.python.authenticode_signer_subject_contains)) {
     throw "Python installer signer subject '$($installerSig.SignerCertificate.Subject)' does not contain '$($pins.python.authenticode_signer_subject_contains)'."
 }
+$installerSignerSubject = $installerSig.SignerCertificate.Subject
+$installerSignerThumbprint = $installerSig.SignerCertificate.Thumbprint
 Write-Host "PYTHON-INSTALLER-PIN: PASS (sha256=$installerSha256)"
 
 if (-not (Test-Path $PythonExe)) {
@@ -204,6 +293,8 @@ if ($pythonExeSig.Status -ne 'Valid') {
 if ($pythonExeSig.SignerCertificate.Subject -notmatch [regex]::Escape($pins.python.authenticode_signer_subject_contains)) {
     throw "python.exe signer subject '$($pythonExeSig.SignerCertificate.Subject)' does not contain '$($pins.python.authenticode_signer_subject_contains)'."
 }
+$pythonExeSignerSubject = $pythonExeSig.SignerCertificate.Subject
+$pythonExeSignerThumbprint = $pythonExeSig.SignerCertificate.Thumbprint
 $pyVersionString = (& $PythonExe -c "import sys; print('%d.%d.%d' % sys.version_info[:3])").Trim()
 if ($pyVersionString -ne $pins.python.version) {
     throw "python.exe reports $pyVersionString, pinned $($pins.python.version)."
@@ -221,11 +312,7 @@ foreach ($dllName in $opensslPin.dlls.PSObject.Properties.Name) {
     if (-not (Test-Path $dllPath)) {
         throw "Build interpreter is missing $dllPath."
     }
-    $dllHash = Get-Sha256Hex $dllPath
-    $pinEntry = $opensslPin.dlls.$dllName
-    if ($dllHash -ne $pinEntry.sha256) {
-        throw "$dllName sha256 $dllHash != manifest pin $($pinEntry.sha256)."
-    }
+    Assert-Sha256Match -Path $dllPath -Expected $opensslPin.dlls.$dllName.sha256 -Label $dllName | Out-Null
 }
 $pythonLicence = Join-Path $pyBasePrefix 'LICENSE.txt'
 $repoLicence = Join-Path $repoRoot 'third_party\python\LICENSE.txt'
@@ -238,7 +325,7 @@ if ((Get-Sha256Hex $pythonLicence) -ne (Get-Sha256Hex $repoLicence)) {
 $pythonExeSha256 = Get-Sha256Hex $PythonExe
 Write-Host "PYTHON-EXE-PIN: PASS (sha256=$pythonExeSha256 version=$pyVersionString)"
 
-# --- d. Fresh venv in BuildRoot, install requirements.txt as CI does ----------
+# --- d. Fresh venv in BuildRoot, install from the committed hash-pinned lock -
 
 New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
 $venvDir = Join-Path $BuildRoot 'venv'
@@ -253,22 +340,24 @@ $pipVersionLine = (& $venvPython -m pip --version).Trim()
 
 $requirementsPath = Join-Path $repoRoot 'requirements.txt'
 $requirementsSha256 = Get-Sha256Hex $requirementsPath
-$constraintsSha256 = $null
-if ($Constraints) {
-    if (-not (Test-Path $Constraints)) {
-        throw "-Constraints file not found: '$Constraints'."
-    }
-    Invoke-Checked -FilePath $venvPython -ArgumentList @('-m', 'pip', 'install', '--require-hashes', '-r', $Constraints) -FailureMessage 'pip install --require-hashes failed'
-    $constraintsSha256 = Get-Sha256Hex $Constraints
+
+# R2: the Windows build only ever installs from the committed, fully
+# hash-pinned lock file -- never from requirements.txt directly and never
+# from an arbitrary file passed on the command line. --no-deps is safe only
+# because the lock lists every transitive dependency; "pip check" then
+# proves that closure is complete and consistent.
+$lockPath = Join-Path $repoRoot 'packaging\requirements-windows-build.lock.txt'
+if (-not (Test-Path $lockPath)) {
+    throw "Committed lock file not found: $lockPath. This script only installs from packaging\requirements-windows-build.lock.txt (R2)."
 }
-else {
-    Invoke-Checked -FilePath $venvPython -ArgumentList @('-m', 'pip', 'install', '-r', $requirementsPath) -FailureMessage 'pip install -r requirements.txt failed'
-}
+$lockSha256 = Get-Sha256Hex $lockPath
+Invoke-Checked -FilePath $venvPython -ArgumentList @('-m', 'pip', 'install', '--require-hashes', '--no-deps', '-r', $lockPath) -FailureMessage 'pip install --require-hashes --no-deps -r packaging\requirements-windows-build.lock.txt failed'
+Invoke-Checked -FilePath $venvPython -ArgumentList @('-m', 'pip', 'check') -FailureMessage 'pip check failed after installing from the hash-pinned lock'
 
 $pipFreezeText = (& $venvPython -m pip freeze) -join "`n"
 $pipFreezeBytes = [System.Text.Encoding]::UTF8.GetBytes($pipFreezeText)
 $pipFreezeSha256 = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($pipFreezeBytes)).Replace('-', '').ToLower()
-Write-Host "DEPENDENCIES: PASS (requirements.txt sha256=$requirementsSha256, pip freeze sha256=$pipFreezeSha256)"
+Write-Host "DEPENDENCIES: PASS (requirements.txt sha256=$requirementsSha256, lock sha256=$lockSha256, pip freeze sha256=$pipFreezeSha256)"
 
 # --- e. Full pytest suite and compileall, exactly as CI's test job -----------
 
@@ -341,82 +430,6 @@ Write-Host "BUILD: PASS (PyInstaller $pyinstallerVersion, $isccVersionLine)"
 
 # --- g. CI-equivalent gates ----------------------------------------------------
 
-function Invoke-OpenSslPinCheck {
-    param([string]$Root, [psobject]$Pin, [string]$VenvPython)
-    $pyVer = (& $VenvPython -c "import platform; print(platform.python_version())").Trim()
-    if ($pyVer -ne $Pin.python) {
-        throw "Build Python is $pyVer, manifest pins $($Pin.python)."
-    }
-    $expectedNames = @($Pin.dlls.PSObject.Properties.Name | ForEach-Object { $_.ToLower() } | Sort-Object)
-    $found = @(Get-ChildItem -Path $Root -Recurse -File | Where-Object { $_.Name -match '^(libcrypto|libssl|libeay|ssleay|openssl).*\.dll$' })
-    $foundNames = @($found | ForEach-Object { $_.Name.ToLower() } | Sort-Object)
-    if (($foundNames -join ',') -ne ($expectedNames -join ',')) {
-        throw "OpenSSL DLL set changed: expected $($expectedNames -join ', '), found $($foundNames -join ', ')."
-    }
-    foreach ($prop in $Pin.dlls.PSObject.Properties) {
-        $dll = $found | Where-Object { $_.Name -ieq $prop.Name } | Select-Object -First 1
-        if (-not $dll) {
-            throw "$($prop.Name) missing from ship set."
-        }
-        if ($dll.DirectoryName -ne (Join-Path $Root '_internal')) {
-            throw "$($prop.Name) is not at _internal\$($prop.Name)."
-        }
-        $fileVersion = "$($dll.VersionInfo.FileVersion)".Trim()
-        $dllHash = Get-Sha256Hex $dll.FullName
-        if ($fileVersion -ne $prop.Value.file_version) {
-            throw "$($prop.Name) FileVersion $fileVersion != pinned $($prop.Value.file_version)."
-        }
-        if ($dllHash -ne $prop.Value.sha256) {
-            throw "$($prop.Name) sha256 $dllHash != pinned $($prop.Value.sha256)."
-        }
-    }
-    if (Get-ChildItem -Path $Root -Recurse -File -Filter qopensslbackend.dll) {
-        throw 'qopensslbackend.dll reached the ship set.'
-    }
-    Write-Host "OPENSSL-PIN: PASS"
-}
-
-function Invoke-ShippedNoticesCheck {
-    param([string]$Root, [psobject]$Texts, [string]$VenvPython)
-    foreach ($rel in @('third_party/python/LICENSE.txt', 'third_party/qt/QT_THIRD_PARTY_ATTRIBUTIONS.txt', 'third_party/openssl/LICENSE.txt')) {
-        $shipped = Join-Path $Root ('_internal/' + $rel)
-        if (-not (Test-Path $shipped)) {
-            throw "$rel is not in the onedir at _internal/$rel."
-        }
-        $shippedHash = Get-Sha256Hex $shipped
-        if ($shippedHash -ne $Texts.$rel) {
-            throw "_internal/$rel sha256 $shippedHash != manifest $($Texts.$rel)."
-        }
-    }
-    $base = (& $VenvPython -c "import sys; print(sys.base_prefix)").Trim()
-    $runnerLicence = Join-Path $base 'LICENSE.txt'
-    if (-not (Test-Path $runnerLicence)) {
-        throw "Build interpreter has no LICENSE.txt at $runnerLicence."
-    }
-    if ((Get-Sha256Hex $runnerLicence) -ne $Texts.'third_party/python/LICENSE.txt') {
-        throw "Vendored third_party/python/LICENSE.txt differs from the build interpreter's LICENSE.txt."
-    }
-    Write-Host "SHIPPED-NOTICES: PASS"
-}
-
-function Invoke-PublisherCheck {
-    param([string[]]$Exes, [string]$ExpectedAppVersion)
-    foreach ($exePath in $Exes) {
-        $versionInfo = (Get-Item $exePath).VersionInfo
-        if ("$($versionInfo.CompanyName) $($versionInfo.LegalCopyright)" -match 'Obsidian') {
-            throw "Obsidian Dynamics found in $exePath version info."
-        }
-        if ("$($versionInfo.CompanyName)".Trim() -ne 'thevenom') {
-            throw "Unexpected CompanyName in $exePath."
-        }
-        $fileVersion = "$($versionInfo.FileVersion)".Trim()
-        if ($fileVersion -ne $ExpectedAppVersion -and $fileVersion -ne "$ExpectedAppVersion.0") {
-            throw "Unexpected FileVersion '$fileVersion' in $exePath (expected $ExpectedAppVersion or $ExpectedAppVersion.0)."
-        }
-    }
-    Write-Host "PUBLISHER-CHECK: PASS"
-}
-
 Push-Location $repoRoot
 try {
     $onedirRoot = (Resolve-Path 'dist\OrbitRxMonitor').Path
@@ -450,9 +463,6 @@ try {
         $line | Out-File $localInventoryPath -Append -Encoding utf8
     }
     Write-Host "Wrote local ship-set-inventory.txt: $localInventoryPath"
-    if (-not $CiInventory) {
-        Write-Warning "L5 is NOT yet satisfied: no -CiInventory was given. The packed zip's OrbitRxMonitor/ contents will not be compared against the exact SHA's CI ship-set-inventory.txt. Do this before any upload."
-    }
 
     Invoke-OpenSslPinCheck -Root $onedirRoot -Pin $opensslPin -VenvPython $venvPython
     Invoke-ShippedNoticesCheck -Root $onedirRoot -Texts $manifest.present_texts -VenvPython $venvPython
@@ -467,31 +477,38 @@ try {
     $peCheckOut = Join-Path $outDir 'installer-publisher.txt'
     Invoke-Checked -FilePath $venvPython -ArgumentList @('tools\pe_check.py', $peCheckOut, $exePath, $installerExePath) -FailureMessage 'tools/pe_check.py failed'
     Write-Host "PE-CHECK: PASS"
+
+    # N6: the same static PYZ scan CI's "Scan the bundled PYZ" step runs, so
+    # the local gates catch the same simulated-rig-leak class of bug. CI's
+    # runtime gates (screenshot capture, fit, units, DX cluster edges) are
+    # NOT repeated here -- see BUILD-RELEASE.md for why, and rely on the CI
+    # run at this exact SHA for those.
+    $pyzScanOut = Join-Path $outDir 'pyz-scan.txt'
+    Invoke-Checked -FilePath $venvPython -ArgumentList @('tools\scan_pyz.py', $exePath, $pyzScanOut) -FailureMessage 'tools/scan_pyz.py failed'
+    Write-Host "PYZ-SCAN: PASS"
 }
 finally {
     Pop-Location
 }
 
-# --- i. Pack with the deterministic packer, L6 checks, determinism self-check -
+# --- i. Pack with the deterministic packer, L5/L6 checks, determinism check -
 
 Push-Location $repoRoot
 try {
     $commitEpoch = (git show -s --format=%ct $ExpectedSha).Trim()
-    $zipPath = Join-Path $outDir 'OrbitRx-Setup-5.2.0.zip'
+    $zipName = "OrbitRx-Setup-$version.zip"
+    $zipPath = Join-Path $outDir $zipName
     $packArgs = @(
         'tools\pack_setup_zip.py',
         '--onedir', $onedirRoot,
         '--installer', $installerExePath,
         '--out', $zipPath,
-        '--epoch', $commitEpoch
+        '--epoch', $commitEpoch,
+        '--expect-inventory', $CiInventory
     )
-    if ($CiInventory) {
-        $packArgs += @('--expect-inventory', $CiInventory)
-    }
-    Invoke-Checked -FilePath $venvPython -ArgumentList $packArgs -FailureMessage 'deterministic pack failed (if -CiInventory was given, this may be an L5 mismatch)'
-    if ($CiInventory) {
-        Write-Host "L5-INVENTORY-MATCH: PASS"
-    }
+    $packResultOut = Join-Path $outDir 'l5-pack-result.txt'
+    Invoke-CheckedTee -FilePath $venvPython -ArgumentList $packArgs -FailureMessage 'deterministic pack failed (this may be an L5 ship-set-inventory mismatch)' -OutputFile $packResultOut
+    Write-Host "L5-INVENTORY-MATCH: PASS"
 
     $extractDir = Join-Path $outDir 'extracted'
     if (Test-Path $extractDir) {
@@ -499,17 +516,18 @@ try {
     }
     Expand-Archive -Path $zipPath -DestinationPath $extractDir
     Invoke-Checked -FilePath $venvPython -ArgumentList @('tools\ship_set.py', '--check', (Join-Path $extractDir 'OrbitRxMonitor')) -FailureMessage 'L6: ship_set --check failed on the extracted zip'
-    Invoke-Checked -FilePath $venvPython -ArgumentList @('tools\pack_setup_zip.py', '--verify', $zipPath, '--onedir', $onedirRoot, '--installer', $installerExePath, '--epoch', $commitEpoch) -FailureMessage 'L6: packer --verify failed'
+    $l6VerifyOut = Join-Path $outDir 'l6-verify.txt'
+    Invoke-CheckedTee -FilePath $venvPython -ArgumentList @('tools\pack_setup_zip.py', '--verify', $zipPath, '--onedir', $onedirRoot, '--installer', $installerExePath, '--epoch', $commitEpoch) -FailureMessage 'L6: packer --verify failed' -OutputFile $l6VerifyOut
     Write-Host "L6-PRE-UPLOAD-CHECK: PASS"
 
     $extractedOnedir = Join-Path $extractDir 'OrbitRxMonitor'
-    Invoke-Checked -FilePath $venvPython -ArgumentList @('tools\pack_setup_zip.py', '--compare-tree', $extractedOnedir, '--inventory', $localInventoryPath) -FailureMessage 'L6: extracted zip tree did not match the local ship-set-inventory.txt'
-    if ($CiInventory) {
-        Invoke-Checked -FilePath $venvPython -ArgumentList @('tools\pack_setup_zip.py', '--compare-tree', $extractedOnedir, '--inventory', $CiInventory) -FailureMessage 'L6: extracted zip tree did not match -CiInventory'
-    }
+    $l6CompareLocalOut = Join-Path $outDir 'l6-compare-tree-local.txt'
+    Invoke-CheckedTee -FilePath $venvPython -ArgumentList @('tools\pack_setup_zip.py', '--compare-tree', $extractedOnedir, '--inventory', $localInventoryPath) -FailureMessage 'L6: extracted zip tree did not match the local ship-set-inventory.txt' -OutputFile $l6CompareLocalOut
+    $l6CompareCiOut = Join-Path $outDir 'l6-compare-tree-ci.txt'
+    Invoke-CheckedTee -FilePath $venvPython -ArgumentList @('tools\pack_setup_zip.py', '--compare-tree', $extractedOnedir, '--inventory', $CiInventory) -FailureMessage 'L6: extracted zip tree did not match -CiInventory' -OutputFile $l6CompareCiOut
     Write-Host "L6-INVENTORY-MATCH: PASS"
 
-    $zipPathRepeat = Join-Path $outDir 'OrbitRx-Setup-5.2.0.repack-check.zip'
+    $zipPathRepeat = Join-Path $outDir "OrbitRx-Setup-$version.repack-check.zip"
     Invoke-Checked -FilePath $venvPython -ArgumentList @('tools\pack_setup_zip.py', '--onedir', $onedirRoot, '--installer', $installerExePath, '--out', $zipPathRepeat, '--epoch', $commitEpoch) -FailureMessage 'determinism self-check (second pack) failed'
     $zipSha256 = Get-Sha256Hex $zipPath
     $zipSha256Repeat = Get-Sha256Hex $zipPathRepeat
@@ -531,6 +549,21 @@ $installerSha256Final = Get-Sha256Hex $installerExePath
 $zipSize = (Get-Item $zipPath).Length
 $buildEndUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
 
+# N8: hash every gate output file written to out\ so the provenance record
+# can be cross-checked against them without needing the binaries themselves.
+$gateOutputFiles = [ordered]@{
+    'ship-set-inventory.txt (local)'   = $localInventoryPath
+    'ship-set-inventory.txt (CI, -CiInventory)' = $CiInventory
+    'ship-set-qt.txt'                  = $shipSetQtList
+    'ship-set-tls.txt'                 = $shipSetTlsList
+    'installer-publisher.txt (pe_check)' = $peCheckOut
+    'pyz-scan.txt'                     = $pyzScanOut
+    'l5-pack-result.txt'               = $packResultOut
+    'l6-verify.txt'                    = $l6VerifyOut
+    'l6-compare-tree-local.txt'        = $l6CompareLocalOut
+    'l6-compare-tree-ci.txt'           = $l6CompareCiOut
+}
+
 Write-Host ""
 Write-Host "OrbitRxMonitor.exe sha256: $exeSha256"
 Write-Host "OrbitRxMonitor-Setup.exe sha256: $installerSha256Final"
@@ -538,24 +571,27 @@ Write-Host "onedir file count: $onedirFileCount"
 Write-Host "zip sha256: $zipSha256"
 Write-Host "zip size: $zipSize bytes"
 
-$l5Line = if ($CiInventory) { '  L5-INVENTORY-MATCH: PASS' } else { '  L5-INVENTORY-MATCH: NOT RUN (no -CiInventory given)' }
-
 $provenanceLines = @(
-    'OrbitRx 5.2.0 local build provenance',
+    "OrbitRx $version local build provenance",
     "SHA: $ExpectedSha",
     "tree: $headTree",
     "VERSION: $version",
     "Build start (UTC): $buildStartUtc",
     "Build end (UTC): $buildEndUtc",
     'Built on personal PC, not employer equipment (attested by builder)',
-    "Python installer: $($pins.python.installer_filename) sha256=$installerSha256 md5=$installerMd5 signer contains '$($pins.python.authenticode_signer_subject_contains)'",
-    "python.exe: sha256=$pythonExeSha256 version=$pyVersionString",
-    "pip: $pipVersionLine",
-    "requirements.txt sha256: $requirementsSha256"
+    "Managed-device heuristic (dsregcmd): DomainJoined=$dsregcmdDomainJoined AzureAdJoined=$dsregcmdAzureAdJoined EnterpriseJoined=$dsregcmdEnterpriseJoined WorkplaceJoined=$dsregcmdWorkplaceJoined"
 )
-if ($constraintsSha256) {
-    $provenanceLines += "constraints file sha256: $constraintsSha256"
+if ($managedDeviceWarning) {
+    $provenanceLines += "Managed-device warning: $managedDeviceWarning"
 }
+$provenanceLines += @(
+    "Python installer: $($pins.python.installer_filename) sha256=$installerSha256 md5=$installerMd5 signer='$installerSignerSubject' thumbprint=$installerSignerThumbprint",
+    "python.exe: sha256=$pythonExeSha256 version=$pyVersionString signer='$pythonExeSignerSubject' thumbprint=$pythonExeSignerThumbprint",
+    "pip: $pipVersionLine",
+    "requirements.txt sha256: $requirementsSha256",
+    "packaging/requirements-windows-build.lock.txt sha256: $lockSha256",
+    "CI ship-set-inventory.txt (-CiInventory) sha256: $ciInventorySha256 commit=$($ciInventoryHeader.Commit) version=$($ciInventoryHeader.Version)"
+)
 $provenanceLines += "pip freeze sha256: $pipFreezeSha256"
 $provenanceLines += 'pip freeze:'
 $provenanceLines += ($pipFreezeText -split "`n")
@@ -567,6 +603,7 @@ $provenanceLines += @(
     '',
     'Gate results:',
     '  CLEAN-CLONE-CHECK: PASS',
+    '  CI-INVENTORY-HEADER-CHECK: PASS',
     '  PYTHON-INSTALLER-PIN: PASS',
     '  PYTHON-EXE-PIN: PASS',
     '  TESTS: PASS',
@@ -577,7 +614,8 @@ $provenanceLines += @(
     '  SHIP-SET-GATE: PASS',
     '  PUBLISHER-CHECK: PASS',
     '  PE-CHECK: PASS',
-    $l5Line,
+    '  PYZ-SCAN: PASS',
+    '  L5-INVENTORY-MATCH: PASS',
     '  L6-PRE-UPLOAD-CHECK: PASS',
     '  L6-INVENTORY-MATCH: PASS',
     '  DETERMINISM-SELF-CHECK: PASS',
@@ -587,16 +625,25 @@ $provenanceLines += @(
     "onedir file count: $onedirFileCount",
     "zip sha256: $zipSha256",
     "zip size: $zipSize bytes",
-    'zip path: out\OrbitRx-Setup-5.2.0.zip'
+    "zip path: out\$zipName",
+    '',
+    'Gate output files (sha256):'
 )
+foreach ($label in $gateOutputFiles.Keys) {
+    $path = $gateOutputFiles[$label]
+    $provenanceLines += "  $label : sha256=$(Get-Sha256Hex $path)"
+}
 $provenanceText = ($provenanceLines -join "`r`n")
 
-$unsafeMarkers = Get-ProvenanceUnsafeMarkers -Text $provenanceText
+# @(...): same empty-array-collapses-to-$null guard as Invoke-PublisherCheck
+# above -- without it, a clean provenance text (the common case) would make
+# the ".Count" check below throw under Set-StrictMode instead of passing.
+$unsafeMarkers = @(Get-ProvenanceUnsafeMarkers -Text $provenanceText)
 if ($unsafeMarkers.Count -gt 0) {
     throw "Provenance text self-check failed: it contains $($unsafeMarkers -join ', '). Refusing to write it."
 }
 
-$provenancePath = Join-Path $outDir 'OrbitRx-5.2.0-PROVENANCE.txt'
+$provenancePath = Join-Path $outDir "OrbitRx-$version-PROVENANCE.txt"
 Set-Content -Path $provenancePath -Value $provenanceText -Encoding utf8
 Write-Host ""
 Write-Host "Wrote provenance record: $provenancePath"
@@ -604,10 +651,11 @@ Write-Host "Wrote provenance record: $provenancePath"
 # --- Reminders for the steps this script does not and should not do ----------
 
 Write-Host ""
-Write-Host "REMINDER (L7): run the HTTPS smoke test by hand -- launch dist\OrbitRxMonitor\OrbitRxMonitor.exe and confirm a live SWPC fetch succeeds. This script does not launch the app for you."
+Write-Host "REMINDER: this is a DRY RUN unless you have been told otherwise -- do not publish this zip. Send the provenance record and the out\ files to QA/Risk under L10 and wait for their review before anything is treated as a publish candidate (see BUILD-RELEASE.md)."
+Write-Host "REMINDER (L7): run the HTTPS smoke test by hand -- launch dist\OrbitRxMonitor\OrbitRxMonitor.exe and confirm a live SWPC fetch succeeds. Capture a screenshot or a short note (what you saw, and the timestamp) as L7 evidence. This script does not launch the app for you."
 Write-Host "REMINDER: run an antivirus scan over dist\OrbitRxMonitor, the installer and the zip before sharing them."
 Write-Host "REMINDER (L9): append exactly this one line to both SUMS locations -- do NOT touch the existing 5.1.0 line:"
-Write-Host "$zipSha256  OrbitRx-Setup-5.2.0.zip"
+Write-Host "$zipSha256  $zipName"
 Write-Host "REMINDER: do not upload anything until Jamie's explicit publish go (P8) and the N1 acceptance (P9). This script never uploads, publishes, tags or pushes."
 
 # --- Restore the one tracked file the build stamped ---------------------------

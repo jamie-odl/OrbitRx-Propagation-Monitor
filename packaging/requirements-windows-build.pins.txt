@@ -1,0 +1,30 @@
+# Exact top-level pins for the win_amd64/CPython 3.12 Windows build, resolved
+# from .github/workflows/ci.yml's build-windows job at commit 275d21c. Used
+# as the --constraint input when regenerating
+# packaging/requirements-windows-build.lock.txt (see that file's header).
+PySide6_Essentials==6.12.0
+shiboken6==6.12.0
+altgraph==0.17.5
+contourpy==1.4.0
+cycler==0.12.1
+fonttools==4.68.0
+iniconfig==2.3.1
+kiwisolver==1.5.1
+matplotlib==3.11.2
+numpy==2.5.4
+pefile==2024.8.26
+pillow==13.0.0
+pluggy==1.7.0
+pygments==2.21.0
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.10
+pyparsing==3.3.3
+pypiwin32==223
+pyserial==3.5
+pytest==9.2.0
+python-dateutil==4.0.0
+pywin32==312
+pywin32-ctypes==0.2.3
+setuptools==84.2.1
+tzdata==2026.6
+win10toast==0.9

@@ -10,6 +10,7 @@ from __future__ import annotations
 import calendar
 import hashlib
 import os
+import struct
 import sys
 import time
 import zipfile
@@ -22,6 +23,7 @@ from tools.pack_setup_zip import (
     INSTALLER_ARCNAME,
     ONEDIR_PREFIX,
     build_deterministic_zip,
+    collect_onedir_members,
     compare_inventory,
     compare_tree_to_inventory,
     epoch_to_dos_date_time,
@@ -207,6 +209,45 @@ def test_symlinks_are_rejected(tmp_path):
 
     with pytest.raises(Exception):
         build_deterministic_zip(onedir, installer, tmp_path / "out.zip", EPOCH)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="junctions are a Windows-only concept (N10)")
+def test_windows_junction_directory_is_rejected(tmp_path):
+    import subprocess
+
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    target = tmp_path / "junction-target"
+    target.mkdir()
+    (target / "inside.txt").write_bytes(b"should never be packed\n")
+    junction = onedir / "_internal" / "linked"
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction), str(target)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"mklink /J unavailable or refused: {result.stderr.strip()}")
+
+    with pytest.raises(Exception):
+        build_deterministic_zip(onedir, installer, tmp_path / "out.zip", EPOCH)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="junctions are a Windows-only concept (N10)")
+def test_windows_junction_as_onedir_root_is_rejected(tmp_path):
+    import subprocess
+
+    real_onedir = _make_onedir(tmp_path / "real")
+    installer = _make_installer(tmp_path)
+    junction_root = tmp_path / "OrbitRxMonitor-junction"
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(junction_root), str(real_onedir)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"mklink /J unavailable or refused: {result.stderr.strip()}")
+
+    with pytest.raises(Exception):
+        build_deterministic_zip(junction_root, installer, tmp_path / "out.zip", EPOCH)
 
 
 # --- epoch rounding / clamping ------------------------------------------------
@@ -499,3 +540,227 @@ def test_legacy_single_installer_mode_is_unaffected(tmp_path):
     assert rc == 0
     with zipfile.ZipFile(out) as zf:
         assert zf.namelist() == ["OrbitRxMonitor-Setup.exe"]
+
+
+# --- non-integer / out-of-range --epoch and SOURCE_DATE_EPOCH fail closed,
+# with a clean message, in every mode -- never a traceback (QA Sec.7 INFO) --
+
+
+def test_verify_mode_rejects_a_non_integer_epoch_cleanly(tmp_path, capsys):
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    out = _pack(tmp_path, onedir, installer, "out.zip")
+
+    rc = main(["--verify", str(out), "--epoch", "not-a-number"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "failed" in captured.err
+    assert "not-a-number" in captured.err
+
+
+def test_verify_mode_rejects_an_out_of_range_epoch_cleanly(tmp_path, capsys):
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    out = _pack(tmp_path, onedir, installer, "out.zip")
+
+    too_high = calendar.timegm((2108, 1, 1, 0, 0, 0, 0, 0, 0))
+    rc = main(["--verify", str(out), "--epoch", str(too_high)])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "failed" in captured.err
+
+
+def test_verify_mode_rejects_a_non_integer_source_date_epoch_env_cleanly(tmp_path, monkeypatch, capsys):
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    out = _pack(tmp_path, onedir, installer, "out.zip")
+
+    monkeypatch.setenv("SOURCE_DATE_EPOCH", "also-not-a-number")
+    rc = main(["--verify", str(out)])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "failed" in captured.err
+    assert "also-not-a-number" in captured.err
+
+
+def test_pack_mode_rejects_a_non_integer_epoch_cleanly(tmp_path, capsys):
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    rc = main([
+        "--onedir", str(onedir), "--installer", str(installer),
+        "--out", str(tmp_path / "out.zip"), "--epoch", "nope",
+    ])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "pack failed" in captured.err
+    assert "nope" in captured.err
+
+
+def test_pack_mode_rejects_an_out_of_range_epoch_cleanly(tmp_path, capsys):
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    too_high = calendar.timegm((2108, 1, 1, 0, 0, 0, 0, 0, 0))
+    rc = main([
+        "--onedir", str(onedir), "--installer", str(installer),
+        "--out", str(tmp_path / "out.zip"), "--epoch", str(too_high),
+    ])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "pack failed" in captured.err
+
+
+# --- N7a: negative tests chosen to kill specific mutants in verify_zip_layout
+# and compare_tree_to_inventory ------------------------------------------------
+
+
+def _manual_option_b_zip(root: Path, out_path: Path, modify=None) -> Path:
+    """Build an Option-B-shaped zip the same way build_deterministic_zip
+    does, but allow a hook to mutate one member's ZipInfo before it is
+    written -- used to construct zips that deviate from the fixed shape in
+    exactly one way, so verify_zip_layout's specific checks can be tested in
+    isolation."""
+    onedir = _make_onedir(root)
+    installer = _make_installer(root)
+    members = collect_onedir_members(onedir)
+    members.append((INSTALLER_ARCNAME, installer))
+    members.sort(key=lambda m: m[0].encode("utf-8"))
+    date_time = epoch_to_dos_date_time(EPOCH)
+    with zipfile.ZipFile(out_path, "w", allowZip64=True) as zf:
+        for arcname, src in members:
+            data = src.read_bytes()
+            info = zipfile.ZipInfo(arcname, date_time=date_time)
+            info.create_system = 0
+            info.create_version = 20
+            info.extract_version = 20
+            info.external_attr = FIXED_EXTERNAL_ATTR
+            if modify is not None:
+                modify(arcname, info)
+            zf.writestr(info, data, compress_type=zipfile.ZIP_DEFLATED, compresslevel=9)
+    return out_path
+
+
+def test_verify_rejects_an_extra_field(tmp_path):
+    def modify(arcname, info):
+        if arcname.endswith("a.txt"):
+            info.extra = b"\x01\x02\x00\x00"
+
+    out = _manual_option_b_zip(tmp_path / "src", tmp_path / "extra.zip", modify)
+    problems = verify_zip_layout(out, expect_epoch=EPOCH)
+    assert any("extra field" in p for p in problems)
+
+
+def test_verify_rejects_wrong_external_attr(tmp_path):
+    def modify(arcname, info):
+        if arcname.endswith("a.txt"):
+            info.external_attr = 0x81A40000  # a plausible Unix-mode value, not FIXED_EXTERNAL_ATTR
+
+    out = _manual_option_b_zip(tmp_path / "src", tmp_path / "attr.zip", modify)
+    problems = verify_zip_layout(out, expect_epoch=EPOCH)
+    assert any("external_attr" in p for p in problems)
+
+
+def test_verify_rejects_directory_entries(tmp_path):
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    out = _pack(tmp_path, onedir, installer, "out.zip")
+
+    with zipfile.ZipFile(out, "a") as zf:
+        zf.writestr(f"{ONEDIR_PREFIX}_internal/newdir/", "")
+    problems = verify_zip_layout(out, expect_epoch=EPOCH)
+    assert any("directory entry present" in p for p in problems)
+
+
+def test_verify_rejects_a_corrupted_crc_in_a_stored_member(tmp_path):
+    # Uses an uncompressed (ZIP_STORED) member rather than a deflated one:
+    # flipping a byte inside a deflate stream usually corrupts the Huffman
+    # coding itself and raises a zlib decode error rather than exercising
+    # the CRC check. A stored member's "compressed" bytes are the raw data,
+    # so one flipped byte changes the content without breaking decoding,
+    # cleanly exercising zf.testzip()'s CRC comparison.
+    out = tmp_path / "stored.zip"
+    data = b"alpha file contents\n"
+    with zipfile.ZipFile(out, "w", allowZip64=True) as zf:
+        info = zipfile.ZipInfo(f"{ONEDIR_PREFIX}a.txt", date_time=epoch_to_dos_date_time(EPOCH))
+        info.create_system = 0
+        info.external_attr = FIXED_EXTERNAL_ATTR
+        zf.writestr(info, data, compress_type=zipfile.ZIP_STORED)
+        installer_info = zipfile.ZipInfo(INSTALLER_ARCNAME, date_time=epoch_to_dos_date_time(EPOCH))
+        installer_info.create_system = 0
+        installer_info.external_attr = FIXED_EXTERNAL_ATTR
+        zf.writestr(installer_info, b"installer bytes", compress_type=zipfile.ZIP_STORED)
+
+    with zipfile.ZipFile(out) as zf:
+        offset = zf.getinfo(f"{ONEDIR_PREFIX}a.txt").header_offset
+
+    raw = bytearray(out.read_bytes())
+    # Local file header: signature(4) version(2) flags(2) method(2) time(2)
+    # date(2) crc(4) compsize(4) uncompsize(4) namelen(2) extralen(2) = 30
+    # bytes, then the filename, then the extra field, then the (stored, so
+    # uncompressed) data. Flip one data byte without touching any header
+    # field -- CRC checking (zf.testzip(), run by verify_zip_layout) must
+    # then fail, while the archive otherwise stays readable.
+    name_len = struct.unpack_from("<H", raw, offset + 26)[0]
+    extra_len = struct.unpack_from("<H", raw, offset + 28)[0]
+    data_start = offset + 30 + name_len + extra_len
+    raw[data_start] ^= 0xFF
+    out.write_bytes(bytes(raw))
+
+    problems = verify_zip_layout(out, expect_epoch=EPOCH)
+    assert any("CRC" in p for p in problems)
+
+
+def test_compare_tree_rejects_an_extra_file_not_in_the_inventory(tmp_path):
+    onedir = _make_onedir(tmp_path)
+    (onedir / "unexpected.txt").write_bytes(b"surprise")
+
+    inventory = tmp_path / "ship-set-inventory.txt"
+    _write_inventory(inventory, [
+        "version=5.2.0 commit=deadbeefcafe",
+        "a.txt\t20",
+        "_internal/b.bin\t256",
+        "_internal/nested/c.dat\t1000",
+    ])
+    problems = compare_tree_to_inventory(onedir, inventory)
+    assert any("not in inventory" in p and "unexpected.txt" in p for p in problems)
+
+
+def test_compresslevel_is_exactly_9_not_a_lower_level():
+    """Chosen data where zlib level 6 and level 9 raw-deflate outputs
+    differ in length, so a mutant that lowers compresslevel to 6 (or any
+    other non-9 value) is actually caught -- a level-insensitive payload
+    would let that mutant through silently."""
+    import zlib
+
+    data = b"".join(
+        f"line-{i % 50:04d}-padding-xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n".encode()
+        for i in range(3000)
+    )
+    level6 = zlib.compressobj(6, zlib.DEFLATED, -15)
+    out6 = level6.compress(data) + level6.flush()
+    level9 = zlib.compressobj(9, zlib.DEFLATED, -15)
+    out9 = level9.compress(data) + level9.flush()
+    assert out6 != out9, "test data is not compresslevel-sensitive; pick different data"
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        onedir = tmp_path / "OrbitRxMonitor"
+        onedir.mkdir()
+        (onedir / "level-sensitive.bin").write_bytes(data)
+        installer = tmp_path / "OrbitRxMonitor-Setup.exe"
+        installer.write_bytes(b"installer bytes\x00" * 4)
+        out = tmp_path / "out.zip"
+        build_deterministic_zip(onedir, installer, out, EPOCH)
+        with zipfile.ZipFile(out) as zf:
+            info = zf.getinfo(f"{ONEDIR_PREFIX}level-sensitive.bin")
+            assert zf.read(info.filename) == data
+            # Compare the raw compressed bytes (not the decompressed content)
+            # against a from-scratch level 9 compression of the same data.
+            offset = info.header_offset
+            raw = out.read_bytes()
+            name_len = struct.unpack_from("<H", raw, offset + 26)[0]
+            extra_len = struct.unpack_from("<H", raw, offset + 28)[0]
+            data_start = offset + 30 + name_len + extra_len
+            comp_bytes = raw[data_start:data_start + info.compress_size]
+    assert comp_bytes == out9
+    assert comp_bytes != out6
