@@ -20,14 +20,35 @@ before anything is uploaded.
 ## Prerequisites
 
 1. Your own personal PC only. Not employer equipment, not over a VPN, not
-   inside a remote session (L1). The script also runs a best-effort check
-   with `dsregcmd /status` (if present) and refuses to continue if the
-   machine reports as domain-joined, Azure AD-joined, Intune/MDM
-   ("Enterprise") joined, **or "workplace joined"** -- any one of those four
-   means this PC has a work/school account or is otherwise managed, which
-   fails L1 regardless of who owns the hardware. The script stops with a
-   message telling you to tell Risk; this heuristic is not a substitute for
-   actually knowing whose PC this is.
+   inside a remote session (L1). Confirm **Settings > Accounts > Access work
+   or school is empty** before you start.
+
+   The script also runs a mandatory check with `dsregcmd /status` and
+   refuses (`BUILD FAILED`, exit 1, ending "Stop and tell Risk.") if:
+   - **any** of DomainJoined, AzureAdJoined, Intune/MDM ("Enterprise")
+     joined, or "workplace joined" reads YES anywhere in the output -- a
+     duplicate YES counts; there is no "last value wins";
+   - `dsregcmd` exits non-zero, or its output is empty;
+   - fewer than all 4 of those values can be read, or any of them is
+     anything other than exactly YES or NO (for example `YES (Contoso)` or a
+     localised word) -- that reads as UNVERIFIED, and UNVERIFIED means
+     refuse;
+   - `dsregcmd` itself is missing. It ships in `System32` on Windows 10 and
+     11, so that is itself abnormal.
+
+   This check cannot be bypassed, downgraded or skipped by any switch,
+   parameter, environment variable or config file -- `-AttestPersonalKit` is
+   an attestation required **in addition** to this check, never a substitute
+   for it. The provenance record keeps only the 4 YES/NO values (never the
+   device ID, tenant name or tenant ID), and a refusal names only the
+   flag(s) or the reason, never any tenant/device detail.
+
+   **If it refuses on a PC you believe is personal** -- for example because
+   a work account was added just for Teams or Outlook -- **stop and tell
+   Risk**. Do not disconnect accounts, remove a work profile, or edit
+   anything just to get past the check. Risk decides whether that PC can be
+   used; this heuristic is not a substitute for actually knowing whose PC
+   this is.
 2. **PowerShell 7.4 or later (`pwsh`).** This script requires it (`#Requires
    -Version 7.4`, plus its own inline check -- both compare the full
    version, so 7.0-7.3 refuse with the same clear message as Windows

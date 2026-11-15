@@ -275,22 +275,53 @@ $dsregcmdDomainJoined = 'not available'
 $dsregcmdAzureAdJoined = 'not available'
 $dsregcmdEnterpriseJoined = 'not available'
 $dsregcmdWorkplaceJoined = 'not available'
-if (Get-Command dsregcmd -ErrorAction SilentlyContinue) {
+# region managed-device-check
+# Risk R3 Ruling 2 (L-B), in full. Refuses (BUILD FAILED, exit 1, "Stop and
+# tell Risk.") when:
+#   1. any of the 4 flags reads YES anywhere (ConvertFrom-DsregcmdStatus /
+#      Test-ManagedDeviceStatus: duplicates count, no "last value wins");
+#   2. dsregcmd exits non-zero, or its output is empty (checked here);
+#   3. fewer than all 4 keys parse (Test-ManagedDeviceStatus);
+#   4. any of the 4 values is anything other than exactly YES or NO, e.g.
+#      "YES (Contoso)" or a localised word -- UNVERIFIED, which refuses
+#      (ConvertFrom-DsregcmdStatus / Test-ManagedDeviceStatus);
+#   5. dsregcmd is missing on this Windows PC (checked here). It ships in
+#      System32 on Windows 10/11, so its absence here is itself abnormal.
+#      "Missing, so skip" is allowed only when -not $IsWindows, for the
+#      test harness; a real build cannot run there anyway.
+# No override: no switch, parameter, environment variable or config
+# anywhere bypasses or downgrades this check. -AttestPersonalKit
+# (Assert-PersonalKitAttested, above) is a required attestation in
+# addition to this check, never a substitute for it.
+$dsregcmdCommand = Get-Command dsregcmd -ErrorAction SilentlyContinue
+if (-not $dsregcmdCommand) {
+    if ($IsWindows) {
+        throw "MANAGED-DEVICE-CHECK: dsregcmd is missing on this Windows PC, which is itself abnormal. L1 requires a verified personal-kit check. Stop and tell Risk."
+    }
+    Write-Host "MANAGED-DEVICE-CHECK: dsregcmd not available, skipping (only allowed off Windows, for the test harness; recorded as 'not available' in provenance)"
+}
+else {
     $dsregLines = @(& dsregcmd /status)
+    $dsregExitCode = $LASTEXITCODE
+    $dsregHasOutput = (@($dsregLines | Where-Object { $_ -and "$_".Trim() -ne '' })).Count -gt 0
+    if ($dsregExitCode -ne 0) {
+        throw "MANAGED-DEVICE-CHECK: UNVERIFIED (dsregcmd exited with code $dsregExitCode). L1 requires a verified personal-kit check. Stop and tell Risk."
+    }
+    if (-not $dsregHasOutput) {
+        throw "MANAGED-DEVICE-CHECK: UNVERIFIED (dsregcmd produced no output). L1 requires a verified personal-kit check. Stop and tell Risk."
+    }
     $dsregFlags = ConvertFrom-DsregcmdStatus -Lines $dsregLines
-    if ($dsregFlags.ContainsKey('DomainJoined')) { $dsregcmdDomainJoined = $dsregFlags['DomainJoined'] }
-    if ($dsregFlags.ContainsKey('AzureAdJoined')) { $dsregcmdAzureAdJoined = $dsregFlags['AzureAdJoined'] }
-    if ($dsregFlags.ContainsKey('EnterpriseJoined')) { $dsregcmdEnterpriseJoined = $dsregFlags['EnterpriseJoined'] }
-    if ($dsregFlags.ContainsKey('WorkplaceJoined')) { $dsregcmdWorkplaceJoined = $dsregFlags['WorkplaceJoined'] }
     $managedStatus = Test-ManagedDeviceStatus -Flags $dsregFlags
     if ($managedStatus.Refuse) {
         throw $managedStatus.Message
     }
+    $dsregcmdDomainJoined = $dsregFlags['DomainJoined']
+    $dsregcmdAzureAdJoined = $dsregFlags['AzureAdJoined']
+    $dsregcmdEnterpriseJoined = $dsregFlags['EnterpriseJoined']
+    $dsregcmdWorkplaceJoined = $dsregFlags['WorkplaceJoined']
     Write-Host "MANAGED-DEVICE-CHECK: PASS (DomainJoined=$dsregcmdDomainJoined AzureAdJoined=$dsregcmdAzureAdJoined EnterpriseJoined=$dsregcmdEnterpriseJoined WorkplaceJoined=$dsregcmdWorkplaceJoined)"
 }
-else {
-    Write-Host "MANAGED-DEVICE-CHECK: dsregcmd not available, skipping (recorded as 'not available' in provenance)"
-}
+# endregion managed-device-check
 
 $ExpectedSha = Assert-ValidExpectedSha -Sha $ExpectedSha
 

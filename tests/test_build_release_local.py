@@ -176,6 +176,53 @@ def test_n9_managed_device_heuristic_via_dsregcmd():
     assert "not available" in SCRIPT
     # The main script must not capture or print anything else from dsregcmd.
     assert "tenant" not in SCRIPT.lower()
+    assert "DeviceId" not in SCRIPT
+    assert "TenantId" not in SCRIPT
+    assert "TenantName" not in SCRIPT
+
+
+def test_l_b_managed_device_check_region_exists_and_covers_ruling_2():
+    # Risk R3 Ruling 2 / L-B, in full: the call site must refuse on a
+    # non-zero dsregcmd exit code, empty output, and dsregcmd missing on
+    # Windows -- not just on a parsed YES (that part pre-dates this round).
+    assert "# region managed-device-check" in SCRIPT
+    assert "# endregion managed-device-check" in SCRIPT
+    region = SCRIPT.split("# region managed-device-check", 1)[1].split("# endregion managed-device-check", 1)[0]
+    assert "$IsWindows" in region
+    assert "UNVERIFIED" in region
+    assert "$LASTEXITCODE" in region
+    assert "Stop and tell Risk" in region
+
+
+def test_l_b_no_override_switch_or_env_var_bypasses_the_managed_device_check():
+    # Risk R3 Ruling 2: no switch, parameter, environment variable or config
+    # may bypass or downgrade the check; -AttestPersonalKit stays required
+    # in addition to it, never a substitute.
+    region = SCRIPT.split("# region managed-device-check", 1)[1].split("# endregion managed-device-check", 1)[0]
+    lowered = region.lower()
+    for forbidden in ("skipmanageddevicecheck", "skip-managed-device", "ignoremanageddevice", "bypassmanageddevice"):
+        assert forbidden not in lowered
+    assert "-AttestPersonalKit" in SCRIPT
+    assert "Assert-PersonalKitAttested" in SCRIPT
+
+
+def test_l_b_duplicate_yes_cannot_be_overwritten_by_a_later_no():
+    # The core L-B fail-open bug: ConvertFrom-DsregcmdStatus must not let a
+    # later clean line for the same key erase an earlier YES ("last value
+    # wins"). The fix keeps a YES sticky once seen.
+    fn = HELPERS.split("function ConvertFrom-DsregcmdStatus", 1)[1].split("\nfunction ", 1)[0]
+    assert "-ne 'YES'" in fn or "-ne \"YES\"" in fn
+
+
+def test_build_release_md_managed_device_wording_matches_ruling_2():
+    assert "Access work or school is empty" in BUILD_RELEASE_MD_FLAT
+    assert "a duplicate YES counts" in BUILD_RELEASE_MD_FLAT
+    assert "exits non-zero, or its output is empty" in BUILD_RELEASE_MD_FLAT
+    assert "UNVERIFIED" in BUILD_RELEASE_MD
+    assert "cannot be bypassed, downgraded or skipped" in BUILD_RELEASE_MD_FLAT
+    assert "Stop and tell Risk" in BUILD_RELEASE_MD_FLAT or "stop and tell Risk" in BUILD_RELEASE_MD_FLAT
+    assert "Do not disconnect accounts" in BUILD_RELEASE_MD_FLAT
+    assert "never the device ID, tenant name or tenant ID" in BUILD_RELEASE_MD_FLAT
 
 
 def test_never_contacts_the_network_or_publishes():

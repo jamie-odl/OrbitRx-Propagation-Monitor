@@ -805,6 +805,310 @@ def test_managed_device_status_is_clean_when_nothing_is_joined():
     assert "False|refuse-msg=" in result.stdout
 
 
+# --- L-B (Risk R3 Ruling 2): ConvertFrom-DsregcmdStatus parsing robustness,
+# and Test-ManagedDeviceStatus's UNVERIFIED-means-refuse rules 3/4. ----------
+
+
+def test_convert_from_dsregcmd_status_is_case_insensitive_and_whitespace_tolerant():
+    lines = [
+        "azureadjoined:yes",
+        "\tenterprisejoined\t:\tno\t",
+        "   DOMAINJOINED   :   NO   ",
+        "WorkPlaceJoined : no",
+    ]
+    ps_array = "@(" + ",".join(f"'{line}'" for line in lines) + ")"
+    result = run_helper(
+        f"$f = ConvertFrom-DsregcmdStatus -Lines {ps_array}; "
+        "Write-Host \"$($f['AzureAdJoined'])|$($f['EnterpriseJoined'])|$($f['DomainJoined'])|$($f['WorkplaceJoined'])\""
+    )
+    assert result.returncode == 0, result.stderr
+    assert "YES|NO|NO|NO" in result.stdout
+
+
+def test_convert_from_dsregcmd_status_tolerates_a_trailing_cr():
+    # A line that still carries a trailing \r (e.g. CRLF output that was not
+    # cleanly pre-split) must still parse, not be dropped as "no match".
+    line = "WorkplaceJoined : YES\r"
+    result = run_helper(f"$f = ConvertFrom-DsregcmdStatus -Lines @('{line}'); Write-Host \"$($f['WorkplaceJoined'])\"")
+    assert result.returncode == 0, result.stderr
+    assert "YES" in result.stdout.strip().splitlines()[-1]
+
+
+def test_convert_from_dsregcmd_status_a_duplicate_yes_cannot_be_overwritten_by_a_later_no():
+    # The core L-B bug: the old implementation let whichever line for a key
+    # came last win, so "YES" then "NO" silently became "NO". That must no
+    # longer happen in either order.
+    result_yes_then_no = run_helper(
+        "$f = ConvertFrom-DsregcmdStatus -Lines @('WorkplaceJoined : YES', 'WorkplaceJoined : NO'); "
+        "Write-Host \"$($f['WorkplaceJoined'])\""
+    )
+    assert result_yes_then_no.returncode == 0, result_yes_then_no.stderr
+    assert result_yes_then_no.stdout.strip().splitlines()[-1] == "YES"
+
+    result_no_then_yes = run_helper(
+        "$f = ConvertFrom-DsregcmdStatus -Lines @('WorkplaceJoined : NO', 'WorkplaceJoined : YES'); "
+        "Write-Host \"$($f['WorkplaceJoined'])\""
+    )
+    assert result_no_then_yes.returncode == 0, result_no_then_yes.stderr
+    assert result_no_then_yes.stdout.strip().splitlines()[-1] == "YES"
+
+
+def test_convert_from_dsregcmd_status_marks_a_non_yes_no_value_unverified():
+    result = run_helper(
+        "$f = ConvertFrom-DsregcmdStatus -Lines @('WorkplaceJoined : YES (Contoso)'); "
+        "Write-Host \"$($f['WorkplaceJoined'])\""
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines()[-1] == "UNVERIFIED"
+
+
+def test_convert_from_dsregcmd_status_unverified_value_is_sticky_against_a_later_clean_no():
+    result = run_helper(
+        "$f = ConvertFrom-DsregcmdStatus -Lines @('WorkplaceJoined : JA', 'WorkplaceJoined : NO'); "
+        "Write-Host \"$($f['WorkplaceJoined'])\""
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip().splitlines()[-1] == "UNVERIFIED"
+
+
+def test_convert_from_dsregcmd_status_a_key_that_never_appears_is_left_out():
+    # "Workplace Joined" (a space in the key) must not match -- the key
+    # stays entirely absent, which Test-ManagedDeviceStatus treats as
+    # "fewer than all 4 keys parsed" (refuse), not as a silent default.
+    result = run_helper(
+        "$f = ConvertFrom-DsregcmdStatus -Lines @('Workplace Joined : YES'); "
+        "Write-Host \"ContainsKey=$($f.ContainsKey('WorkplaceJoined'))\""
+    )
+    assert result.returncode == 0, result.stderr
+    assert "ContainsKey=False" in result.stdout
+
+
+def test_managed_device_status_refuses_as_unverified_when_a_key_is_missing():
+    result = run_helper(
+        "$f = @{ DomainJoined = 'NO'; AzureAdJoined = 'NO'; EnterpriseJoined = 'NO' }; "  # WorkplaceJoined absent
+        "$r = Test-ManagedDeviceStatus -Flags $f; "
+        "Write-Host \"$($r.Refuse)|$($r.Message)\""
+    )
+    assert result.returncode == 0, result.stderr
+    assert "True|" in result.stdout
+    assert "UNVERIFIED" in result.stdout
+    assert "WorkplaceJoined" in result.stdout
+    # Must not be worded as the YES/"work-school account" refusal.
+    assert "= YES" not in result.stdout
+
+
+def test_managed_device_status_refuses_as_unverified_for_a_garbled_value():
+    result = run_helper(
+        "$f = @{ DomainJoined = 'NO'; AzureAdJoined = 'NO'; EnterpriseJoined = 'NO'; WorkplaceJoined = 'UNVERIFIED' }; "
+        "$r = Test-ManagedDeviceStatus -Flags $f; "
+        "Write-Host \"$($r.Refuse)|$($r.Message)\""
+    )
+    assert result.returncode == 0, result.stderr
+    assert "True|" in result.stdout
+    assert "UNVERIFIED" in result.stdout
+    assert "WorkplaceJoined" in result.stdout
+
+
+def test_managed_device_status_yes_takes_priority_in_the_message_over_unverified():
+    result = run_helper(
+        "$f = @{ DomainJoined = 'YES'; AzureAdJoined = 'NO'; EnterpriseJoined = 'NO'; WorkplaceJoined = 'UNVERIFIED' }; "
+        "$r = Test-ManagedDeviceStatus -Flags $f; "
+        "Write-Host \"$($r.Refuse)|$($r.Message)\""
+    )
+    assert result.returncode == 0, result.stderr
+    assert "True|" in result.stdout
+    assert "DomainJoined" in result.stdout
+    assert "= YES" in result.stdout
+
+
+# --- L-B: the real "managed-device-check" call site in the main script,
+# with a mocked dsregcmd (a PowerShell function, which Get-Command resolves
+# ahead of any real dsregcmd.exe on PATH) and $IsWindows faked via
+# Set-Variable (it is ReadOnly but not Constant, unlike $PSVersionTable, so
+# it can be overridden directly -- no textual rename trick needed). --------
+
+
+def _dsregcmd_mock(lines=None, exit_code=0):
+    lines = lines or []
+    writes = "\n".join(f"    Write-Output '{line}'" for line in lines)
+    return "function dsregcmd {\n" + (writes + "\n" if writes else "") + f"    $global:LASTEXITCODE = {exit_code}\n" + "}\n"
+
+
+def _run_managed_device_check_region(is_windows, mock=None, clear_path=False):
+    region_text = _extract_region_text("managed-device-check")
+    harness = (
+        f". '{HELPERS}'\n"
+        f"Set-Variable -Name IsWindows -Value ${'true' if is_windows else 'false'} -Force\n"
+        + ("$env:PATH = ''\n" if clear_path else "")
+        + (mock + "\n" if mock else "")
+        + "$dsregcmdDomainJoined = 'not available'\n"
+        "$dsregcmdAzureAdJoined = 'not available'\n"
+        "$dsregcmdEnterpriseJoined = 'not available'\n"
+        "$dsregcmdWorkplaceJoined = 'not available'\n"
+        "try {\n"
+        f"{region_text}\n"
+        "    Write-Host 'REGION-COMPLETED-OK'\n"
+        "} catch {\n"
+        "    Write-Host \"REGION-THREW: $($_.Exception.Message)\"\n"
+        "    exit 1\n"
+        "}\n"
+    )
+    return run_pwsh(harness)
+
+
+_ALL_NO = ["DomainJoined : NO", "AzureAdJoined : NO", "EnterpriseJoined : NO", "WorkplaceJoined : NO"]
+
+
+@pytest.mark.parametrize("flag", ["DomainJoined", "AzureAdJoined", "EnterpriseJoined", "WorkplaceJoined"])
+def test_managed_device_check_region_refuses_on_yes_for_each_flag(flag):
+    lines = [f"{name} : {'YES' if name == flag else 'NO'}" for name in
+             ("DomainJoined", "AzureAdJoined", "EnterpriseJoined", "WorkplaceJoined")]
+    result = _run_managed_device_check_region(True, _dsregcmd_mock(lines))
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    assert flag in text
+    assert "Stop and tell Risk" in text
+
+
+def test_managed_device_check_region_refuses_on_nonzero_exit():
+    result = _run_managed_device_check_region(True, _dsregcmd_mock(_ALL_NO, exit_code=1))
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    assert "UNVERIFIED" in text
+    assert "exited with code 1" in text
+    assert "Stop and tell Risk" in text
+
+
+def test_managed_device_check_region_refuses_on_empty_output():
+    result = _run_managed_device_check_region(True, _dsregcmd_mock([]))
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    assert "UNVERIFIED" in text
+    assert "no output" in text
+    assert "Stop and tell Risk" in text
+
+
+def test_managed_device_check_region_refuses_when_fewer_than_four_keys_parse():
+    result = _run_managed_device_check_region(True, _dsregcmd_mock(_ALL_NO[:3]))  # WorkplaceJoined missing
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    assert "UNVERIFIED" in text
+    assert "WorkplaceJoined" in text
+    assert "Stop and tell Risk" in text
+
+
+def test_managed_device_check_region_refuses_on_a_non_yes_no_value():
+    lines = ["DomainJoined : NO", "AzureAdJoined : NO", "EnterpriseJoined : NO", "WorkplaceJoined : YES (Contoso)"]
+    result = _run_managed_device_check_region(True, _dsregcmd_mock(lines))
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    assert "UNVERIFIED" in text
+    assert "WorkplaceJoined" in text
+    assert "Contoso" not in text
+    assert "Stop and tell Risk" in text
+
+
+def test_managed_device_check_region_refuses_on_a_duplicate_yes_then_no():
+    lines = ["WorkplaceJoined : YES", "DomainJoined : NO", "AzureAdJoined : NO",
+             "EnterpriseJoined : NO", "WorkplaceJoined : NO"]
+    result = _run_managed_device_check_region(True, _dsregcmd_mock(lines))
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    assert "WorkplaceJoined" in text
+    assert "Stop and tell Risk" in text
+
+
+def test_managed_device_check_region_refuses_on_a_case_variant_yes():
+    lines = ["domainjoined : no", "azureadjoined : no", "enterprisejoined : no", "workplacejoined : yes"]
+    result = _run_managed_device_check_region(True, _dsregcmd_mock(lines))
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    assert "WorkplaceJoined" in text
+    assert "Stop and tell Risk" in text
+
+
+def test_managed_device_check_region_tolerates_tabs_and_crlf_but_still_refuses_on_yes():
+    lines = ["DomainJoined\t:\tNO", "AzureAdJoined : NO\r", "   EnterpriseJoined   :   NO   ", "WorkplaceJoined:YES\r"]
+    result = _run_managed_device_check_region(True, _dsregcmd_mock(lines))
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    assert "WorkplaceJoined" in text
+    assert "Stop and tell Risk" in text
+
+
+def test_managed_device_check_region_tolerates_tabs_and_crlf_and_passes_on_all_no():
+    lines = ["DomainJoined\t:\tNO", "AzureAdJoined : NO\r", "   EnterpriseJoined   :   NO   ", "WorkplaceJoined:NO\r"]
+    result = _run_managed_device_check_region(True, _dsregcmd_mock(lines))
+    text = combined_text(result)
+    assert result.returncode == 0, text
+    assert "REGION-COMPLETED-OK" in result.stdout
+    assert "MANAGED-DEVICE-CHECK: PASS" in text
+
+
+def test_managed_device_check_region_refuses_when_dsregcmd_missing_on_windows():
+    result = _run_managed_device_check_region(True, mock=None, clear_path=True)
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    assert "dsregcmd is missing" in text
+    assert "Stop and tell Risk" in text
+
+
+def test_managed_device_check_region_skips_when_dsregcmd_missing_off_windows():
+    result = _run_managed_device_check_region(False, mock=None, clear_path=True)
+    text = combined_text(result)
+    assert result.returncode == 0, text
+    assert "REGION-COMPLETED-OK" in result.stdout
+    assert "not available" in text
+
+
+def test_managed_device_check_region_passes_when_all_four_are_no():
+    result = _run_managed_device_check_region(True, _dsregcmd_mock(_ALL_NO))
+    text = combined_text(result)
+    assert result.returncode == 0, text
+    assert "REGION-COMPLETED-OK" in result.stdout
+    assert "MANAGED-DEVICE-CHECK: PASS" in text
+    assert "DomainJoined=NO" in text
+    assert "AzureAdJoined=NO" in text
+    assert "EnterpriseJoined=NO" in text
+    assert "WorkplaceJoined=NO" in text
+
+
+@pytest.mark.parametrize("joined_flag", [None, "WorkplaceJoined"])
+def test_managed_device_check_region_output_never_contains_tenant_or_device_data(joined_flag):
+    tenant_id = "11111111-2222-3333-4444-555555555555"
+    device_id = "66666666-7777-8888-9999-000000000000"
+    tenant_name = "Example-Tenant-Name"
+    lines = [
+        f"TenantId : {tenant_id}",
+        f"TenantName : {tenant_name}",
+        f"DeviceId : {device_id}",
+        f"DomainJoined : {'YES' if joined_flag == 'DomainJoined' else 'NO'}",
+        "AzureAdJoined : NO",
+        "EnterpriseJoined : NO",
+        f"WorkplaceJoined : {'YES' if joined_flag == 'WorkplaceJoined' else 'NO'}",
+    ]
+    result = _run_managed_device_check_region(True, _dsregcmd_mock(lines))
+    text = combined_text(result)
+    if joined_flag is None:
+        assert result.returncode == 0, text
+        assert "MANAGED-DEVICE-CHECK: PASS" in text
+    else:
+        assert result.returncode != 0, text
+        assert "Stop and tell Risk" in text
+    assert tenant_id not in text
+    assert device_id not in text
+    assert tenant_name not in text
+
+
 # --- NEW-5/I-1: PowerShell version gate, floor 7.4 (full version, not just
 # major) -----------------------------------------------------------------
 

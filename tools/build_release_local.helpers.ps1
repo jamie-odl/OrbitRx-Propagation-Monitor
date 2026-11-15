@@ -382,33 +382,86 @@ function Test-PublisherVersionInfo {
     return $problems
 }
 
-# --- Employer/managed-device heuristic (N9) ----------------------------------
+# --- Employer/managed-device heuristic (N9, Risk R3 Ruling 2 / L-B) ---------
 
 function ConvertFrom-DsregcmdStatus {
     param([string[]]$Lines)
-    $flags = @{}
-    foreach ($line in $Lines) {
-        if ($line -match '^\s*(?<name>AzureAdJoined|EnterpriseJoined|DomainJoined|WorkplaceJoined)\s*:\s*(?<value>YES|NO)\s*$') {
-            $flags[$Matches['name']] = $Matches['value']
+    # Returns a hashtable of canonical key name -> 'YES' / 'NO' / 'UNVERIFIED'.
+    # A key with no occurrences anywhere in $Lines is left out of the
+    # hashtable entirely -- Test-ManagedDeviceStatus treats a missing key
+    # the same as an UNVERIFIED one (fewer than all 4 keys parsed).
+    #
+    # Both failure modes are sticky across repeated/duplicate lines for the
+    # same key, so a later line can never quietly clear an earlier one:
+    #   - once a key sees an exact 'YES' (case-insensitive, trimmed), it
+    #     stays 'YES' no matter what later lines for that key say -- the
+    #     old "last value wins" behaviour let a later 'NO' line erase an
+    #     earlier 'YES', which is exactly the fail-open bug L-B closes.
+    #   - once a key sees a value that is anything other than exactly YES
+    #     or NO (tabs/whitespace tolerated, but e.g. 'YES (Contoso)' or a
+    #     localised word do not count), it is pinned to 'UNVERIFIED' and a
+    #     later clean 'NO' line cannot clear that either.
+    # Key matching is case-insensitive (PowerShell's -match already is) and
+    # tolerant of tabs/CRLF (`\s` in the key/value pattern, plus an
+    # explicit `\r` strip below for lines that arrive as a single
+    # CRLF-joined blob rather than a pre-split array).
+    $canonicalNames = @('WorkplaceJoined', 'AzureAdJoined', 'DomainJoined', 'EnterpriseJoined')
+    $resolved = @{}
+    foreach ($rawLine in $Lines) {
+        $line = "$rawLine" -replace "`r", ''
+        if ($line -match '^\s*(?<name>WorkplaceJoined|AzureAdJoined|DomainJoined|EnterpriseJoined)\s*:\s*(?<value>.*?)\s*$') {
+            $canonicalName = $canonicalNames | Where-Object { $_ -ieq $Matches['name'] } | Select-Object -First 1
+            $value = $Matches['value'].Trim()
+            if ($value -ieq 'YES') {
+                $resolved[$canonicalName] = 'YES'
+            }
+            elseif ($resolved[$canonicalName] -ne 'YES') {
+                if ($value -ieq 'NO') {
+                    if ($resolved[$canonicalName] -ne 'UNVERIFIED') {
+                        $resolved[$canonicalName] = 'NO'
+                    }
+                }
+                else {
+                    $resolved[$canonicalName] = 'UNVERIFIED'
+                }
+            }
         }
     }
-    return $flags
+    return $resolved
 }
 
 function Test-ManagedDeviceStatus {
     param([hashtable]$Flags)
     # Returns @{ Refuse = $bool; Message = ... (or $null) }
-    # Risk round R-a: WorkplaceJoined=YES used to only warn; it now refuses
-    # like the other three flags -- a workplace/school account on this PC
-    # means it is not a personal kit, full stop.
+    # Risk R3 Ruling 2 (L-B): refuse (UNVERIFIED means refuse) when any of
+    # the 4 flags is YES anywhere (rule 1, checked first and named
+    # specifically), or when fewer than all 4 keys parsed to exactly YES or
+    # NO (rules 3/4 -- ConvertFrom-DsregcmdStatus already turns a garbled
+    # value into 'UNVERIFIED', and a key missing from $Flags entirely reads
+    # as $null here, which is neither 'YES' nor 'NO'). Rules 2 (non-zero
+    # exit / empty output) and 5 (dsregcmd missing on Windows) are checked
+    # by the call site before this function is even reached.
+    # WorkplaceJoined is included because a work/school account on this PC
+    # fails L1, whoever owns the hardware.
+    # No override: no switch, parameter, environment variable or config
+    # anywhere in this script bypasses or downgrades this function's
+    # verdict; -AttestPersonalKit (Assert-PersonalKitAttested) is a
+    # required attestation in addition to this check, never a substitute.
     $joinKeys = @('DomainJoined', 'AzureAdJoined', 'EnterpriseJoined', 'WorkplaceJoined')
-    $joined = @($joinKeys | Where-Object { $Flags.ContainsKey($_) -and $Flags[$_] -eq 'YES' })
+    $yesKeys = @($joinKeys | Where-Object { $Flags[$_] -eq 'YES' })
+    $unverifiedKeys = @($joinKeys | Where-Object { $Flags[$_] -ne 'YES' -and $Flags[$_] -ne 'NO' })
     $result = [PSCustomObject]@{
-        Refuse  = $joined.Count -gt 0
+        Refuse  = ($yesKeys.Count -gt 0) -or ($unverifiedKeys.Count -gt 0)
         Message = $null
     }
-    if ($result.Refuse) {
-        $result.Message = "This PC has a work/school account or is managed ($($joined -join ', ') = YES). L1 requires personal kit. Stop and tell Risk."
+    if ($yesKeys.Count -gt 0) {
+        # Recording (Ruling 2): name only the flag(s), never DeviceId/
+        # TenantName/TenantId -- $Flags only ever holds 'YES'/'NO'/
+        # 'UNVERIFIED' for these 4 keys, so there is nothing else to leak.
+        $result.Message = "This PC has a work/school account or is managed ($($yesKeys -join ', ') = YES). L1 requires personal kit. Stop and tell Risk."
+    }
+    elseif ($unverifiedKeys.Count -gt 0) {
+        $result.Message = "MANAGED-DEVICE-CHECK: UNVERIFIED ($($unverifiedKeys -join ', ') could not be read as exactly YES or NO). L1 requires a verified personal-kit check. Stop and tell Risk."
     }
     return $result
 }
