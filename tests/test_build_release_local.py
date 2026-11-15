@@ -965,4 +965,128 @@ def test_build_release_md_documents_the_new_empty_buildroot_requirement():
 def test_build_release_md_documents_tool_caches_under_buildroot():
     assert "PIP_CACHE_DIR" in BUILD_RELEASE_MD
     assert "PYINSTALLER_CONFIG_DIR" in BUILD_RELEASE_MD
+
+
+# --- Risk R3 Ruling 1, condition B3-c (risk-r3.md section 3/5; qa-9a817f1.md
+# L-E/M6/M7): the TESTS gate's exact pytest arguments, the network-scope
+# check, the pytest-summary self-check, -CiRunId, and the provenance line. --
+
+
+def test_ci_run_id_parameter_is_required_and_digits_only():
+    assert "[ValidatePattern('^[0-9]+$')]" in SCRIPT
+    param_block = SCRIPT.split("param(", 1)[1].split(")\n\n", 1)[0]
+    assert "[string]$CiRunId" in param_block
+    assert "-CiRunId is required" in SCRIPT
+    # Like -PythonInstaller, no default value -- the script's own check
+    # (not just the pattern) is what refuses an omitted value.
+    assert "[string]$CiRunId = " not in SCRIPT
+
+
+def test_ci_run_id_check_runs_after_ci_inventory_checks_but_before_build_work():
+    ci_inventory_check_pos = SCRIPT.index("-CiInventory file not found")
+    ci_run_id_check_pos = SCRIPT.index("-CiRunId is required")
+    n4_guards_pos = SCRIPT.index("# --- N4:")
+    assert ci_inventory_check_pos < ci_run_id_check_pos < n4_guards_pos
+
+
+def test_tests_gate_region_exists_and_is_well_formed():
+    assert "# region tests-gate" in SCRIPT
+    assert "# endregion tests-gate" in SCRIPT
+    region = SCRIPT.split("# region tests-gate", 1)[1].split("# endregion tests-gate", 1)[0]
+    assert "Push-Location $repoRoot" in region
+    assert "Pop-Location" in region
+
+
+def test_tests_gate_uses_the_exact_reviewed_pytest_arguments():
+    region = SCRIPT.split("# region tests-gate", 1)[1].split("# endregion tests-gate", 1)[0]
+    # B3-c: --collect-only scope check, with --strict-markers.
+    assert "'-m', 'pytest', '--collect-only', '-q', '-m', 'network', '--strict-markers'" in region
+    # B3-c: the gate itself, with --strict-markers added (it was missing
+    # before this fix) -- this is also the exact substring
+    # test_local_tests_gate_excludes_network_marked_tests (below) depends on.
+    assert "'-m', 'pytest', '-q', '-m', 'not network', '--strict-markers'" in region
+
+
+def test_tests_gate_checks_the_network_scope_before_running_the_gate():
+    region = SCRIPT.split("# region tests-gate", 1)[1].split("# endregion tests-gate", 1)[0]
+    assert region.index("Assert-ExactlyOneNetworkTestCollected") < region.index("$pytestArgs = @(")
+
+
+def test_tests_gate_wraps_the_collected_ids_call_to_avoid_the_empty_array_to_null_bug():
+    # The exact mutant class this guards: PowerShell collapses a function's
+    # empty-array return to $null across the call boundary, which would
+    # turn "zero network tests collected" into "one blank id collected"
+    # inside Assert-ExactlyOneNetworkTestCollected instead of refusing with
+    # a clear message (see Invoke-PublisherCheck's own "@(...)" comment for
+    # the same class of bug elsewhere in this script).
+    region = SCRIPT.split("# region tests-gate", 1)[1].split("# endregion tests-gate", 1)[0]
+    assert "@(Get-PytestCollectedTestIds -Lines $networkCollectLines)" in region
+
+
+def test_tests_gate_refuses_on_a_nonzero_pytest_exit_code_and_on_a_dirty_summary():
+    region = SCRIPT.split("# region tests-gate", 1)[1].split("# endregion tests-gate", 1)[0]
+    assert "if ($pytestExitCode -ne 0)" in region
+    assert "Assert-PytestGateSummaryClean -Counts $pytestCounts" in region
+
+
+def test_tests_gate_pytest_parsing_helpers_are_defined_in_helpers():
+    for fn in (
+        "function Get-PytestCollectedTestIds",
+        "function Assert-ExactlyOneNetworkTestCollected",
+        "function Get-PytestSummaryCounts",
+        "function Assert-PytestGateSummaryClean",
+    ):
+        assert fn in HELPERS, fn
+
+
+def test_tests_gate_provenance_line_matches_risk_r3_b3c_format_exactly():
+    region = SCRIPT.split("# region tests-gate", 1)[1].split("# endregion tests-gate", 1)[0]
+    expected = (
+        '"pytest -q -m `"not network`" --strict-markers; '
+        "$($pytestCounts.Passed) passed, $($pytestCounts.Skipped) skipped, "
+        "1 deselected: tests/test_weather_fixtures.py::test_live_noaa_populates_core_fields; "
+        'CI $CiRunId at this SHA ran it: PASSED ubuntu+windows"'
+    )
+    assert expected in region
+    assert '$testsGateSummary = ' in region
+    assert 'Write-Host "TESTS: PASS ($testsGateSummary)"' in SCRIPT
+
+
+def test_provenance_gate_results_cites_the_tests_gate_summary_not_a_bare_pass():
+    provenance_section = SCRIPT.split("$provenanceLines = @(", 1)[1].split("$provenanceText =", 1)[0]
+    assert '"  TESTS: PASS ($testsGateSummary)"' in provenance_section
+    assert "'  TESTS: PASS'," not in provenance_section
+
+
+def test_build_release_md_documents_the_ci_run_id_parameter():
+    assert "-CiRunId" in BUILD_RELEASE_MD
+    step13 = BUILD_RELEASE_MD.split("\n13. ", 1)[1].split("\n14. ", 1)[0]
+    assert "-CiRunId" in step13
+    ci_run_id_section = BUILD_RELEASE_MD.split("-CiRunId", 1)[1][:400]
+    assert "the CI run id that produced" in ci_run_id_section or "CI run id that produced" in BUILD_RELEASE_MD_FLAT
+    assert "CoS" in BUILD_RELEASE_MD_FLAT or "Chief of Staff" in BUILD_RELEASE_MD_FLAT
+    assert "with the SHA" in BUILD_RELEASE_MD_FLAT
+
+
+def test_build_release_md_step14_and_17_state_the_pytest_summary_requirement():
+    step14_flat = re.sub(r"\s+", " ", BUILD_RELEASE_MD.split("\n14. ", 1)[1].split("\n15. ", 1)[0])
+    assert "0 failed" in step14_flat
+    assert "exactly 1 deselected" in step14_flat
+    step17 = BUILD_RELEASE_MD.split("\n17. ", 1)[1].split("\n18. ", 1)[0]
+    step17_flat = re.sub(r"\s+", " ", step17)
+    assert "0 failed" in step17_flat
+    assert "exactly 1 deselected" in step17_flat
+
+
+def test_build_release_md_step17_send_back_list_includes_l5_l6_result_files():
+    step17 = BUILD_RELEASE_MD.split("\n17. ", 1)[1].split("\n18. ", 1)[0]
+    send_back = step17.split("Send to QA/Risk (L10):", 1)[1]
+    for needle in (
+        "l5-pack-result.txt",
+        "l6-verify.txt",
+        "l6-compare-tree-local.txt",
+        "l6-compare-tree-ci.txt",
+    ):
+        assert needle in send_back, needle
+    assert "whichever exist" in send_back
     assert "C6" in BUILD_RELEASE_MD

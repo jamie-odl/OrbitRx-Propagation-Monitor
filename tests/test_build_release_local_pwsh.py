@@ -1222,8 +1222,21 @@ def _write_inventory(path: Path, version: str, commit: str) -> None:
     path.write_text(f"version={version} commit={commit}\n", encoding="utf-8")
 
 
-def _run_script(repo: Path, extra_args: list[str], build_root: Path) -> subprocess.CompletedProcess:
-    args = " ".join(extra_args)
+# B3-c: -CiRunId is now required, like -CiInventory/-AttestPersonalKit. Every
+# scenario below this point is about some *other* early check, so default to
+# a valid digits-only id (none of them reach the TESTS gate itself, which is
+# the only place -CiRunId's value is actually used); pass ci_run_id=None to
+# exercise -CiRunId's own required/validated behaviour instead.
+_DEFAULT_CI_RUN_ID = "43672660090"
+
+
+def _run_script(
+    repo: Path, extra_args: list[str], build_root: Path, ci_run_id: str | None = _DEFAULT_CI_RUN_ID
+) -> subprocess.CompletedProcess:
+    args_list = list(extra_args)
+    if ci_run_id is not None:
+        args_list.append(f"-CiRunId {ci_run_id}")
+    args = " ".join(args_list)
     script_call = (
         f"& '{repo / 'tools' / 'build_release_local.ps1'}' {args} "
         f"-BuildRoot '{build_root}'"
@@ -1297,6 +1310,61 @@ def test_main_script_requires_ci_inventory(fake_repo, tmp_path, non_profile_tmp_
     )
     assert result.returncode != 0
     assert "-CiInventory is required" in combined_text(result)
+
+
+# --- B3-c: -CiRunId is required (like -CiInventory/-PythonInstaller) and
+# digits-only (ValidatePattern, enforced at parameter-binding time, before
+# this script's own body -- and so before a "BUILD FAILED" line -- ever
+# runs). -----------------------------------------------------------------
+
+
+def test_main_script_requires_ci_run_id(fake_repo, tmp_path, non_profile_tmp_path):
+    repo, sha = fake_repo
+    inv = tmp_path / "inv.txt"
+    _write_inventory(inv, "5.2.0", sha)
+    result = _run_script(
+        repo, [f"-ExpectedSha {sha}", f"-CiInventory '{inv}'", "-AttestPersonalKit"],
+        non_profile_tmp_path / "build-root",
+        ci_run_id=None,
+    )
+    assert result.returncode != 0
+    assert "-CiRunId is required" in combined_text(result)
+
+
+def test_main_script_rejects_a_non_digit_ci_run_id(fake_repo, tmp_path, non_profile_tmp_path):
+    repo, sha = fake_repo
+    inv = tmp_path / "inv.txt"
+    _write_inventory(inv, "5.2.0", sha)
+    result = _run_script(
+        repo, [f"-ExpectedSha {sha}", f"-CiInventory '{inv}'", "-AttestPersonalKit"],
+        non_profile_tmp_path / "build-root",
+        ci_run_id="43672660090abc",
+    )
+    assert result.returncode != 0
+    text = combined_text(result)
+    # A parameter-binding-level rejection, not this script's own logic --
+    # the same documented class of failure as a mistyped parameter name
+    # (BUILD-RELEASE.md step 14): no "BUILD FAILED" line, because the
+    # script's own try/catch never starts.
+    assert "does not match" in text
+    assert "BUILD FAILED" not in text
+
+
+def test_main_script_accepts_a_digits_only_ci_run_id_and_proceeds_past_it(
+    fake_repo, tmp_path, non_profile_tmp_path
+):
+    repo, sha = fake_repo
+    inv = tmp_path / "inv.txt"
+    _write_inventory(inv, "5.2.0", sha)
+    result = _run_script(
+        repo, [f"-ExpectedSha {sha}", f"-CiInventory '{inv}'", "-AttestPersonalKit"],
+        non_profile_tmp_path / "build-root",
+        ci_run_id="43672660090",
+    )
+    assert result.returncode != 0  # no -PythonInstaller given; fails later
+    text = combined_text(result)
+    assert "-CiRunId" not in text
+    assert "-PythonInstaller not found" in text
 
 
 def test_main_script_rejects_a_ci_inventory_with_the_wrong_commit(fake_repo, tmp_path, non_profile_tmp_path):
@@ -1453,13 +1521,20 @@ def test_main_script_reports_build_failed_when_helpers_file_is_unparsable(
 
 
 def _run_script_through_tee(
-    repo: Path, extra_args: list[str], build_root: Path, console_path: Path
+    repo: Path,
+    extra_args: list[str],
+    build_root: Path,
+    console_path: Path,
+    ci_run_id: str | None = _DEFAULT_CI_RUN_ID,
 ) -> subprocess.CompletedProcess:
     """Runs the script through the exact pipeline shape BUILD-RELEASE.md
     documents, so this test exercises the real invocation -- not a
     try/catch wrapper (like _run_script above) that would mask the bug
     NEW-1 exists to catch."""
-    args = " ".join(extra_args)
+    args_list = list(extra_args)
+    if ci_run_id is not None:
+        args_list.append(f"-CiRunId {ci_run_id}")
+    args = " ".join(args_list)
     command = (
         f"& '{repo / 'tools' / 'build_release_local.ps1'}' {args} "
         f"-BuildRoot '{build_root}' *>&1 | Tee-Object -FilePath '{console_path}'\n"
@@ -2691,3 +2766,210 @@ def test_sums_line_region_labels_rather_than_instructs(tmp_path):
     marker_idx = next(i for i, line in enumerate(lines) if "DRY-RUN ONLY" in line)
     assert label_idx < marker_idx
     assert "REMINDER (L9)" not in combined_text(result)
+
+
+# --- Risk R3 Ruling 1, B3-c: the "tests-gate" region (section e), run
+# standalone against a stub $venvPython that records its own argv and plays
+# back a synthetic pytest --collect-only / -q output, without running the
+# real 20-40 minute suite. ----------------------------------------------------
+
+
+def _write_fake_venv_python_for_tests_gate(
+    path: Path,
+    argv_marker: Path,
+    network_collect_lines: list[str] | None = None,
+    network_collect_exit: int = 0,
+    main_summary_line: str | None = "641 passed, 5 skipped, 1 deselected in 233.46s",
+    main_exit: int = 0,
+) -> None:
+    """A fake $venvPython as a .ps1 (not a '#!/bin/sh' script), so pwsh's
+    own `&` call operator runs it directly on both Linux and Windows with no
+    shebang/chmod involved (same trick as the existing fake-venv-python.ps1
+    stubs above). It records every call's argv (one '|'-joined line per
+    call, in invocation order: compileall, then the --collect-only network
+    scope check, then the gate run itself) to `argv_marker`, then plays back
+    the lines/exit code this test configured for whichever call it was."""
+    network_collect_lines = network_collect_lines or []
+    collect_output = "\n".join(f"    Write-Output '{line}'" for line in network_collect_lines)
+    main_output = f"    Write-Output '{main_summary_line}'\n" if main_summary_line is not None else ""
+    marker_literal = str(argv_marker).replace("'", "''")
+    body = (
+        "$a = $args\n"
+        f"\"$($a -join '|')\" | Out-File -FilePath '{marker_literal}' -Append -Encoding utf8\n"
+        "if ($a -contains '--collect-only') {\n"
+        f"{collect_output}\n"
+        f"    exit {network_collect_exit}\n"
+        "} elseif ($a -contains 'pytest') {\n"
+        f"{main_output}"
+        f"    exit {main_exit}\n"
+        "} else {\n"
+        "    exit 0\n"
+        "}\n"
+    )
+    path.write_text(body, encoding="utf-8")
+
+
+_ONE_NETWORK_TEST = ["tests/test_weather_fixtures.py::test_live_noaa_populates_core_fields"]
+
+
+def _run_tests_gate_region(repo: Path, venv_python: Path, ci_run_id: str = "43672660090") -> subprocess.CompletedProcess:
+    region_text = _extract_region_text("tests-gate")
+    invoke_checked_fn = _extract_function_text("Invoke-Checked")
+    harness = (
+        f". '{HELPERS}'\n"
+        f"{invoke_checked_fn}\n"
+        f"$repoRoot = '{repo}'\n"
+        f"$venvPython = '{venv_python}'\n"
+        f"$CiRunId = '{ci_run_id}'\n"
+        "try {\n"
+        f"{region_text}\n"
+        "    Write-Host 'REGION-COMPLETED-OK'\n"
+        "} catch {\n"
+        "    Write-Host \"REGION-THREW: $($_.Exception.Message)\"\n"
+        "    exit 1\n"
+        "}\n"
+    )
+    return run_pwsh(harness, cwd=repo)
+
+
+def test_tests_gate_region_passes_with_exactly_one_network_test_and_a_clean_summary(tmp_path):
+    # Positive control for the tests below: proves the harness itself (fake
+    # repo, stub, pre-set variables) exercises the real region successfully
+    # when nothing is wrong, and that the provenance-format line (B3-c) is
+    # built exactly as Risk specified.
+    venv_python = tmp_path / "fake-venv-python.ps1"
+    argv_marker = tmp_path / "argv.txt"
+    _write_fake_venv_python_for_tests_gate(venv_python, argv_marker, network_collect_lines=_ONE_NETWORK_TEST)
+    result = _run_tests_gate_region(tmp_path, venv_python)
+    text = combined_text(result)
+    assert result.returncode == 0, text
+    assert "REGION-COMPLETED-OK" in result.stdout
+    expected_line = (
+        'TESTS: PASS (pytest -q -m "not network" --strict-markers; '
+        "641 passed, 5 skipped, 1 deselected: "
+        "tests/test_weather_fixtures.py::test_live_noaa_populates_core_fields; "
+        "CI 43672660090 at this SHA ran it: PASSED ubuntu+windows)"
+    )
+    assert expected_line in result.stdout
+
+
+def test_tests_gate_region_uses_the_exact_reviewed_pytest_arguments(tmp_path):
+    # B3-c/QA M6-M7: an exact-argument assertion for both pytest calls the
+    # gate makes, via a stub that records its own argv rather than grepping
+    # the script's source text for the call site.
+    venv_python = tmp_path / "fake-venv-python.ps1"
+    argv_marker = tmp_path / "argv.txt"
+    _write_fake_venv_python_for_tests_gate(venv_python, argv_marker, network_collect_lines=_ONE_NETWORK_TEST)
+    result = _run_tests_gate_region(tmp_path, venv_python)
+    assert result.returncode == 0, combined_text(result)
+    calls = [line for line in argv_marker.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert calls == [
+        "-m|compileall|-q|app.py|orbitrx",
+        "-m|pytest|--collect-only|-q|-m|network|--strict-markers",
+        "-m|pytest|-q|-m|not network|--strict-markers",
+    ]
+
+
+def test_tests_gate_region_refuses_when_no_network_test_is_collected(tmp_path):
+    venv_python = tmp_path / "fake-venv-python.ps1"
+    argv_marker = tmp_path / "argv.txt"
+    _write_fake_venv_python_for_tests_gate(venv_python, argv_marker, network_collect_lines=[])
+    result = _run_tests_gate_region(tmp_path, venv_python)
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    assert "(none)" in text
+    assert "expected exactly" in text
+    assert "Stop and tell Risk" in text
+
+
+def test_tests_gate_region_refuses_when_two_network_tests_are_collected(tmp_path):
+    venv_python = tmp_path / "fake-venv-python.ps1"
+    argv_marker = tmp_path / "argv.txt"
+    two_tests = _ONE_NETWORK_TEST + ["tests/test_other.py::test_also_network"]
+    _write_fake_venv_python_for_tests_gate(venv_python, argv_marker, network_collect_lines=two_tests)
+    result = _run_tests_gate_region(tmp_path, venv_python)
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    for test_id in two_tests:
+        assert test_id in text
+
+
+def test_tests_gate_region_refuses_when_a_different_single_test_is_collected(tmp_path):
+    venv_python = tmp_path / "fake-venv-python.ps1"
+    argv_marker = tmp_path / "argv.txt"
+    _write_fake_venv_python_for_tests_gate(
+        venv_python, argv_marker, network_collect_lines=["tests/test_other.py::test_renamed_network_test"]
+    )
+    result = _run_tests_gate_region(tmp_path, venv_python)
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    assert "tests/test_other.py::test_renamed_network_test" in text
+    assert "tests/test_weather_fixtures.py::test_live_noaa_populates_core_fields" in text
+
+
+def test_tests_gate_region_tolerates_backslash_separators_in_the_collected_id(tmp_path):
+    # B3-c: "normalise path separators so Windows backslashes compare
+    # equal" -- a real Windows pytest can print the nodeid with backslashes.
+    venv_python = tmp_path / "fake-venv-python.ps1"
+    argv_marker = tmp_path / "argv.txt"
+    _write_fake_venv_python_for_tests_gate(
+        venv_python, argv_marker,
+        network_collect_lines=["tests\\test_weather_fixtures.py::test_live_noaa_populates_core_fields"],
+    )
+    result = _run_tests_gate_region(tmp_path, venv_python)
+    assert result.returncode == 0, combined_text(result)
+    assert "REGION-COMPLETED-OK" in result.stdout
+
+
+@pytest.mark.parametrize("summary_line", [
+    "642 passed, 5 skipped in 233.46s",  # 0 deselected
+    "640 passed, 5 skipped, 2 deselected in 233.46s",  # 2 deselected
+])
+def test_tests_gate_region_refuses_on_a_deselected_count_other_than_one(tmp_path, summary_line):
+    venv_python = tmp_path / "fake-venv-python.ps1"
+    argv_marker = tmp_path / "argv.txt"
+    _write_fake_venv_python_for_tests_gate(
+        venv_python, argv_marker, network_collect_lines=_ONE_NETWORK_TEST, main_summary_line=summary_line,
+    )
+    result = _run_tests_gate_region(tmp_path, venv_python)
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    assert "deselected" in text
+    assert "expected exactly 1" in text
+    assert "Stop and tell Risk" in text
+
+
+def test_tests_gate_region_refuses_on_a_failed_count_even_when_the_exit_code_is_zero(tmp_path):
+    # Belt-and-suspenders: the summary-line parse must independently catch
+    # a failure even if $LASTEXITCODE itself were somehow 0 -- not rely on
+    # the exit-code check alone.
+    venv_python = tmp_path / "fake-venv-python.ps1"
+    argv_marker = tmp_path / "argv.txt"
+    _write_fake_venv_python_for_tests_gate(
+        venv_python, argv_marker, network_collect_lines=_ONE_NETWORK_TEST,
+        main_summary_line="2 failed, 639 passed, 5 skipped, 1 deselected in 233.46s", main_exit=0,
+    )
+    result = _run_tests_gate_region(tmp_path, venv_python)
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    assert "2 failed" in text
+    assert "Stop and tell Risk" in text
+
+
+def test_tests_gate_region_refuses_on_a_nonzero_exit_code_even_with_no_summary_line(tmp_path):
+    venv_python = tmp_path / "fake-venv-python.ps1"
+    argv_marker = tmp_path / "argv.txt"
+    _write_fake_venv_python_for_tests_gate(
+        venv_python, argv_marker, network_collect_lines=_ONE_NETWORK_TEST,
+        main_summary_line=None, main_exit=2,
+    )
+    result = _run_tests_gate_region(tmp_path, venv_python)
+    text = combined_text(result)
+    assert result.returncode != 0, text
+    assert "REGION-THREW" in result.stdout
+    assert "exit code 2" in text

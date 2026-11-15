@@ -128,6 +128,7 @@ before anything is uploaded.
       -ExpectedSha <the 40-char commit SHA> `
       -PythonInstaller C:\build\inputs\python-3.12.10-amd64.exe `
       -CiInventory C:\build\inputs\ship-set-inventory.txt `
+      -CiRunId <the numeric CI run id, e.g. 43672660090> `
       -AttestPersonalKit `
       *>&1 | Tee-Object -FilePath C:\build\orbitrx-5.2.0\build-console.txt
     ```
@@ -140,6 +141,16 @@ before anything is uploaded.
     saves a copy of everything the script printed, for QA/Risk, without
     also stamping your username and computer name into the saved file's
     own header the way `Start-Transcript` would.
+
+    **`-CiRunId` is also mandatory (Risk R3, B3-c), like `-CiInventory`.**
+    It is the CI run id that produced `-CiInventory` -- the same CI run,
+    supplied by the CoS together with the SHA, whose logs already proved
+    the network-marked live NOAA test passed on both ubuntu and windows at
+    this exact commit. It must be digits only (the script rejects anything
+    else before it even starts); never type a run id you found yourself by
+    reading recent Actions runs -- it must come from the CoS, the same way
+    the SHA and `-CiInventory` do. The script records it verbatim in the
+    TESTS gate's provenance line.
 
     **Use a new, empty `-BuildRoot` for every run (M-1).** Delete the whole
     `-BuildRoot` folder (the default is `C:\build\orbitrx-5.2.0-work\`;
@@ -221,6 +232,18 @@ before anything is uploaded.
     deliberate change Risk asked to review -- it is called out here, not
     hidden in a side comment, precisely so that review happens.
 
+    **Risk R3, B3-c.** The gate runs exactly
+    `pytest -q -m "not network" --strict-markers`, and before that, checks
+    (with `pytest --collect-only -q -m network --strict-markers`) that the
+    network-marked set it is about to deselect is exactly the one test
+    Risk and QA reviewed -- `TESTS: PASS` only ever prints if that check,
+    and the gate's own pytest summary, both come back clean: **0 failed,
+    0 errors and exactly 1 deselected**. Anything else -- zero or more than
+    one network-marked test, any failure, any deselected count other than
+    1 -- is a `BUILD FAILED` refusal, not something to eyeball afterwards.
+    The `TESTS: PASS` line (and the matching line in the provenance record)
+    then carries the counts, the deselected test's id, and `-CiRunId`.
+
     **Network use during this run (L-D):** besides pip's PyPI hash-pinned
     downloads (step 13) and Windows' own Authenticode CRL/OCSP lookups
     during a signature check, several UI/capture tests in that same TESTS
@@ -290,8 +313,18 @@ before anything is uploaded.
     - `out\installer-publisher.txt` (the PE check output)
     - `out\ship-set-qt.txt` and `out\ship-set-tls.txt`
     - the pyz-scan output (`out\pyz-scan.txt`)
+    - the L5/L6 compare-result files: `out\l5-pack-result.txt`,
+      `out\l6-verify.txt`, `out\l6-compare-tree-local.txt` and
+      `out\l6-compare-tree-ci.txt` (whichever exist)
     - the L7 evidence (screenshot or note of the SWPC fetch)
     - the antivirus scan result from step 16
+
+    Confirm before sending that both `build-console.txt` and the
+    provenance record's `TESTS: PASS (...)` line show the pytest summary
+    with **0 failed and exactly 1 deselected** (B3-c) -- the script itself
+    already refused to reach this step otherwise, but QA/Risk's own L10
+    review re-checks this directly rather than taking the PASS line on
+    trust.
 
     `build-console.txt` and the `out\` files above have `$env:USERNAME`,
     `$env:USERPROFILE`, `$env:COMPUTERNAME` and the other values listed in

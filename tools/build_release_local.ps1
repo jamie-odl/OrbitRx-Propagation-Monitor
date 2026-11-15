@@ -65,6 +65,14 @@
     line (version=<v> commit=<sha>) must match -ExpectedSha/-ExpectedVersion
     exactly, checked before any build work starts.
 
+.PARAMETER CiRunId
+    REQUIRED, digits only. The CI run id (e.g. 43672660090) of the same CI
+    run -CiInventory was downloaded from -- the run that proved the
+    network-marked live NOAA test passed on both ubuntu and windows at this
+    exact SHA (Risk R3 Ruling 1, B3-c). Supplied by the Chief of Staff
+    together with -ExpectedSha; never typed in free text. Recorded verbatim
+    in the TESTS gate's provenance line.
+
 .PARAMETER AttestPersonalKit
     Required switch. Passing it is the builder's attestation that this
     build is running on personal equipment, not an employer's.
@@ -81,6 +89,8 @@ param(
     [string]$BuildRoot = "C:\build\orbitrx-5.2.0-work",
     [string]$Iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
     [string]$CiInventory,
+    [ValidatePattern('^[0-9]+$')]
+    [string]$CiRunId,
     [switch]$AttestPersonalKit
 )
 
@@ -368,6 +378,17 @@ if (-not (Test-Path $CiInventory)) {
     throw "-CiInventory file not found: '$CiInventory'."
 }
 
+# --- B3-c: -CiRunId is required, like -CiInventory -- the numeric id of the
+# exact CI run -CiInventory came from, so the TESTS gate's provenance line
+# (section e) can cite the run that already proved the deselected live NOAA
+# test passed on both OSes, instead of a bare "TESTS: PASS" a human had to
+# cross-check by hand. [ValidatePattern('^[0-9]+$')] above already refuses a
+# non-digits value at parameter-binding time, before this script body ever
+# runs; this check only covers the value being missing entirely.
+if (-not $CiRunId) {
+    throw "-CiRunId is required: pass the numeric CI run id that produced -CiInventory (the release-exe-captures artifact), supplied by the Chief of Staff together with -ExpectedSha. See BUILD-RELEASE.md."
+}
+
 $buildStartUtc = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
 
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
@@ -558,17 +579,70 @@ Write-Host "DEPENDENCIES: PASS (requirements.txt sha256=$requirementsSha256, loc
 # gate excludes it with -m "not network" so a dry run on a disconnected or
 # flaky-network PC does not fail on something CI has already proven passes
 # at this exact SHA.
-
+#
+# Risk R3 Ruling 1, condition B3-c, in full: before the gate itself runs,
+# pin down that the @pytest.mark.network set it is about to deselect is
+# exactly the one test Risk and QA reviewed -- not zero, not two, not a
+# different one that got marked later without review (B3-d). The gate then
+# runs with the exact argument list reviewed (including --strict-markers,
+# which was not there before), and refuses unless its own summary shows 0
+# failed, 0 errors and exactly 1 deselected. The provenance line this
+# produces (below) carries that summary plus -CiRunId, the CI run that
+# already proved the deselected test passes on both OSes, instead of the
+# bare "TESTS: PASS" a human had to cross-check by hand before this fix.
+#
+# region tests-gate
+# (tests/test_build_release_local_pwsh.py extracts this region the same way
+# as the pack-l6/provenance-finalize regions, to exercise B3-c behaviourally
+# against a stub python/pytest that records its own argv and prints a
+# synthetic collect/summary line, without running the real 20-40 minute
+# suite.)
 Push-Location $repoRoot
 try {
     $env:QT_QPA_PLATFORM = 'offscreen'
     Invoke-Checked -FilePath $venvPython -ArgumentList @('-m', 'compileall', '-q', 'app.py', 'orbitrx') -FailureMessage 'compileall failed'
-    Invoke-Checked -FilePath $venvPython -ArgumentList @('-m', 'pytest', '-q', '-m', 'not network') -FailureMessage 'pytest failed'
+
+    # B3-c: collect the network-marked set first, with --collect-only so no
+    # test actually runs here -- this is purely a scope check on what the
+    # gate below is about to deselect. pytest's own exit code for
+    # --collect-only is deliberately not checked: a filter matching zero (or
+    # more than one) test is itself the failure this step exists to catch,
+    # and it is reported with our own clear message below, not pytest's.
+    $networkCollectArgs = @('-m', 'pytest', '--collect-only', '-q', '-m', 'network', '--strict-markers')
+    $networkCollectLines = @(& $venvPython @networkCollectArgs 2>&1 | ForEach-Object { Write-Host "$_"; "$_" })
+    # @(...): same empty-array-collapses-to-$null guard as Invoke-
+    # PublisherCheck/Invoke-OpenSslPinCheck above -- without it, the common
+    # "nothing collected" case would hand Assert-ExactlyOneNetworkTestCollected
+    # $null instead of an empty array; piping $null into ForEach-Object runs
+    # its block once (with $_ = $null), silently turning "zero collected"
+    # into "one empty-string id collected" instead of refusing with a clear
+    # message.
+    $networkIds = @(Get-PytestCollectedTestIds -Lines $networkCollectLines)
+    Assert-ExactlyOneNetworkTestCollected -Ids $networkIds
+
+    # B3-c: the exact argument list QA/Risk reviewed -- '-q', '-m', 'not
+    # network' AND '--strict-markers' (the latter was missing before this
+    # fix).
+    $pytestArgs = @('-m', 'pytest', '-q', '-m', 'not network', '--strict-markers')
+    $pytestLines = @(& $venvPython @pytestArgs 2>&1 | ForEach-Object { Write-Host "$_"; "$_" })
+    $pytestExitCode = $LASTEXITCODE
+    $pytestCounts = Get-PytestSummaryCounts -Lines $pytestLines
+    if ($pytestExitCode -ne 0) {
+        throw "pytest -q -m `"not network`" --strict-markers failed (exit code $pytestExitCode)"
+    }
+    # Belt-and-suspenders with the exit-code check above: a failed/errored
+    # run that somehow still exited 0, or a deselected count other than
+    # exactly 1 (B3-b: a different count voids the dry run), is caught here
+    # from the parsed summary itself, not from $LASTEXITCODE alone.
+    Assert-PytestGateSummaryClean -Counts $pytestCounts
+
+    $testsGateSummary = "pytest -q -m `"not network`" --strict-markers; $($pytestCounts.Passed) passed, $($pytestCounts.Skipped) skipped, 1 deselected: tests/test_weather_fixtures.py::test_live_noaa_populates_core_fields; CI $CiRunId at this SHA ran it: PASSED ubuntu+windows"
 }
 finally {
     Pop-Location
 }
-Write-Host "TESTS: PASS"
+Write-Host "TESTS: PASS ($testsGateSummary)"
+# endregion tests-gate
 
 # --- f. Stamp commit, PyInstaller, Inno Setup --------------------------------
 
@@ -858,7 +932,7 @@ $provenanceLines += @(
     '  CI-INVENTORY-HEADER-CHECK: PASS',
     '  PYTHON-INSTALLER-PIN: PASS',
     '  PYTHON-EXE-PIN: PASS',
-    '  TESTS: PASS',
+    "  TESTS: PASS ($testsGateSummary)",
     '  BUILD-META-CHECK: PASS',
     '  ONEDIR-LAYOUT: PASS',
     '  OPENSSL-PIN: PASS',

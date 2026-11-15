@@ -481,6 +481,95 @@ function Test-PublisherVersionInfo {
     return $problems
 }
 
+# --- B3-c (Risk R3 Ruling 1): TESTS-gate pytest output parsing -------------
+# Pure text parsing of pytest's own -q output, so tests can exercise every
+# case (exactly one network test, zero, two, a different one; a clean
+# summary, a dirty one) with plain string arrays -- no real pytest run.
+
+function Get-PytestCollectedTestIds {
+    # `pytest --collect-only -q` prints one nodeid per line (e.g.
+    # "tests/test_weather_fixtures.py::test_live_noaa_populates_core_fields"),
+    # then a blank line and a summary line ("1/647 tests collected (646
+    # deselected) in 0.66s", "647 tests collected in 0.59s", or "no tests
+    # ran in 0.00s"). A nodeid line always contains ".py::"; none of those
+    # summary/blank lines ever do, so that substring alone separates the two
+    # robustly without depending on collect-only's exact summary wording.
+    # Windows pytest can print the nodeid with backslashes if invoked from a
+    # backslash-separated rootdir; normalise to forward slashes so a
+    # comparison against the one expected id is OS-independent.
+    param([string[]]$Lines)
+    $ids = @()
+    foreach ($rawLine in $Lines) {
+        $line = "$rawLine".Trim()
+        if ($line -match '\.py::') {
+            $ids += ($line -replace '\\', '/')
+        }
+    }
+    return $ids
+}
+
+function Assert-ExactlyOneNetworkTestCollected {
+    # Risk R3 Ruling 1, B3-c: the script must fail if the network-marked set
+    # collected is anything other than exactly this one test id -- not zero
+    # (the marker was removed or renamed), not two or more (B3-d: a further
+    # test was marked network without review), and not a different single
+    # test (the one reviewed test was renamed/removed and a different one
+    # happens to be marked instead).
+    param([string[]]$Ids)
+    $expected = 'tests/test_weather_fixtures.py::test_live_noaa_populates_core_fields'
+    $normalized = @($Ids | ForEach-Object { $_ -replace '\\', '/' })
+    $ok = ($normalized.Count -eq 1) -and ($normalized[0] -eq $expected)
+    if (-not $ok) {
+        $found = if ($normalized.Count -eq 0) { '(none)' } else { ($normalized | Sort-Object) -join ', ' }
+        throw "The @pytest.mark.network test set collected is {$found}, expected exactly {$expected}. A different set means the local TESTS gate's deselection no longer matches what Risk/QA reviewed (B3-c/B3-d). Stop and tell Risk."
+    }
+}
+
+function Get-PytestSummaryCounts {
+    # pytest's own final summary line, e.g. "574 passed, 5 skipped, 1
+    # deselected, 1 warning in 12.34s" or "2 failed, 1 error, 570 passed in
+    # 12.34s (0:00:12)" -- find the line ending "in <seconds>s" (optionally
+    # followed by "(h:mm:ss)") and pull out each "<N> <category>" segment
+    # from it. A category absent from the line (e.g. no "failed" segment on
+    # a clean run) is 0, not an error -- pytest only prints categories with
+    # at least one test in them.
+    param([string[]]$Lines)
+    $summaryLine = $null
+    foreach ($rawLine in $Lines) {
+        $line = "$rawLine".Trim()
+        if ($line -match '^\d+ \S.* in [\d.]+s\b') {
+            $summaryLine = $line
+        }
+    }
+    $counts = [ordered]@{ Failed = 0; Errors = 0; Passed = 0; Skipped = 0; Deselected = 0 }
+    if (-not $summaryLine) {
+        return [PSCustomObject]$counts
+    }
+    foreach ($m in [regex]::Matches($summaryLine, '(?<n>\d+)\s+(?<word>failed|passed|skipped|deselected|errors?)\b')) {
+        $n = [int]$m.Groups['n'].Value
+        switch -Regex ($m.Groups['word'].Value) {
+            '^failed$' { $counts.Failed = $n }
+            '^errors?$' { $counts.Errors = $n }
+            '^passed$' { $counts.Passed = $n }
+            '^skipped$' { $counts.Skipped = $n }
+            '^deselected$' { $counts.Deselected = $n }
+        }
+    }
+    return [PSCustomObject]$counts
+}
+
+function Assert-PytestGateSummaryClean {
+    # B3-b/B3-c: refuse unless the TESTS gate's own summary shows 0 failed,
+    # 0 errors and exactly 1 deselected (the one network-marked test).
+    param([psobject]$Counts)
+    if ($Counts.Failed -ne 0 -or $Counts.Errors -ne 0) {
+        throw "pytest -q -m `"not network`" --strict-markers reported $($Counts.Failed) failed, $($Counts.Errors) error(s) -- expected 0 of each. Stop and tell Risk/QA."
+    }
+    if ($Counts.Deselected -ne 1) {
+        throw "pytest -q -m `"not network`" --strict-markers deselected $($Counts.Deselected) test(s), expected exactly 1 (tests/test_weather_fixtures.py::test_live_noaa_populates_core_fields). Stop and tell Risk/QA."
+    }
+}
+
 # --- Employer/managed-device heuristic (N9, Risk R3 Ruling 2 / L-B) ---------
 
 function ConvertFrom-DsregcmdStatus {
