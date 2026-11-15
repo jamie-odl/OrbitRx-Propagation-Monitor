@@ -106,6 +106,8 @@ a = Analysis(
 # module graph -- PyInstaller's Qt hook still collects their DLLs by default.
 a.binaries = filter_binaries(a.binaries)
 a.datas = filter_binaries(a.datas)
+# Windows 10+ supplies the UCRT; these DLLs (and mfc140u, used only by the unused win32ui) were runner-only picks on CI.
+a.binaries = [b for b in a.binaries if not ((n := b[0].replace('\\', '/').rsplit('/', 1)[-1].lower()) in ('ucrtbase.dll', 'mfc140u.dll') or (n.startswith('api-ms-win-') and n.endswith('.dll')))]
 
 pyz = PYZ(a.pure)
 
