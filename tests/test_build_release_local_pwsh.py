@@ -1616,7 +1616,10 @@ def test_invoke_shipped_notices_check_passes_when_all_hashes_match(tmp_path):
     # notice hash too -- sys.executable's real base_prefix on this test
     # host has no reason to contain one, so -VenvPython here is a tiny
     # stub that reports a fake base_prefix directory this test controls,
-    # containing a LICENSE.txt with exactly the pinned content.
+    # containing a LICENSE.txt with exactly the pinned content. The stub
+    # is a .ps1 (not a '#!/bin/sh' script) so pwsh's own `&` call operator
+    # runs it directly on both Linux and Windows, with no shebang/chmod
+    # involved either way.
     root = tmp_path / "onedir"
     contents = _write_fake_notices(root)
     hashes = {rel: hashlib.sha256(content).hexdigest() for rel, content in contents.items()}
@@ -1624,9 +1627,9 @@ def test_invoke_shipped_notices_check_passes_when_all_hashes_match(tmp_path):
     fake_base_prefix = tmp_path / "fake-base-prefix"
     fake_base_prefix.mkdir()
     (fake_base_prefix / "LICENSE.txt").write_bytes(contents["third_party/python/LICENSE.txt"])
-    fake_venv_python = tmp_path / "fake-venv-python.sh"
-    fake_venv_python.write_text(f"#!/bin/sh\necho '{fake_base_prefix}'\n", encoding="utf-8")
-    fake_venv_python.chmod(0o755)
+    fake_venv_python = tmp_path / "fake-venv-python.ps1"
+    fake_base_prefix_literal = str(fake_base_prefix).replace("'", "''")
+    fake_venv_python.write_text(f"Write-Output '{fake_base_prefix_literal}'\n", encoding="utf-8")
 
     fn_text = _extract_function_text("Invoke-ShippedNoticesCheck")
     command = (
@@ -1645,14 +1648,22 @@ def test_invoke_shipped_notices_check_passes_when_all_hashes_match(tmp_path):
 
 def _write_literal_backslash_file(root: Path, leaf_with_backslash: str, content: str) -> None:
     # The real script invokes these with a Windows-style relative path
-    # (e.g. 'tools\pack_setup_zip.py') even when run on this non-Windows
-    # test host -- Python there opens that literal filename (backslash is
-    # just an ordinary character in a POSIX file name, not a separator)
-    # relative to the process's cwd. Creating a real file under that exact
-    # literal name is what lets the extracted region's own unmodified
-    # `& $venvPython 'tools\pack_setup_zip.py' ...` calls resolve to our
-    # stub, with no change to the extracted text at all.
-    (root / leaf_with_backslash).write_text(content, encoding="utf-8")
+    # (e.g. 'tools\pack_setup_zip.py') unmodified. On a non-Windows test
+    # host, Python opens that literal filename (backslash is just an
+    # ordinary character in a POSIX file name, not a separator) relative
+    # to the process's cwd, so a real *file* whose name contains a
+    # backslash is what the stub needs there. On Windows, backslash *is*
+    # the path separator, so the same literal string instead resolves to
+    # a real subdirectory ('tools\pack_setup_zip.py' -> tools/pack_setup_zip.py)
+    # which must actually exist. Either way, the extracted region's own
+    # unmodified `& $venvPython 'tools\pack_setup_zip.py' ...` call
+    # resolves to our stub, with no change to the extracted text at all.
+    if os.name == "nt":
+        target = root / Path(*leaf_with_backslash.split("\\"))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+    else:
+        (root / leaf_with_backslash).write_text(content, encoding="utf-8")
 
 
 def _make_pack_l6_repo(tmp_path: Path) -> tuple[Path, str]:
