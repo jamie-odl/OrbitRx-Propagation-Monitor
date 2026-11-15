@@ -29,9 +29,10 @@ before anything is uploaded.
    message telling you to tell Risk; this heuristic is not a substitute for
    actually knowing whose PC this is.
 2. **PowerShell 7.4 or later (`pwsh`).** This script requires it (`#Requires
-   -Version 7.0`, plus its own inline check) and refuses to run on Windows
-   PowerShell 5.1 with a clear message rather than failing partway through.
-   Check what you have with `pwsh -v`; if that does not already work, or
+   -Version 7.4`, plus its own inline check -- both compare the full
+   version, so 7.0-7.3 refuse with the same clear message as Windows
+   PowerShell 5.1, not just a pre-7 major version) rather than failing
+   partway through. Check what you have with `pwsh -v`; if that does not already work, or
    reports an older 7.x, install the current release with
    `winget install --id Microsoft.PowerShell`, then re-check with `pwsh -v`.
 3. **Git for Windows** (for `git clone`, `git rev-parse`, etc.).
@@ -119,6 +120,26 @@ before anything is uploaded.
     also stamping your username and computer name into the saved file's
     own header the way `Start-Transcript` would.
 
+    **Use a new, empty `-BuildRoot` for every run (M-1).** Delete the whole
+    `-BuildRoot` folder (the default is `C:\build\orbitrx-5.2.0-work\`;
+    whatever you passed if you overrode it) before every attempt -- not
+    only after a failure. The script itself refuses immediately, before any
+    build work starts, if `<BuildRoot>\out\` already exists and is not
+    empty: most often that means an earlier *successful* run's zip and
+    provenance record are still there, and reusing that BuildRoot would
+    either leave the old zip under the public name next to a provenance
+    record for a different zip, or fail at the very last step once the new
+    run gets that far. This applies to the real build that follows a
+    cleared dry run too -- do not reuse the dry run's BuildRoot.
+
+    **Tool caches (C6):** the script points pip's and PyInstaller's own
+    caches (`PIP_CACHE_DIR`, `PYINSTALLER_CONFIG_DIR`) at folders under
+    `-BuildRoot` for the duration of the run, so you do not need to set
+    either of those yourself -- there is no manual env var step here.
+    `$env:TEMP`/`$env:TMP` are deliberately left alone (redirecting them
+    would change what the auto-redaction in step 13's note below treats as
+    "this PC's temp folder" partway through the run).
+
     If you have to re-run after a failure, use
     `Tee-Object -FilePath ... -Append`, or give each attempt its own file
     name (e.g. `build-console-attempt2.txt`) -- a plain `Tee-Object
@@ -190,14 +211,18 @@ before anything is uploaded.
     because that modified tracked file is exactly what the clean-clone
     check (step b) is there to catch.
 
-    To recover:
+    To recover, **deleting the `-BuildRoot` folder is not optional** (M-1):
+    whatever else is wrong, a leftover `out\` under the old `-BuildRoot`
+    makes the script refuse before any build work even starts on the next
+    attempt, regardless of whether this failure's own symptom is fixed.
     - **Preferred:** delete the whole clone folder and the `-BuildRoot`
       folder, and start again from a fresh `git clone` (step 8).
     - **Or**, inside the existing clone: `git checkout -- .` followed by
       `git clean -xdf` to restore the tracked file and remove untracked/
-      build output, then delete the `-BuildRoot` folder separately (it is
-      outside the clone, so `git clean` inside the clone does not touch
-      it).
+      build output -- but still delete the `-BuildRoot` folder separately
+      (it is outside the clone, so `git clean` inside the clone does not
+      touch it, and the script will not proceed while its `out\` is
+      non-empty).
 15. L7, by hand: launch `dist\OrbitRxMonitor\OrbitRxMonitor.exe` yourself
     and confirm it completes a live SWPC fetch (the script does not do this
     for you, and does not launch the GUI for you). The script prints
@@ -246,11 +271,13 @@ before anything is uploaded.
 19. Only once both of those are in hand: append the single `<sha256>  <zip
     filename>` line the script printed to **both** SUMS locations,
     additively. Do not edit, reorder or remove the existing 5.1.0 line (L9).
-    The script always prints that line directly beneath a
-    `DRY-RUN ONLY -- NOT FOR PUBLICATION` marker (it has no way to know
-    whether a given run is the cleared build, so it cannot suppress the
-    marker) -- that marker line is a reminder for you, not part of the SUMS
-    line; copy only the `<sha256>  <zip filename>` line itself into the SUMS
+    The script labels that line "SUMS line for a QA/Risk-cleared build
+    only (see marker):" rather than phrasing it as something to do now --
+    it has no way to know whether a given run is the cleared build, so it
+    always prints that line directly beneath a
+    `DRY-RUN ONLY -- NOT FOR PUBLICATION` marker it cannot suppress either
+    (I-3). Both lines are reminders for you, not part of the SUMS line
+    itself; copy only the `<sha256>  <zip filename>` line into the SUMS
     files, and only once this is genuinely the `<CLEARED_SHA>` build QA/Risk
     cleared and you have both P8 and P9 in hand.
 

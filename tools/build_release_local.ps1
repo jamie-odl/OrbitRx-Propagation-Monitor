@@ -64,7 +64,7 @@
     build is running on personal equipment, not an employer's.
 #>
 
-#Requires -Version 7.0
+#Requires -Version 7.4
 
 [CmdletBinding()]
 param(
@@ -78,21 +78,36 @@ param(
     [switch]$AttestPersonalKit
 )
 
-# --- L-1: fail closed even if a host somehow ignores the #Requires
+# --- L-1/I-1: fail closed even if a host somehow ignores the #Requires
 # statement above, or the dot-sourced helpers file below fails to load for
 # any reason. This inline check is plain syntax that also parses under
 # Windows PowerShell 5.1, so a 5.1 user gets this script's own clear
 # message here -- before Set-StrictMode, before the dot-source, before
-# anything written for 7 -- rather than depending on #Requires alone or
+# anything written for 7.4 -- rather than depending on #Requires alone or
 # hitting a confusing parse/strict-mode error partway into a step written
-# for 7.
-if ($PSVersionTable.PSVersion.Major -lt 7) {
-    Write-Output "BUILD FAILED: PowerShell 7 or later is required (run with pwsh; found $($PSVersionTable.PSVersion)). Install PowerShell 7 and run this script with pwsh, not Windows PowerShell 5.1's powershell.exe -- see BUILD-RELEASE.md's Prerequisites."
+# for 7.4. I-1: the floor is the full version 7.4 (compared, not just the
+# Major component), so 7.0-7.3 refuse here too, same as 5.1/6.x.
+if ($PSVersionTable.PSVersion -lt [version]'7.4') {
+    Write-Output "BUILD FAILED: PowerShell 7.4 or later is required (run with pwsh; found $($PSVersionTable.PSVersion)). Install PowerShell 7.4 or later and run this script with pwsh, not Windows PowerShell 5.1's powershell.exe -- see BUILD-RELEASE.md's Prerequisites."
     exit 1
 }
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+# --- L-4c/L-5/L-A: declared ABOVE the top-level try (not just near its top),
+# so the catch at the bottom of this script can always reference them (under
+# Set-StrictMode) however early a failure happens -- including a failure in
+# the very first thing the try does, the dot-source of the helpers file just
+# below. Before this fix (L-A), these were declared inside the try but after
+# the dot-source, so a missing or unparsable helpers file made the catch
+# itself crash on an unset variable ("$zipPath cannot be retrieved because
+# it has not been set") instead of printing a BUILD FAILED line. They stay
+# $null/$false here, and the catch's cleanup is simply a no-op, until
+# section i (the pack) actually runs.
+$zipPath = $null
+$extractDir = $null
+$zipFinalized = $false
 
 # --- Everything below runs inside one top-level try/catch so that a
 # terminating error -- however deep the throw -- still prints a single
@@ -122,23 +137,14 @@ if (-not (Test-Path -LiteralPath $helpersPath)) {
 }
 . (Join-Path $PSScriptRoot 'build_release_local.helpers.ps1')
 
-# --- NEW-5: PowerShell 7 (pwsh) is required. This is a second, helper-based
-# check: the plain inline check above already stops a pre-7 host long
-# before this point, but Test-PowerShellVersionSupported is kept here too
-# (it is still the function tests/test_build_release_local_pwsh.py exercises
-# directly) as a backstop and so it stays a used, not dead, helper.
-if (-not (Test-PowerShellVersionSupported -MajorVersion $PSVersionTable.PSVersion.Major)) {
-    throw "PowerShell 7 or later is required (found $($PSVersionTable.PSVersion)). Install PowerShell 7 and run this script with pwsh, not Windows PowerShell 5.1's powershell.exe -- see BUILD-RELEASE.md's Prerequisites."
+# --- NEW-5/I-1: PowerShell 7.4 (pwsh) is required. This is a second,
+# helper-based check: the plain inline check above already stops a
+# below-7.4 host long before this point, but Test-PowerShellVersionSupported
+# is kept here too (it is still the function tests/test_build_release_local_pwsh.py
+# exercises directly) as a backstop and so it stays a used, not dead, helper.
+if (-not (Test-PowerShellVersionSupported -Version $PSVersionTable.PSVersion)) {
+    throw "PowerShell 7.4 or later is required (found $($PSVersionTable.PSVersion)). Install PowerShell 7.4 or later and run this script with pwsh, not Windows PowerShell 5.1's powershell.exe -- see BUILD-RELEASE.md's Prerequisites."
 }
-
-# --- L-4c/L-5: declared here, at the very top of the try block, so the
-# outer catch at the bottom of this script can always reference them (under
-# Set-StrictMode) however early a failure happens -- including before
-# section i (the pack) ever runs, in which case both stay $null/$false and
-# the catch's cleanup is simply a no-op.
-$zipPath = $null
-$extractDir = $null
-$zipFinalized = $false
 
 # --- Local helpers that need real processes/files (not pure, not dot-sourced)
 
@@ -310,6 +316,21 @@ if ($PythonInstaller) {
 }
 Assert-BuildRootOutsideUserProfile -BuildRootFull $buildRootFull
 
+# --- M-1: refuse up front, before any build work (pip install, PyInstaller,
+# the 20-40 minute build) starts, if a previous run's out\ is still sitting
+# under this BuildRoot. Without this, a stale public
+# out\OrbitRx-Setup-<v>.zip from an earlier *successful* run survives a
+# failing re-run (left under the public name), and even a *passing* re-run
+# fails at the very last step (Rename-Item: file already exists) after the
+# new provenance record has already been written -- leaving the old zip
+# next to a provenance record that describes a different zip. The packer's
+# own stale-"<name>.pending" removal (NEW-2/L-4a) is unaffected and stays;
+# this is a separate, earlier check on the public name's directory.
+$outDir = Join-Path $BuildRoot 'out'
+if ((Test-Path -LiteralPath $outDir) -and @(Get-ChildItem -LiteralPath $outDir -Force).Count -gt 0) {
+    throw "-BuildRoot's out\ folder ('$outDir') already exists and is not empty. Delete the whole -BuildRoot folder ('$BuildRoot') and start this run with a new, empty BuildRoot -- see BUILD-RELEASE.md."
+}
+
 Write-Host "Repo root: $repoRoot"
 Write-Host "Build root: $BuildRoot"
 
@@ -406,6 +427,33 @@ Write-Host "PYTHON-EXE-PIN: PASS (sha256=$pythonExeSha256 version=$pyVersionStri
 # --- d. Fresh venv in BuildRoot, install from the committed hash-pinned lock -
 
 New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
+
+# region tool-caches
+# (tests/test_build_release_local_pwsh.py extracts this region the same way
+# as the pack-l6/provenance-finalize regions, to exercise it standalone
+# against a fake -BuildRoot without needing a real pip/PyInstaller run.)
+#
+# C6: redirect pip's and PyInstaller's own caches to folders under
+# -BuildRoot, scoped to this process only ($env: here sets a process-block
+# variable, not the user/machine environment -- it is gone as soon as this
+# script exits, and nothing below persists it). Deliberately NOT touched:
+# $env:TEMP/$env:TMP. Format-RedactedText (R-c) reads $env:USERPROFILE/
+# LOCALAPPDATA/APPDATA/TEMP fresh on every call, so overriding $env:TEMP
+# here would silently change what counts as "this PC's temp folder" for
+# every redaction call after this point -- real temp-path leakage from
+# tools that ignore our override (or ran before it) would then go
+# unredacted. Pip and PyInstaller are the two known, directly-configurable
+# cache writers (via PIP_CACHE_DIR/PYINSTALLER_CONFIG_DIR); redirecting
+# those two is a clear win without that redaction regression.
+$pipCacheDir = Join-Path $BuildRoot 'cache\pip'
+$pyinstallerConfigDir = Join-Path $BuildRoot 'cache\pyinstaller'
+New-Item -ItemType Directory -Force -Path $pipCacheDir | Out-Null
+New-Item -ItemType Directory -Force -Path $pyinstallerConfigDir | Out-Null
+$env:PIP_CACHE_DIR = $pipCacheDir
+$env:PYINSTALLER_CONFIG_DIR = $pyinstallerConfigDir
+Write-Host "TOOL-CACHES: PASS (pip=$pipCacheDir pyinstaller=$pyinstallerConfigDir, both under -BuildRoot)"
+# endregion tool-caches
+
 $venvDir = Join-Path $BuildRoot 'venv'
 if (Test-Path $venvDir) {
     Remove-Item -Recurse -Force $venvDir
@@ -526,7 +574,9 @@ try {
         ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } |
         Out-File 'dist\SHA256SUMS.txt' -Encoding ascii
 
-    $outDir = Join-Path $BuildRoot 'out'
+    # M-1: $outDir itself is already set (near the top, right after the N4
+    # path guards), so the up-front empty-BuildRoot check above and this
+    # directory are guaranteed to agree on the same path.
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
     # R-c: ship-set-inventory.txt is deliberately NOT passed through
     # Format-RedactedText -- it is compared byte-for-byte later (--compare-
@@ -722,6 +772,7 @@ $provenanceLines += @(
     "Python installer: $($pins.python.installer_filename) sha256=$installerSha256 md5=$installerMd5 signer='$installerSignerSubject' thumbprint=$installerSignerThumbprint",
     "python.exe: sha256=$pythonExeSha256 version=$pyVersionString signer='$pythonExeSignerSubject' thumbprint=$pythonExeSignerThumbprint",
     "pip: $pipVersionLine",
+    "Tool caches (C6): pip=$pipCacheDir pyinstaller=$pyinstallerConfigDir (both under -BuildRoot, not a personal path)",
     "requirements.txt sha256: $requirementsSha256",
     "packaging/requirements-windows-build.lock.txt sha256: $lockSha256",
     "CI ship-set-inventory.txt (-CiInventory) sha256: $ciInventorySha256 commit=$($ciInventoryHeader.Commit) version=$($ciInventoryHeader.Version)"
@@ -806,8 +857,12 @@ Write-Host ""
 Write-Host "REMINDER: this is a DRY RUN unless you have been told otherwise -- do not publish this zip. Send the provenance record and the out\ files to QA/Risk under L10 and wait for their review before anything is treated as a publish candidate (see BUILD-RELEASE.md)."
 Write-Host "REMINDER (L7): run the HTTPS smoke test by hand -- launch dist\OrbitRxMonitor\OrbitRxMonitor.exe and confirm a live SWPC fetch succeeds. Capture a screenshot or a short note (what you saw, and the timestamp) as L7 evidence. This script does not launch the app for you."
 Write-Host "REMINDER: run an antivirus scan over dist\OrbitRxMonitor, the installer and the zip before sharing them."
-Write-Host "REMINDER (L9): append exactly this one line to both SUMS locations -- do NOT touch the existing 5.1.0 line:"
 # region sums-line
+# I-3: worded as a label for what follows, not an instruction to act now --
+# "append exactly this one line" read like something to do on every run,
+# including a dry run, where doing so would be wrong (see the DRY-RUN ONLY
+# marker printed right below, which this line hands off to).
+Write-Host "SUMS line for a QA/Risk-cleared build only (see marker): if and when this becomes that build, append it exactly as printed to both SUMS locations -- do NOT touch the existing 5.1.0 line:"
 # R-b (Risk round): the script cannot know whether this run is the cleared
 # build, so this marker is printed unconditionally, immediately before the
 # SUMS line it guards -- there is no flag to suppress it.

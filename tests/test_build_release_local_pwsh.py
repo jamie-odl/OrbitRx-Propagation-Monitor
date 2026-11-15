@@ -805,19 +805,20 @@ def test_managed_device_status_is_clean_when_nothing_is_joined():
     assert "False|refuse-msg=" in result.stdout
 
 
-# --- NEW-5: PowerShell version gate ------------------------------------------
+# --- NEW-5/I-1: PowerShell version gate, floor 7.4 (full version, not just
+# major) -----------------------------------------------------------------
 
 
-@pytest.mark.parametrize("major", [1, 2, 3, 4, 5, 6])
-def test_powershell_version_supported_rejects_pre_7_majors(major):
-    result = run_helper(f"Write-Host (Test-PowerShellVersionSupported -MajorVersion {major})")
+@pytest.mark.parametrize("version", ["1.0", "2.0", "3.0", "4.0", "5.1", "6.0", "6.2", "7.0", "7.1", "7.2", "7.3"])
+def test_powershell_version_supported_rejects_below_7_4(version):
+    result = run_helper(f"Write-Host (Test-PowerShellVersionSupported -Version ([version]'{version}'))")
     assert result.returncode == 0, result.stderr
     assert "False" in result.stdout
 
 
-@pytest.mark.parametrize("major", [7, 8, 9])
-def test_powershell_version_supported_accepts_7_and_above(major):
-    result = run_helper(f"Write-Host (Test-PowerShellVersionSupported -MajorVersion {major})")
+@pytest.mark.parametrize("version", ["7.4", "7.4.6", "7.5", "8.0", "9.0"])
+def test_powershell_version_supported_accepts_7_4_and_above(version):
+    result = run_helper(f"Write-Host (Test-PowerShellVersionSupported -Version ([version]'{version}'))")
     assert result.returncode == 0, result.stderr
     assert "True" in result.stdout
 
@@ -1032,6 +1033,112 @@ def test_main_script_rejects_a_bad_installer_hash_without_reaching_pip_or_pyinst
     assert "pyinstaller" not in combined.lower()
 
 
+# --- M-1: refuse up front, before any build work, if -BuildRoot's out\ is
+# already non-empty; proceed normally when it is empty or missing. ----------
+
+
+def test_main_script_refuses_when_buildroot_out_is_not_empty(fake_repo, tmp_path, non_profile_tmp_path):
+    repo, sha = fake_repo
+    inv = tmp_path / "inv.txt"
+    inv.write_text("not a real ship-set-inventory header\n", encoding="utf-8")
+    build_root = non_profile_tmp_path / "build-root"
+    stale_out = build_root / "out"
+    stale_out.mkdir(parents=True)
+    stale_zip = stale_out / "OrbitRx-Setup-5.2.0.zip"
+    stale_zip.write_bytes(b"stale zip from an earlier run")
+    console = tmp_path / "build-console.txt"
+    result = _run_script_through_tee(
+        repo, [f"-ExpectedSha {sha}", f"-CiInventory '{inv}'", "-AttestPersonalKit"],
+        build_root, console,
+    )
+    assert result.returncode != 0, combined_text(result)
+    console_text = console.read_text(encoding="utf-8", errors="replace")
+    assert "BUILD FAILED" in console_text
+    assert "already exists and is not empty" in console_text
+    assert "new, empty BuildRoot" in console_text
+    # Refused before any build work: the stale file is untouched, and this
+    # ran well before the CI-inventory-header-check that the malformed
+    # inv.txt above would otherwise have failed on.
+    assert stale_zip.read_bytes() == b"stale zip from an earlier run"
+    assert "CI-INVENTORY-HEADER-CHECK" not in console_text
+
+
+def test_main_script_proceeds_past_buildroot_check_when_out_is_missing(
+    fake_repo, tmp_path, non_profile_tmp_path
+):
+    repo, sha = fake_repo
+    inv = tmp_path / "inv.txt"
+    _write_inventory(inv, "5.2.0", sha)
+    build_root = non_profile_tmp_path / "build-root"  # does not exist at all
+    result = _run_script(
+        repo, [f"-ExpectedSha {sha}", f"-CiInventory '{inv}'", "-AttestPersonalKit"], build_root,
+    )
+    assert result.returncode != 0
+    text = combined_text(result)
+    assert "already exists and is not empty" not in text
+    # Proceeds past the M-1 check to the next gate (no -PythonInstaller given).
+    assert "-PythonInstaller not found" in text
+
+
+def test_main_script_proceeds_past_buildroot_check_when_out_is_empty(
+    fake_repo, tmp_path, non_profile_tmp_path
+):
+    repo, sha = fake_repo
+    inv = tmp_path / "inv.txt"
+    _write_inventory(inv, "5.2.0", sha)
+    build_root = non_profile_tmp_path / "build-root"
+    (build_root / "out").mkdir(parents=True)
+    result = _run_script(
+        repo, [f"-ExpectedSha {sha}", f"-CiInventory '{inv}'", "-AttestPersonalKit"], build_root,
+    )
+    assert result.returncode != 0
+    text = combined_text(result)
+    assert "already exists and is not empty" not in text
+    assert "-PythonInstaller not found" in text
+
+
+# --- L-A: a missing or unparsable helpers file must still give a BUILD
+# FAILED line (not a StrictMode crash on an unset $zipPath in the catch). ---
+
+
+def test_main_script_reports_build_failed_when_helpers_file_is_missing(
+    fake_repo, tmp_path, non_profile_tmp_path
+):
+    repo, sha = fake_repo
+    (repo / "tools" / "build_release_local.helpers.ps1").unlink()
+    console = tmp_path / "build-console.txt"
+    result = _run_script_through_tee(
+        repo, [f"-ExpectedSha {sha}", "-AttestPersonalKit"],
+        non_profile_tmp_path / "build-root", console,
+    )
+    assert result.returncode != 0, combined_text(result)
+    assert console.is_file()
+    console_text = console.read_text(encoding="utf-8", errors="replace")
+    assert "BUILD FAILED" in console_text
+    assert "Helpers file not found" in console_text
+    # The old bug (L-A): the catch itself crashed on $zipPath before it was
+    # ever assigned, so this StrictMode message must NOT appear.
+    assert "cannot be retrieved because it has not been set" not in console_text
+
+
+def test_main_script_reports_build_failed_when_helpers_file_is_unparsable(
+    fake_repo, tmp_path, non_profile_tmp_path
+):
+    repo, sha = fake_repo
+    helpers_path = repo / "tools" / "build_release_local.helpers.ps1"
+    helpers_path.write_text("function Oops( {\n", encoding="utf-8")  # deliberately malformed
+    console = tmp_path / "build-console.txt"
+    result = _run_script_through_tee(
+        repo, [f"-ExpectedSha {sha}", "-AttestPersonalKit"],
+        non_profile_tmp_path / "build-root", console,
+    )
+    assert result.returncode != 0, combined_text(result)
+    assert console.is_file()
+    console_text = console.read_text(encoding="utf-8", errors="replace")
+    assert "BUILD FAILED" in console_text
+    assert "cannot be retrieved because it has not been set" not in console_text
+
+
 # --- NEW-1: a terminating failure must still reach build-console.txt when
 # run exactly as BUILD-RELEASE.md documents it: `*>&1 | Tee-Object -FilePath
 # build-console.txt`. An uncaught `throw` short-circuits that pipeline
@@ -1131,34 +1238,35 @@ def test_build_failed_message_names_the_main_script_when_the_throw_is_there(
     assert re.search(r"\(build_release_local\.ps1:\d+\)", console_text)
 
 
-# --- N5b/N5c: the plain inline PowerShell-7 version gate, exercised via its
-# real extracted condition/body text (see module docstring). -----------------
+# --- N5b/N5c/I-1: the plain inline PowerShell-version gate, exercised via
+# its real extracted condition/body text (see module docstring). Floor is
+# the full version 7.4, not just major version 7. ---------------------------
 
 
-def _run_inline_version_gate(major: int) -> subprocess.CompletedProcess:
-    gate_text = _extract_ast_node_text("IfStatementAst", r"PSVersionTable\.PSVersion\.Major -lt 7")
+def _run_inline_version_gate(version: str) -> subprocess.CompletedProcess:
+    gate_text = _extract_ast_node_text("IfStatementAst", r"PSVersionTable\.PSVersion -lt \[version\]'7\.4'")
     faked = gate_text.replace("$PSVersionTable", "$FakeVersionTable")
     command = (
-        f"$FakeVersionTable = [pscustomobject]@{{ PSVersion = [version]'{major}.0.0' }}\n"
+        f"$FakeVersionTable = [pscustomobject]@{{ PSVersion = [version]'{version}' }}\n"
         f"{faked}\n"
         "Write-Host 'GATE-DID-NOT-EXIT'\n"
     )
     return run_pwsh(command)
 
 
-@pytest.mark.parametrize("major", [1, 5, 6])
-def test_inline_version_gate_stops_pre_7_majors(major):
-    result = _run_inline_version_gate(major)
+@pytest.mark.parametrize("version", ["1.0", "5.1", "6.0", "7.0", "7.3"])
+def test_inline_version_gate_stops_below_7_4(version):
+    result = _run_inline_version_gate(version)
     text = combined_text(result)
     assert result.returncode != 0, text
     assert "BUILD FAILED" in text
-    assert "PowerShell 7 or later is required" in text
+    assert "PowerShell 7.4 or later is required" in text
     assert "GATE-DID-NOT-EXIT" not in result.stdout
 
 
-@pytest.mark.parametrize("major", [7, 8])
-def test_inline_version_gate_allows_7_and_above(major):
-    result = _run_inline_version_gate(major)
+@pytest.mark.parametrize("version", ["7.4", "7.4.6", "7.5", "8.0"])
+def test_inline_version_gate_allows_7_4_and_above(version):
+    result = _run_inline_version_gate(version)
     assert result.returncode == 0, combined_text(result)
     assert "GATE-DID-NOT-EXIT" in result.stdout
     assert "BUILD FAILED" not in result.stdout
@@ -1642,6 +1750,57 @@ def test_invoke_shipped_notices_check_passes_when_all_hashes_match(tmp_path):
     assert "SHIPPED-NOTICES: PASS" in result.stdout
 
 
+# --- C6: the "tool-caches" region (section d), extracted from the main
+# script and run standalone against a fake -BuildRoot. -----------------------
+
+
+def test_tool_caches_region_points_pip_and_pyinstaller_caches_under_buildroot(tmp_path):
+    region_text = _extract_region_text("tool-caches")
+    build_root = tmp_path / "build-root"
+    command = (
+        f"$BuildRoot = '{build_root}'\n"
+        f"{region_text}\n"
+        "Write-Output \"PIP_CACHE_DIR=$env:PIP_CACHE_DIR\"\n"
+        "Write-Output \"PYINSTALLER_CONFIG_DIR=$env:PYINSTALLER_CONFIG_DIR\"\n"
+    )
+    result = run_pwsh(command)
+    assert result.returncode == 0, combined_text(result)
+    assert "TOOL-CACHES: PASS" in result.stdout
+    pip_match = re.search(r"PIP_CACHE_DIR=(.+)", result.stdout)
+    pyi_match = re.search(r"PYINSTALLER_CONFIG_DIR=(.+)", result.stdout)
+    assert pip_match and pyi_match, result.stdout
+    pip_dir = Path(pip_match.group(1).strip())
+    pyi_dir = Path(pyi_match.group(1).strip())
+    # Both env vars must point at real, already-created directories under
+    # -BuildRoot (not the host's default %LOCALAPPDATA%/%TEMP% locations),
+    # and be distinct from each other.
+    assert pip_dir.is_dir()
+    assert pyi_dir.is_dir()
+    assert pip_dir.is_relative_to(build_root)
+    assert pyi_dir.is_relative_to(build_root)
+    assert pip_dir != pyi_dir
+
+
+def test_tool_caches_region_does_not_touch_temp_or_tmp(tmp_path):
+    # Deliberate choice (see the region's own comment): redirecting
+    # $env:TEMP/$env:TMP would change what Format-RedactedText treats as
+    # "this PC's temp folder" for every redaction call after this point.
+    region_text = _extract_region_text("tool-caches")
+    build_root = tmp_path / "build-root"
+    command = (
+        "$env:TEMP = '/original/temp'\n"
+        "$env:TMP = '/original/tmp'\n"
+        f"$BuildRoot = '{build_root}'\n"
+        f"{region_text}\n"
+        "Write-Output \"TEMP=$env:TEMP\"\n"
+        "Write-Output \"TMP=$env:TMP\"\n"
+    )
+    result = run_pwsh(command)
+    assert result.returncode == 0, combined_text(result)
+    assert "TEMP=/original/temp" in result.stdout
+    assert "TMP=/original/tmp" in result.stdout
+
+
 # --- N2e/P14/P15: the "pack-l6" region (section i), extracted from the main
 # script and run standalone in a fake git repo with stubbed tool scripts. ----
 
@@ -1950,3 +2109,21 @@ def test_sums_line_region_prints_the_not_for_publication_marker_immediately_befo
     assert "P8" in lines[marker_idx]
     assert marker_idx + 1 < len(lines), "the SUMS line must immediately follow the marker"
     assert lines[marker_idx + 1] == f"{zip_sha256}  {zip_name}"
+
+
+def test_sums_line_region_labels_rather_than_instructs(tmp_path):
+    # I-3: the old "REMINDER (L9): append exactly this one line..." wording
+    # read as an instruction to act now, including during a dry run, where
+    # appending it would be wrong. It must now read as a label for what the
+    # marker+SUMS line below are, not a command, and the old wording must
+    # be gone.
+    zip_sha256 = "b" * 64
+    zip_name = "OrbitRxMonitor-5.2.0-Setup.zip"
+    result = _run_sums_line_region(zip_sha256, zip_name)
+    assert result.returncode == 0, combined_text(result)
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    label_idx = next(i for i, line in enumerate(lines) if "SUMS line for a QA/Risk-cleared build only" in line)
+    assert "(see marker)" in lines[label_idx]
+    marker_idx = next(i for i, line in enumerate(lines) if "DRY-RUN ONLY" in line)
+    assert label_idx < marker_idx
+    assert "REMINDER (L9)" not in combined_text(result)

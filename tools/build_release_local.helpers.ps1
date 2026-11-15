@@ -12,14 +12,17 @@
 
 Set-StrictMode -Version Latest
 
-# --- NEW-5: PowerShell version gate -------------------------------------------
+# --- NEW-5/I-1: PowerShell version gate ---------------------------------------
 # A pure boolean decision (no $PSVersionTable read here) so pwsh-driven tests
-# can exercise the >=7 boundary with synthetic major-version numbers, without
-# needing an actual Windows PowerShell 5.1 engine to run it on.
+# can exercise the >=7.4 boundary with synthetic [version] objects, without
+# needing an actual Windows PowerShell 5.1 (or 7.0-7.3) engine to run it on.
+# I-1: the floor is the full version 7.4, not just major version 7 -- every
+# 7.x release below 7.4 (7.0, 7.1, 7.2, 7.3) must refuse too, to match CI's
+# own pwsh version and this script's #Requires/inline-check floor.
 
 function Test-PowerShellVersionSupported {
-    param([int]$MajorVersion)
-    return $MajorVersion -ge 7
+    param([version]$Version)
+    return $Version -ge [version]'7.4'
 }
 
 # --- Hash / pin comparison helpers -------------------------------------------

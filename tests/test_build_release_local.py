@@ -84,6 +84,27 @@ def test_n8_early_build_root_outside_userprofile_check():
     assert SCRIPT.index("Assert-BuildRootOutsideUserProfile") < SCRIPT.index("# --- b.")
 
 
+def test_m1_refuses_up_front_on_a_non_empty_buildroot_out():
+    # M-1: before any build work (pip install, PyInstaller, the 20-40
+    # minute build), refuse if -BuildRoot's out\ already exists and holds
+    # something -- not just let the packer's own "<out>.pending" cleanup
+    # (NEW-2/L-4a) silently leave a stale public zip behind. Must run after
+    # the BuildRoot path guard (so $BuildRoot is known-safe) but before the
+    # clean-clone check (step b), i.e. before any git/build work starts.
+    assert "Assert-BuildRootOutsideUserProfile" in SCRIPT
+    section = SCRIPT.split("Assert-BuildRootOutsideUserProfile -BuildRootFull $buildRootFull", 1)[1].split(
+        "# --- b.", 1
+    )[0]
+    assert "$outDir = Join-Path $BuildRoot 'out'" in section
+    assert "Get-ChildItem -LiteralPath $outDir -Force" in section
+    assert "already exists and is not empty" in section
+    assert "new, empty BuildRoot" in section
+    assert "throw" in section
+    # Only one definition of $outDir in the whole script -- section g (the
+    # ship-set/PE/PYZ gates) must reuse it, not recompute it a second time.
+    assert SCRIPT.count("$outDir = Join-Path $BuildRoot 'out'") == 1
+
+
 def test_checks_head_against_expected_sha():
     assert "$ExpectedSha" in SCRIPT
     assert "git rev-parse HEAD" in SCRIPT
@@ -370,6 +391,20 @@ def test_top_level_catch_removes_a_still_pending_zip_and_extracted_dir():
     assert declare_pos < first_risky_pos
 
 
+def test_la_zippath_declared_above_the_top_level_try_not_just_near_its_top():
+    # L-A: before this fix, $zipPath/$extractDir/$zipFinalized were declared
+    # inside the top-level try but AFTER the helpers dot-source, so a
+    # missing or unparsable helpers file made the catch crash on an unset
+    # $zipPath under Set-StrictMode instead of printing a BUILD FAILED
+    # line. They must be declared above `try {` entirely.
+    try_pos = SCRIPT.index("\ntry {")
+    declare_pos = SCRIPT.index("$zipPath = $null")
+    dot_source_pos = SCRIPT.index(". (Join-Path $PSScriptRoot 'build_release_local.helpers.ps1')")
+    assert declare_pos < try_pos < dot_source_pos
+    assert SCRIPT.index("$extractDir = $null") < try_pos
+    assert SCRIPT.index("$zipFinalized = $false") < try_pos
+
+
 def test_inno_setup_version_is_read_from_file_version_info():
     assert "(Get-Item $Iscc).VersionInfo" in SCRIPT
     assert "ProductVersion" in SCRIPT
@@ -387,6 +422,14 @@ def test_build_root_defaults_outside_the_clone():
 
 def test_l9_sums_reminder_does_not_overwrite_the_existing_line():
     assert "do NOT touch the existing 5.1.0 line" in SCRIPT or "do not touch the existing 5.1.0" in SCRIPT.lower()
+
+
+def test_i3_sums_line_label_is_not_phrased_as_an_instruction():
+    # I-3: "REMINDER (L9): append exactly this one line..." read like
+    # something to do on every run, including a dry run, where doing so
+    # would be wrong. It must be gone, replaced by a label.
+    assert "REMINDER (L9)" not in SCRIPT
+    assert "SUMS line for a QA/Risk-cleared build only (see marker):" in SCRIPT
 
 
 def test_ci_parse_checks_build_release_local_ps1_and_helpers():
@@ -596,26 +639,32 @@ def test_dry_run_reminder_is_printed():
 # exits 0. -----------------------------------------------------------------
 
 
-def test_requires_statement_gates_powershell_7():
-    # L-1: #Requires stops a pre-7 host (including one that would otherwise
-    # ignore the inline check below) before any of this script's own code
-    # runs at all. Must appear before the param block.
-    assert "#Requires -Version 7.0" in SCRIPT
-    assert SCRIPT.index("#Requires -Version 7.0") < SCRIPT.index("[CmdletBinding()]")
+def test_requires_statement_gates_powershell_7_4():
+    # L-1/I-1: #Requires stops a below-7.4 host (including one that would
+    # otherwise ignore the inline check below) before any of this script's
+    # own code runs at all. Must appear before the param block. The floor
+    # is 7.4, matching CI's own pwsh version -- not just major version 7.
+    assert "#Requires -Version 7.4" in SCRIPT
+    assert "#Requires -Version 7.0" not in SCRIPT
+    assert SCRIPT.index("#Requires -Version 7.4") < SCRIPT.index("[CmdletBinding()]")
 
 
 def test_inline_version_check_runs_before_strict_mode_and_dot_source():
-    # L-1: fail closed even if a host somehow ignores #Requires, or the
+    # L-1/I-1: fail closed even if a host somehow ignores #Requires, or the
     # dot-sourced helpers file below fails to load -- this plain check (no
     # dependency on the helpers file, so it survives a broken/missing one)
-    # must run before Set-StrictMode and before the dot-source.
-    gate_section = SCRIPT.split("$PSVersionTable.PSVersion.Major -lt 7", 1)[1].split("Set-StrictMode", 1)[0]
-    assert "PowerShell 7 or later is required" in gate_section
+    # must run before Set-StrictMode and before the dot-source. It compares
+    # the full version against 7.4, not just the Major component, so 7.0-7.3
+    # refuse here too.
+    needle = "$PSVersionTable.PSVersion -lt [version]'7.4'"
+    gate_section = SCRIPT.split(needle, 1)[1].split("Set-StrictMode", 1)[0]
+    assert "PowerShell 7.4 or later is required" in gate_section
     assert "BUILD FAILED" in gate_section
     assert "exit 1" in gate_section
     dot_source_line = ". (Join-Path $PSScriptRoot 'build_release_local.helpers.ps1')"
-    assert SCRIPT.index("$PSVersionTable.PSVersion.Major -lt 7") < SCRIPT.index("Set-StrictMode -Version Latest")
-    assert SCRIPT.index("$PSVersionTable.PSVersion.Major -lt 7") < SCRIPT.index(dot_source_line)
+    assert SCRIPT.index(needle) < SCRIPT.index("Set-StrictMode -Version Latest")
+    assert SCRIPT.index(needle) < SCRIPT.index(dot_source_line)
+    assert "PSVersionTable.PSVersion.Major -lt 7" not in SCRIPT
 
 
 def test_helpers_dot_source_is_guarded_and_inside_the_top_level_try():
@@ -634,15 +683,18 @@ def test_helpers_dot_source_is_guarded_and_inside_the_top_level_try():
 
 
 def test_powershell_7_helper_check_still_used_inside_try():
-    # NEW-5 (kept as a backstop, per L-1): Test-PowerShellVersionSupported
+    # NEW-5 (kept as a backstop, per L-1/I-1): Test-PowerShellVersionSupported
     # is still called from the main script, now after Set-StrictMode
     # (inside the top-level try, right after the dot-source), unlike the
-    # plain inline check above which runs before it.
+    # plain inline check above which runs before it. I-1: it is passed the
+    # full $PSVersionTable.PSVersion object, not just .Major, so it can
+    # enforce the 7.4 floor too.
     assert "Test-PowerShellVersionSupported" in HELPERS
     assert "Test-PowerShellVersionSupported" in SCRIPT
-    gate_section = SCRIPT.split("Test-PowerShellVersionSupported -MajorVersion", 1)[1][:400]
-    assert "PowerShell 7 or later is required" in gate_section
-    assert SCRIPT.index("Test-PowerShellVersionSupported -MajorVersion") > SCRIPT.index("Set-StrictMode -Version Latest")
+    assert "Test-PowerShellVersionSupported -MajorVersion" not in SCRIPT
+    gate_section = SCRIPT.split("Test-PowerShellVersionSupported -Version $PSVersionTable.PSVersion", 1)[1][:400]
+    assert "PowerShell 7.4 or later is required" in gate_section
+    assert SCRIPT.index("Test-PowerShellVersionSupported -Version $PSVersionTable.PSVersion") > SCRIPT.index("Set-StrictMode -Version Latest")
 
 
 def test_script_body_is_wrapped_in_a_top_level_try_catch_with_explicit_exits():
@@ -819,3 +871,43 @@ def test_build_release_md_mentions_the_local_tests_gate_skips_the_live_noaa_test
     # R-d (Risk round): this is a deliberate departure from "run CI's exact
     # suite" -- it must be surfaced for Risk to review, not buried.
     assert "Risk asked to review" in step14_flat
+
+
+# --- Next fix round (risk-r3.md / qa-9a817f1.md): M-1, L-A, I-1, I-3, C6. ----
+
+
+def test_c6_pip_and_pyinstaller_caches_point_under_buildroot():
+    assert "$env:PIP_CACHE_DIR = $pipCacheDir" in SCRIPT
+    assert "$env:PYINSTALLER_CONFIG_DIR = $pyinstallerConfigDir" in SCRIPT
+    assert "Join-Path $BuildRoot 'cache\\pip'" in SCRIPT
+    assert "Join-Path $BuildRoot 'cache\\pyinstaller'" in SCRIPT
+    # Must run before the venv (and so before pip/PyInstaller are ever
+    # invoked), and must not touch $env:TEMP/$env:TMP (see the region's own
+    # comment for why: Format-RedactedText reads those fresh on every call).
+    assert SCRIPT.index("$env:PIP_CACHE_DIR = $pipCacheDir") < SCRIPT.index("$venvDir = Join-Path $BuildRoot 'venv'")
+    assert "$env:TEMP =" not in SCRIPT
+    assert "$env:TMP =" not in SCRIPT
+    assert "pip=$pipCacheDir pyinstaller=$pyinstallerConfigDir" in SCRIPT
+
+
+def test_c6_provenance_records_the_cache_locations_under_buildroot():
+    assert "Tool caches (C6):" in SCRIPT
+    assert "pip=$pipCacheDir pyinstaller=$pyinstallerConfigDir" in SCRIPT
+    provenance_section = SCRIPT.split("$provenanceLines = @(", 1)[1].split("$provenanceText =", 1)[0]
+    assert "Tool caches (C6)" in provenance_section
+
+
+def test_build_release_md_documents_the_new_empty_buildroot_requirement():
+    # M-1: deleting -BuildRoot before every attempt is now mandatory, not
+    # just a failure-recovery preference, because the script itself refuses
+    # on a non-empty out\.
+    assert "new, empty `-BuildRoot`" in BUILD_RELEASE_MD or "new, empty -BuildRoot" in BUILD_RELEASE_MD_FLAT
+    step14 = BUILD_RELEASE_MD.split("\n14. ", 1)[1].split("\n15. ", 1)[0]
+    assert "not optional" in step14
+    assert "M-1" in step14 or "M-1" in BUILD_RELEASE_MD
+
+
+def test_build_release_md_documents_tool_caches_under_buildroot():
+    assert "PIP_CACHE_DIR" in BUILD_RELEASE_MD
+    assert "PYINSTALLER_CONFIG_DIR" in BUILD_RELEASE_MD
+    assert "C6" in BUILD_RELEASE_MD
