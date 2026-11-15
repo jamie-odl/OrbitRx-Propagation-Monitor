@@ -506,30 +506,43 @@ def _run_pack(args: argparse.Namespace) -> int:
     if args.onedir is None or args.installer is None or args.out is None:
         print("--onedir, --installer and --out are all required together", file=sys.stderr)
         return 2
+    # NEW-2: never leave a ready-made zip at the final name unless it has
+    # already passed both verify_zip_layout and (when given) the L5
+    # --expect-inventory compare. Build and check it at "<out>.partial"
+    # first; only os.replace() it to args.out once every check has passed.
+    # Any failure along the way deletes the partial -- the final name is
+    # never created at all for a failed attempt, so a caller can't mistake
+    # a half-checked zip for a good one.
+    partial_path = args.out.with_name(args.out.name + ".partial")
     try:
         epoch = resolve_epoch(args.epoch, args.source_date_epoch)
-        build_deterministic_zip(args.onedir, args.installer, args.out, epoch)
-        problems = verify_zip_layout(args.out, expect_epoch=epoch)
+        build_deterministic_zip(args.onedir, args.installer, partial_path, epoch)
+        problems = verify_zip_layout(partial_path, expect_epoch=epoch)
     except (PackError, ValueError) as exc:
         print(f"pack failed: {exc}", file=sys.stderr)
+        partial_path.unlink(missing_ok=True)
         return 1
     if problems:
         print("post-write verification failed:", file=sys.stderr)
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
+        partial_path.unlink(missing_ok=True)
         return 1
+    if args.expect_inventory is not None:
+        inventory_problems = compare_inventory(partial_path, args.expect_inventory)
+        if inventory_problems:
+            print(f"ship-set-inventory mismatch against {args.expect_inventory}:", file=sys.stderr)
+            for problem in inventory_problems:
+                print(f"  {problem}", file=sys.stderr)
+            partial_path.unlink(missing_ok=True)
+            return 1
+    os.replace(partial_path, args.out)
     with zipfile.ZipFile(args.out) as zf:
         member_count = len(zf.namelist())
     digest = hashlib.sha256(args.out.read_bytes()).hexdigest()
     print(f"wrote {args.out} ({member_count} members)")
     print(f"sha256 {digest}")
     if args.expect_inventory is not None:
-        inventory_problems = compare_inventory(args.out, args.expect_inventory)
-        if inventory_problems:
-            print(f"ship-set-inventory mismatch against {args.expect_inventory}:", file=sys.stderr)
-            for problem in inventory_problems:
-                print(f"  {problem}", file=sys.stderr)
-            return 1
         print(f"ship-set-inventory match: {args.expect_inventory}")
     return 0
 

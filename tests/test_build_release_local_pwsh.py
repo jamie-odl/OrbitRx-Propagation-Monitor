@@ -152,6 +152,53 @@ def test_get_ship_set_inventory_header_rejects_a_missing_file(tmp_path):
     assert "not found" in combined_text(result)
 
 
+# X3: the header regex must require a full 40-hex commit and must be
+# anchored at both ends -- a loosened version (shorter SHA accepted, or no
+# ^/$ anchors) would let a truncated or embedded-in-garbage header through.
+
+
+def test_get_ship_set_inventory_header_rejects_a_short_sha(tmp_path):
+    inv = tmp_path / "ship-set-inventory.txt"
+    inv.write_text("version=5.2.0 commit=abc1234\nmore\n", encoding="utf-8")
+    result = run_helper(f"Get-ShipSetInventoryHeader -Path '{inv}'")
+    assert result.returncode != 0
+    assert "does not match" in combined_text(result)
+
+
+def test_get_ship_set_inventory_header_rejects_a_39_char_sha(tmp_path):
+    inv = tmp_path / "ship-set-inventory.txt"
+    inv.write_text("version=5.2.0 commit=" + "a" * 39 + "\n", encoding="utf-8")
+    result = run_helper(f"Get-ShipSetInventoryHeader -Path '{inv}'")
+    assert result.returncode != 0
+    assert "does not match" in combined_text(result)
+
+
+def test_get_ship_set_inventory_header_rejects_leading_garbage_before_version(tmp_path):
+    inv = tmp_path / "ship-set-inventory.txt"
+    inv.write_text("xxx version=5.2.0 commit=" + "a" * 40 + "\n", encoding="utf-8")
+    result = run_helper(f"Get-ShipSetInventoryHeader -Path '{inv}'")
+    assert result.returncode != 0
+    assert "does not match" in combined_text(result)
+
+
+def test_get_ship_set_inventory_header_rejects_trailing_garbage_after_commit(tmp_path):
+    inv = tmp_path / "ship-set-inventory.txt"
+    inv.write_text("version=5.2.0 commit=" + "a" * 40 + "xyz\n", encoding="utf-8")
+    result = run_helper(f"Get-ShipSetInventoryHeader -Path '{inv}'")
+    assert result.returncode != 0
+    assert "does not match" in combined_text(result)
+
+
+def test_get_ship_set_inventory_header_rejects_a_41_char_sha(tmp_path):
+    # 41 hex characters is not a valid 40-hex SHA either -- must still be
+    # rejected (guards against a mutant that changes {40} to {40,}).
+    inv = tmp_path / "ship-set-inventory.txt"
+    inv.write_text("version=5.2.0 commit=" + "a" * 41 + "\n", encoding="utf-8")
+    result = run_helper(f"Get-ShipSetInventoryHeader -Path '{inv}'")
+    assert result.returncode != 0
+    assert "does not match" in combined_text(result)
+
+
 def test_assert_ci_inventory_matches_build_rejects_wrong_commit():
     header = "[PSCustomObject]@{ Version = '5.2.0'; Commit = 'a' * 40 -join '' }"
     result = run_helper(
@@ -363,6 +410,159 @@ def test_get_subst_drive_letters_sees_a_live_subst(tmp_path):
         subprocess.run(["subst", f"{letter}:", "/D"], capture_output=True, text=True)
 
 
+# --- P6: Python installer sha256 + md5 pin (as a pure helper) ---------------
+
+
+GOOD_SHA256 = "aa" * 32
+GOOD_MD5 = "bb" * 16
+
+
+def _python_pin(sha256=GOOD_SHA256, md5=GOOD_MD5):
+    return "[PSCustomObject]@{ installer_sha256 = '" + sha256 + "'; installer_md5 = '" + md5 + "' }"
+
+
+def test_assert_python_installer_hashes_match_passes_when_both_match():
+    result = run_helper(
+        f"$pin = {_python_pin()}\n"
+        f"Assert-PythonInstallerHashesMatch -Sha256 '{GOOD_SHA256}' -Md5 '{GOOD_MD5}' -PythonPin $pin\n"
+        "Write-Host DONE"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "DONE" in result.stdout
+
+
+def test_assert_python_installer_hashes_match_rejects_wrong_sha256():
+    result = run_helper(
+        f"$pin = {_python_pin()}\n"
+        f"Assert-PythonInstallerHashesMatch -Sha256 'deadbeef' -Md5 '{GOOD_MD5}' -PythonPin $pin"
+    )
+    assert result.returncode != 0
+    text = combined_text(result)
+    assert "Python installer sha256" in text
+    assert "!=" in text
+
+
+def test_assert_python_installer_hashes_match_rejects_wrong_md5_even_when_sha256_matches():
+    # P6: this is the specific mutant to kill -- the md5 half of the check
+    # removed entirely. A matching sha256 alone must not be enough to pass.
+    result = run_helper(
+        f"$pin = {_python_pin()}\n"
+        f"Assert-PythonInstallerHashesMatch -Sha256 '{GOOD_SHA256}' -Md5 'deadbeef' -PythonPin $pin"
+    )
+    assert result.returncode != 0
+    text = combined_text(result)
+    assert "Python installer md5" in text
+    assert "!=" in text
+
+
+# --- P8: Authenticode signature + signer-subject check (as a pure helper) ---
+
+
+def _signature(status="Valid", subject="CN=Python Software Foundation, O=Python Software Foundation"):
+    return "[PSCustomObject]@{ Status = '" + status + "'; SignerCertificate = [PSCustomObject]@{ Subject = '" + subject + "' } }"
+
+
+def test_assert_authenticode_signature_valid_passes_on_a_good_signature():
+    result = run_helper(
+        f"$sig = {_signature()}\n"
+        "Assert-AuthenticodeSignatureValid -Signature $sig -Label 'thing' "
+        "-SignerSubjectContains 'Python Software Foundation'\n"
+        "Write-Host DONE"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "DONE" in result.stdout
+
+
+def test_assert_authenticode_signature_valid_rejects_a_non_valid_status():
+    result = run_helper(
+        f"$sig = {_signature(status='NotSigned')}\n"
+        "Assert-AuthenticodeSignatureValid -Signature $sig -Label 'thing' "
+        "-SignerSubjectContains 'Python Software Foundation'"
+    )
+    assert result.returncode != 0
+    text = combined_text(result)
+    assert "thing Authenticode signature status is NotSigned" in text
+    assert "expected Valid" in text
+
+
+def test_assert_authenticode_signature_valid_rejects_wrong_signer_even_when_status_is_valid():
+    # P8: this is the specific mutant to kill -- the python.exe check
+    # dropped. A Valid status alone must not be enough; the signer subject
+    # must also contain the pinned substring.
+    result = run_helper(
+        f"$sig = {_signature(subject='CN=Someone Else')}\n"
+        "Assert-AuthenticodeSignatureValid -Signature $sig -Label 'python.exe' "
+        "-SignerSubjectContains 'Python Software Foundation'"
+    )
+    assert result.returncode != 0
+    text = combined_text(result)
+    assert "python.exe signer subject" in text
+    assert "does not contain" in text
+
+
+# --- P12: OpenSSL per-DLL pin check (as a pure helper) -----------------------
+
+
+GOOD_DLL_SHA256 = "cc" * 32
+
+
+def _dll_pin_entry(file_version="3.0.16", sha256=GOOD_DLL_SHA256):
+    return "[PSCustomObject]@{ file_version = '" + file_version + "'; sha256 = '" + sha256 + "' }"
+
+
+def test_get_openssl_dll_pin_problems_is_clean_on_a_full_match():
+    result = run_helper(
+        f"$pin = {_dll_pin_entry()}\n"
+        "$p = @(Get-OpenSslDllPinProblems -DllName 'libcrypto-3.dll' -DirectoryName 'C:\\onedir\\_internal' "
+        f"-ExpectedDirectory 'C:\\onedir\\_internal' -FileVersion '3.0.16' -Sha256 '{GOOD_DLL_SHA256}' "
+        "-PinEntry $pin)\n"
+        "Write-Host \"COUNT=$($p.Count)\""
+    )
+    assert result.returncode == 0, result.stderr
+    assert "COUNT=0" in result.stdout
+
+
+def test_get_openssl_dll_pin_problems_flags_wrong_sha256_even_when_version_and_dir_match():
+    # P12: this is the specific mutant to kill -- the sha256 compare
+    # removed. A matching FileVersion and directory alone must not be
+    # enough to pass.
+    result = run_helper(
+        f"$pin = {_dll_pin_entry()}\n"
+        "$p = Get-OpenSslDllPinProblems -DllName 'libcrypto-3.dll' -DirectoryName 'C:\\onedir\\_internal' "
+        "-ExpectedDirectory 'C:\\onedir\\_internal' -FileVersion '3.0.16' -Sha256 'deadbeef' "
+        "-PinEntry $pin\n"
+        "Write-Host ($p -join '|')"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "libcrypto-3.dll sha256" in result.stdout
+    assert "!=" in result.stdout
+
+
+def test_get_openssl_dll_pin_problems_flags_wrong_directory():
+    result = run_helper(
+        f"$pin = {_dll_pin_entry()}\n"
+        "$p = Get-OpenSslDllPinProblems -DllName 'libcrypto-3.dll' -DirectoryName 'C:\\wrong\\place' "
+        f"-ExpectedDirectory 'C:\\onedir\\_internal' -FileVersion '3.0.16' -Sha256 '{GOOD_DLL_SHA256}' "
+        "-PinEntry $pin\n"
+        "Write-Host ($p -join '|')"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "is not at _internal" in result.stdout
+
+
+def test_get_openssl_dll_pin_problems_flags_wrong_file_version():
+    result = run_helper(
+        f"$pin = {_dll_pin_entry()}\n"
+        "$p = Get-OpenSslDllPinProblems -DllName 'libcrypto-3.dll' -DirectoryName 'C:\\onedir\\_internal' "
+        f"-ExpectedDirectory 'C:\\onedir\\_internal' -FileVersion '9.9.9' -Sha256 '{GOOD_DLL_SHA256}' "
+        "-PinEntry $pin\n"
+        "Write-Host ($p -join '|')"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "FileVersion" in result.stdout
+    assert "!=" in result.stdout
+
+
 # --- Publisher-check logic ----------------------------------------------------
 
 
@@ -455,6 +655,33 @@ def test_managed_device_status_refuses_on_domain_joined():
     assert "managed/employer device" in result.stdout
 
 
+def test_managed_device_status_refuses_on_azure_ad_joined_alone():
+    # X9: this is the specific mutant to kill -- AzureAdJoined dropped from
+    # the refuse list. DomainJoined/EnterpriseJoined being NO must not be
+    # enough to let an Azure AD-joined machine through.
+    result = run_helper(
+        "$f = @{ DomainJoined = 'NO'; AzureAdJoined = 'YES'; EnterpriseJoined = 'NO'; WorkplaceJoined = 'NO' }; "
+        "$r = Test-ManagedDeviceStatus -Flags $f; "
+        "Write-Host \"$($r.Refuse)|$($r.Message)\""
+    )
+    assert result.returncode == 0, result.stderr
+    assert "True|" in result.stdout
+    assert "managed/employer device" in result.stdout
+    assert "AzureAdJoined" in result.stdout
+
+
+def test_managed_device_status_refuses_on_enterprise_joined_alone():
+    result = run_helper(
+        "$f = @{ DomainJoined = 'NO'; AzureAdJoined = 'NO'; EnterpriseJoined = 'YES'; WorkplaceJoined = 'NO' }; "
+        "$r = Test-ManagedDeviceStatus -Flags $f; "
+        "Write-Host \"$($r.Refuse)|$($r.Message)\""
+    )
+    assert result.returncode == 0, result.stderr
+    assert "True|" in result.stdout
+    assert "managed/employer device" in result.stdout
+    assert "EnterpriseJoined" in result.stdout
+
+
 def test_managed_device_status_only_warns_on_workplace_joined():
     result = run_helper(
         "$f = @{ DomainJoined = 'NO'; AzureAdJoined = 'NO'; EnterpriseJoined = 'NO'; WorkplaceJoined = 'YES' }; "
@@ -474,6 +701,23 @@ def test_managed_device_status_is_clean_when_nothing_is_joined():
     )
     assert result.returncode == 0, result.stderr
     assert "False|refuse-msg=|warn=" in result.stdout
+
+
+# --- NEW-5: PowerShell version gate ------------------------------------------
+
+
+@pytest.mark.parametrize("major", [1, 2, 3, 4, 5, 6])
+def test_powershell_version_supported_rejects_pre_7_majors(major):
+    result = run_helper(f"Write-Host (Test-PowerShellVersionSupported -MajorVersion {major})")
+    assert result.returncode == 0, result.stderr
+    assert "False" in result.stdout
+
+
+@pytest.mark.parametrize("major", [7, 8, 9])
+def test_powershell_version_supported_accepts_7_and_above(major):
+    result = run_helper(f"Write-Host (Test-PowerShellVersionSupported -MajorVersion {major})")
+    assert result.returncode == 0, result.stderr
+    assert "True" in result.stdout
 
 
 # --- Main script: bad-input early exits, never reaching pip/pyinstaller -----
@@ -684,3 +928,76 @@ def test_main_script_rejects_a_bad_installer_hash_without_reaching_pip_or_pyinst
     # The failure must happen before any dependency install or build step.
     assert "pip" not in combined.lower()
     assert "pyinstaller" not in combined.lower()
+
+
+# --- NEW-1: a terminating failure must still reach build-console.txt when
+# run exactly as BUILD-RELEASE.md documents it: `*>&1 | Tee-Object -FilePath
+# build-console.txt`. An uncaught `throw` short-circuits that pipeline
+# before Tee-Object ever sees it (only the interactive host would show it),
+# which would lose the dry run's failure reason for whoever reviews
+# build-console.txt. The script must catch it itself and report it through
+# the success stream instead. ----------------------------------------------
+
+
+def _run_script_through_tee(
+    repo: Path, extra_args: list[str], build_root: Path, console_path: Path
+) -> subprocess.CompletedProcess:
+    """Runs the script through the exact pipeline shape BUILD-RELEASE.md
+    documents, so this test exercises the real invocation -- not a
+    try/catch wrapper (like _run_script above) that would mask the bug
+    NEW-1 exists to catch."""
+    args = " ".join(extra_args)
+    command = (
+        f"& '{repo / 'tools' / 'build_release_local.ps1'}' {args} "
+        f"-BuildRoot '{build_root}' *>&1 | Tee-Object -FilePath '{console_path}'\n"
+        "exit $LASTEXITCODE"
+    )
+    return run_pwsh(command, cwd=repo)
+
+
+def test_build_failed_reaches_console_file_through_tee_on_wrong_ci_inventory_commit(
+    fake_repo, tmp_path, non_profile_tmp_path
+):
+    repo, sha = fake_repo
+    inv = tmp_path / "inv.txt"
+    _write_inventory(inv, "5.2.0", "c" * 40)  # well-formed, but not this build's commit
+    console = tmp_path / "build-console.txt"
+    result = _run_script_through_tee(
+        repo, [f"-ExpectedSha {sha}", f"-CiInventory '{inv}'", "-AttestPersonalKit"],
+        non_profile_tmp_path / "build-root", console,
+    )
+    assert result.returncode != 0, combined_text(result)
+    assert console.is_file()
+    console_text = console.read_text(encoding="utf-8", errors="replace")
+    assert "BUILD FAILED" in console_text
+    assert "does not match -ExpectedSha" in console_text
+
+
+def test_build_failed_reaches_console_file_through_tee_on_missing_attest_personal_kit(
+    fake_repo, tmp_path, non_profile_tmp_path
+):
+    repo, sha = fake_repo
+    inv = tmp_path / "inv.txt"
+    _write_inventory(inv, "5.2.0", sha)
+    console = tmp_path / "build-console.txt"
+    result = _run_script_through_tee(
+        repo, [f"-ExpectedSha {sha}", f"-CiInventory '{inv}'"],
+        non_profile_tmp_path / "build-root", console,
+    )
+    assert result.returncode != 0, combined_text(result)
+    assert console.is_file()
+    console_text = console.read_text(encoding="utf-8", errors="replace")
+    assert "BUILD FAILED" in console_text
+    assert "AttestPersonalKit must be passed" in console_text
+
+
+def test_build_failed_message_includes_a_script_line_number(fake_repo, tmp_path, non_profile_tmp_path):
+    repo, sha = fake_repo
+    console = tmp_path / "build-console.txt"
+    result = _run_script_through_tee(
+        repo, [f"-ExpectedSha {sha}"], non_profile_tmp_path / "build-root", console,
+    )
+    assert result.returncode != 0, combined_text(result)
+    console_text = console.read_text(encoding="utf-8", errors="replace")
+    assert "BUILD FAILED" in console_text
+    assert re.search(r"line \d+", console_text)

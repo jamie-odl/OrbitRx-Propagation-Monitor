@@ -8,11 +8,14 @@
     step by step, against a clean checkout of a known commit, then packs a
     deterministic OrbitRx-Setup-<VERSION>.zip with tools/pack_setup_zip.py.
 
-    This script never uploads, publishes, tags or pushes anything, and never
-    contacts any network host at all during the build (dependencies install
-    from the committed, fully hash-pinned packaging/requirements-windows-build.lock.txt,
-    not from a live index). It never auto-installs Python or Inno Setup -- if
-    either is missing or fails a pin check, it stops with a clear message.
+    This script never uploads, publishes, tags or pushes anything. The one
+    network access it makes is pip downloading the wheels listed in the
+    committed, fully hash-pinned packaging/requirements-windows-build.lock.txt
+    from PyPI (--require-hashes enforces that every downloaded wheel matches
+    the pinned hash, not a live index's current contents); nothing else in
+    this script touches the network. It never auto-installs Python or Inno
+    Setup -- if either is missing or fails a pin check, it stops with a
+    clear message.
 
     -CiInventory is REQUIRED (L5): this script will not build without the
     exact SHA's ship-set-inventory.txt from CI. See BUILD-RELEASE.md.
@@ -21,8 +24,9 @@
     been told otherwise. Its zip is not a publish candidate by itself -- see
     BUILD-RELEASE.md's "Dry run" note and L10.
 
-    Run from a fresh clone, as described in BUILD-RELEASE.md. PowerShell
-    5.1 and 7 are both supported.
+    Run from a fresh clone, as described in BUILD-RELEASE.md. PowerShell 7
+    (pwsh) is required; it refuses to run on Windows PowerShell 5.1 with a
+    clear message rather than failing partway through.
 
 .PARAMETER ExpectedSha
     Full 40-hex commit SHA the clone's HEAD must already be checked out to.
@@ -68,14 +72,39 @@ param(
     [switch]$AttestPersonalKit
 )
 
+# --- Pure helpers (path guard, provenance PII check, inventory header parse,
+# hash/pin helpers, SHA/attestation validation, publisher-check logic,
+# PowerShell-version-support decision) live in a dot-sourced file so
+# tests/test_build_release_local_pwsh.py can call them directly with pwsh.
+# This dot-source itself, and the version gate right after it, are written
+# in plain syntax that also parses under Windows PowerShell 5.1, so a 5.1
+# user gets this script's own clear message below rather than a confusing
+# parse error or a failure midway into a step written for 7. See
+# tools/build_release_local.helpers.ps1.
+. (Join-Path $PSScriptRoot 'build_release_local.helpers.ps1')
+
+# --- NEW-5: PowerShell 7 (pwsh) is required ----------------------------------
+if (-not (Test-PowerShellVersionSupported -MajorVersion $PSVersionTable.PSVersion.Major)) {
+    Write-Output "BUILD FAILED: PowerShell 7 or later is required (found $($PSVersionTable.PSVersion)). Install PowerShell 7 and run this script with pwsh, not Windows PowerShell 5.1's powershell.exe -- see BUILD-RELEASE.md's Prerequisites."
+    exit 1
+}
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-# --- Pure helpers (path guard, provenance PII check, inventory header parse,
-# hash/pin helpers, SHA/attestation validation, publisher-check logic) live in
-# a dot-sourced file so tests/test_build_release_local_pwsh.py can call them
-# directly with pwsh. See tools/build_release_local.helpers.ps1.
-. (Join-Path $PSScriptRoot 'build_release_local.helpers.ps1')
+# --- Everything below runs inside one top-level try/catch so that a
+# terminating error -- however deep the throw -- still prints a single
+# "BUILD FAILED: ..." line to the SUCCESS output stream (Write-Output)
+# before the script exits. That matters because Jamie's documented
+# invocation is `... *>&1 | Tee-Object -FilePath build-console.txt`: an
+# uncaught terminating error cuts off the pipeline before Tee-Object ever
+# sees it (only the interactive host prints it), so build-console.txt --
+# the file sent to QA/Risk -- would otherwise be missing the one line that
+# explains why the dry run failed. Catching it here and reporting it with
+# Write-Output keeps the script's own execution "successful" from
+# PowerShell's point of view, so the message is carried by *>&1 just like
+# any other output.
+try {
 
 # --- Local helpers that need real processes/files (not pure, not dot-sourced)
 
@@ -112,16 +141,12 @@ function Invoke-OpenSslPinCheck {
         if (-not $dll) {
             throw "$($prop.Name) missing from ship set."
         }
-        if ($dll.DirectoryName -ne (Join-Path $Root '_internal')) {
-            throw "$($prop.Name) is not at _internal\$($prop.Name)."
-        }
         $fileVersion = "$($dll.VersionInfo.FileVersion)".Trim()
         $dllHash = Get-Sha256Hex $dll.FullName
-        if ($fileVersion -ne $prop.Value.file_version) {
-            throw "$($prop.Name) FileVersion $fileVersion != pinned $($prop.Value.file_version)."
-        }
-        if ($dllHash -ne $prop.Value.sha256) {
-            throw "$($prop.Name) sha256 $dllHash != pinned $($prop.Value.sha256)."
+        # @(...): same empty-array-collapses-to-$null guard as Invoke-PublisherCheck.
+        $problems = @(Get-OpenSslDllPinProblems -DllName $prop.Name -DirectoryName $dll.DirectoryName -ExpectedDirectory (Join-Path $Root '_internal') -FileVersion $fileVersion -Sha256 $dllHash -PinEntry $prop.Value)
+        if ($problems.Count -gt 0) {
+            throw ($problems -join ' ')
         }
     }
     if (Get-ChildItem -Path $Root -Recurse -File -Filter qopensslbackend.dll) {
@@ -266,19 +291,9 @@ $pins = Get-Content (Join-Path $repoRoot 'packaging\local_build_pins.json') -Raw
 
 $installerSha256 = Get-Sha256Hex $PythonInstaller
 $installerMd5 = Get-Md5Hex $PythonInstaller
-if ($installerSha256 -ne $pins.python.installer_sha256) {
-    throw "Python installer sha256 $installerSha256 != pinned $($pins.python.installer_sha256) (packaging/local_build_pins.json)."
-}
-if ($installerMd5 -ne $pins.python.installer_md5) {
-    throw "Python installer md5 $installerMd5 != pinned $($pins.python.installer_md5) (packaging/local_build_pins.json)."
-}
+Assert-PythonInstallerHashesMatch -Sha256 $installerSha256 -Md5 $installerMd5 -PythonPin $pins.python
 $installerSig = Get-AuthenticodeSignature -FilePath $PythonInstaller
-if ($installerSig.Status -ne 'Valid') {
-    throw "Python installer Authenticode signature status is $($installerSig.Status), expected Valid."
-}
-if ($installerSig.SignerCertificate.Subject -notmatch [regex]::Escape($pins.python.authenticode_signer_subject_contains)) {
-    throw "Python installer signer subject '$($installerSig.SignerCertificate.Subject)' does not contain '$($pins.python.authenticode_signer_subject_contains)'."
-}
+Assert-AuthenticodeSignatureValid -Signature $installerSig -Label 'Python installer' -SignerSubjectContains $pins.python.authenticode_signer_subject_contains
 $installerSignerSubject = $installerSig.SignerCertificate.Subject
 $installerSignerThumbprint = $installerSig.SignerCertificate.Thumbprint
 Write-Host "PYTHON-INSTALLER-PIN: PASS (sha256=$installerSha256)"
@@ -287,12 +302,7 @@ if (-not (Test-Path $PythonExe)) {
     throw "-PythonExe not found: '$PythonExe'. Install python-3.12.10-amd64.exe for the current user yourself; this script does not install it."
 }
 $pythonExeSig = Get-AuthenticodeSignature -FilePath $PythonExe
-if ($pythonExeSig.Status -ne 'Valid') {
-    throw "python.exe Authenticode signature status is $($pythonExeSig.Status), expected Valid."
-}
-if ($pythonExeSig.SignerCertificate.Subject -notmatch [regex]::Escape($pins.python.authenticode_signer_subject_contains)) {
-    throw "python.exe signer subject '$($pythonExeSig.SignerCertificate.Subject)' does not contain '$($pins.python.authenticode_signer_subject_contains)'."
-}
+Assert-AuthenticodeSignatureValid -Signature $pythonExeSig -Label 'python.exe' -SignerSubjectContains $pins.python.authenticode_signer_subject_contains
 $pythonExeSignerSubject = $pythonExeSig.SignerCertificate.Subject
 $pythonExeSignerThumbprint = $pythonExeSig.SignerCertificate.Thumbprint
 $pyVersionString = (& $PythonExe -c "import sys; print('%d.%d.%d' % sys.version_info[:3])").Trim()
@@ -493,6 +503,16 @@ finally {
 
 # --- i. Pack with the deterministic packer, L5/L6 checks, determinism check -
 
+# NEW-2: tools\pack_setup_zip.py itself never leaves a ready zip at $zipPath
+# unless its own L5 --expect-inventory check passed (it writes to a
+# "<out>.partial" and only renames to the final name once verify and the
+# inventory compare both pass, deleting the partial on any failure). The
+# catch below covers the remaining case: a *later* check in this section
+# (L6's re-extract/verify/compare-tree, or the determinism self-check)
+# finding a problem with a zip that did pass L5 -- that zip must not survive
+# as the final $zipPath either, so it is deleted before the error
+# propagates.
+$zipPath = $null
 Push-Location $repoRoot
 try {
     $commitEpoch = (git show -s --format=%ct $ExpectedSha).Trim()
@@ -536,6 +556,12 @@ try {
         throw "DETERMINISM SELF-CHECK FAILED: two packs of the same inputs produced different sha256 ($zipSha256 vs $zipSha256Repeat)."
     }
     Write-Host "DETERMINISM-SELF-CHECK: PASS (sha256=$zipSha256)"
+}
+catch {
+    if ($zipPath -and (Test-Path $zipPath)) {
+        Remove-Item -Force $zipPath
+    }
+    throw
 }
 finally {
     Pop-Location
@@ -673,3 +699,11 @@ finally {
     Pop-Location
 }
 Write-Host "Restored orbitrx/_build_meta.py; the clone's working tree is clean again."
+
+}
+catch {
+    $failingLine = if ($_.InvocationInfo) { $_.InvocationInfo.ScriptLineNumber } else { 'unknown' }
+    Write-Output "BUILD FAILED: $($_.Exception.Message) (script line $failingLine)"
+    exit 1
+}
+exit 0

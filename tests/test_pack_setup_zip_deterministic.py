@@ -376,6 +376,72 @@ def test_expect_inventory_cli_mode_exits_nonzero_on_mismatch(tmp_path):
     assert rc == 1
 
 
+# --- NEW-2: an inventory mismatch (or any other pack-mode failure) must
+# leave neither the final zip name nor its "<out>.partial" scratch file on
+# disk -- a caller must never be able to mistake a half-checked pack for a
+# good one. ---------------------------------------------------------------
+
+
+def test_expect_inventory_mismatch_leaves_no_final_zip_and_no_partial(tmp_path):
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    out = tmp_path / "out.zip"
+
+    inventory = tmp_path / "ship-set-inventory.txt"
+    _write_inventory(inventory, ["a.txt\t999"])  # deliberately wrong size
+
+    rc = main([
+        "--onedir", str(onedir), "--installer", str(installer), "--out", str(out),
+        "--epoch", str(EPOCH), "--expect-inventory", str(inventory),
+    ])
+    assert rc == 1
+    assert not out.exists(), "final zip must not exist after an inventory mismatch"
+    assert not out.with_name(out.name + ".partial").exists(), "partial scratch file must be cleaned up"
+
+
+def test_a_stale_partial_from_a_failed_attempt_does_not_survive_a_later_success(tmp_path):
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    out = tmp_path / "out.zip"
+    partial = out.with_name(out.name + ".partial")
+
+    inventory = tmp_path / "ship-set-inventory.txt"
+    _write_inventory(inventory, ["a.txt\t999"])
+    rc = main([
+        "--onedir", str(onedir), "--installer", str(installer), "--out", str(out),
+        "--epoch", str(EPOCH), "--expect-inventory", str(inventory),
+    ])
+    assert rc == 1
+    assert not partial.exists()
+
+    # A subsequent successful pack (no --expect-inventory) must still
+    # succeed and must not leave the scratch file behind either.
+    rc = main([
+        "--onedir", str(onedir), "--installer", str(installer), "--out", str(out),
+        "--epoch", str(EPOCH),
+    ])
+    assert rc == 0
+    assert out.exists()
+    assert not partial.exists()
+
+
+def test_post_write_verification_failure_leaves_no_final_zip_and_no_partial(tmp_path, monkeypatch):
+    import tools.pack_setup_zip as pack_module
+
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    out = tmp_path / "out.zip"
+
+    monkeypatch.setattr(pack_module, "verify_zip_layout", lambda *a, **k: ["synthetic problem"])
+    rc = pack_module.main([
+        "--onedir", str(onedir), "--installer", str(installer), "--out", str(out),
+        "--epoch", str(EPOCH),
+    ])
+    assert rc == 1
+    assert not out.exists()
+    assert not out.with_name(out.name + ".partial").exists()
+
+
 def test_parse_ci_inventory_ignores_non_tab_lines(tmp_path):
     inventory = tmp_path / "inv.txt"
     _write_inventory(inventory, [

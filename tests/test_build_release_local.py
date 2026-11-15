@@ -34,6 +34,11 @@ NETWORK_AND_PUBLISH_COMMANDS = (
 
 UK_POSTCODE_RE = re.compile(r"\b[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}\b")
 BUILD_RELEASE_MD = (ROOT / "BUILD-RELEASE.md").read_text(encoding="utf-8")
+# Markdown line-wraps prose at ~80 columns, so a phrase spanning a wrap point
+# has a newline (plus indentation) where a single space would be in running
+# text; collapse all whitespace runs to one space before substring-matching
+# such phrases.
+BUILD_RELEASE_MD_FLAT = re.sub(r"\s+", " ", BUILD_RELEASE_MD)
 
 
 def test_script_and_helpers_files_exist_and_are_ascii():
@@ -91,20 +96,29 @@ def test_requires_a_clean_working_tree_before_building():
 
 def test_reads_the_python_installer_pin_from_the_pins_file_not_hardcoded():
     assert "packaging\\local_build_pins.json" in SCRIPT
-    assert "$pins.python.installer_sha256" in SCRIPT
-    assert "$pins.python.installer_md5" in SCRIPT
-    # The actual hash value must not be duplicated as a literal in the script.
+    # P6: the sha256/md5 compare itself is a pure helper (Assert-
+    # PythonInstallerHashesMatch, in HELPERS) so it can be tested with
+    # synthetic hashes; the main script's call site passes $pins.python,
+    # not the individual pin fields, as that helper's -PythonPin.
+    assert "Assert-PythonInstallerHashesMatch -Sha256 $installerSha256 -Md5 $installerMd5 -PythonPin $pins.python" in SCRIPT
+    assert "PythonPin.installer_sha256" in HELPERS
+    assert "PythonPin.installer_md5" in HELPERS
+    # The actual hash value must not be duplicated as a literal anywhere.
     pins = json.loads((ROOT / "packaging" / "local_build_pins.json").read_text(encoding="utf-8"))
-    assert pins["python"]["installer_sha256"] not in SCRIPT
-    assert pins["python"]["installer_md5"] not in SCRIPT
+    assert pins["python"]["installer_sha256"] not in COMBINED
+    assert pins["python"]["installer_md5"] not in COMBINED
 
 
 def test_checks_authenticode_signatures_for_python():
     assert "Get-AuthenticodeSignature" in SCRIPT
     assert "authenticode_signer_subject_contains" in SCRIPT
-    # The signer-subject check itself must read the pin, not a hardcoded literal.
-    checks = SCRIPT.count("[regex]::Escape($pins.python.authenticode_signer_subject_contains)")
-    assert checks >= 2, "expected both the installer and python.exe signer checks to read the pin"
+    # P8: the Status/signer-subject decision is a shared pure helper
+    # (Assert-AuthenticodeSignatureValid, in HELPERS) so it can be tested
+    # with a synthetic signature object; each main-script call site must
+    # read the pin, not a hardcoded literal.
+    assert "[regex]::Escape($SignerSubjectContains)" in HELPERS
+    call_sites = SCRIPT.count("-SignerSubjectContains $pins.python.authenticode_signer_subject_contains")
+    assert call_sites >= 2, "expected both the installer and python.exe signer checks to read the pin"
 
 
 def test_n8_records_signer_thumbprints_in_provenance():
@@ -139,6 +153,16 @@ def test_never_contacts_the_network_or_publishes():
         assert needle not in HELPERS, needle
 
 
+def test_docstring_accurately_describes_the_one_network_access_pip_makes():
+    # NEW-3: the script does reach a network host -- pip fetching the
+    # hash-pinned wheels from PyPI -- so the header must say that, not
+    # claim no network contact happens at all.
+    assert "never contacts any network host" not in SCRIPT
+    assert "PyPI" in SCRIPT
+    assert "--require-hashes" in SCRIPT.split(".DESCRIPTION", 1)[1].split(".PARAMETER", 1)[0]
+    assert "nothing else in" in SCRIPT and "touches the network" in SCRIPT
+
+
 def test_does_not_auto_install_python_or_inno_setup():
     assert "choco install" not in SCRIPT
     assert "winget install" not in SCRIPT
@@ -169,6 +193,44 @@ def test_provenance_record_has_a_self_check_for_pii():
     assert "Refusing to write it" in SCRIPT
 
 
+def test_p10_provenance_self_check_runs_before_writing_the_file():
+    # P10: the specific mutant to kill -- the self-check call-site removed
+    # (or moved after the write, which would be just as useless).
+    check_pos = SCRIPT.index("Get-ProvenanceUnsafeMarkers -Text $provenanceText")
+    write_pos = SCRIPT.index("Set-Content -Path $provenancePath -Value $provenanceText")
+    assert check_pos < write_pos
+
+
+def test_p14_ship_set_check_runs_against_the_extracted_zip():
+    # P14: the specific mutant to kill -- the extracted-zip ship_set --check
+    # call-site removed (the one that validates OrbitRxMonitor/ once more
+    # after unzipping, not the earlier onedir --check in section g).
+    assert "'tools\\ship_set.py', '--check', (Join-Path $extractDir 'OrbitRxMonitor')" in SCRIPT
+    assert "L6: ship_set --check failed on the extracted zip" in SCRIPT
+
+
+def test_p15_determinism_self_check_compares_the_two_pack_hashes():
+    # P15: the specific mutant to kill -- the two-hash comparison (or its
+    # throw) removed, letting two differently-hashed repacks pass silently.
+    assert "if ($zipSha256 -ne $zipSha256Repeat) {" in SCRIPT
+    assert "DETERMINISM SELF-CHECK FAILED" in SCRIPT
+
+
+def test_p19_qopensslbackend_is_refused_in_the_ship_set():
+    # P19: the specific mutant to kill -- this refusal removed, letting the
+    # legacy OpenSSL backend plugin slip into the ship set unnoticed.
+    assert "-Filter qopensslbackend.dll" in SCRIPT
+    assert "qopensslbackend.dll reached the ship set." in SCRIPT
+
+
+def test_p20_shipped_notices_hash_is_compared_to_the_manifest():
+    # P20: the specific mutant to kill -- the sha256 compare against the
+    # manifest's recorded text removed, so a tampered/stale notices file
+    # would go unnoticed.
+    assert "$shippedHash = Get-Sha256Hex $shipped" in SCRIPT
+    assert "if ($shippedHash -ne $Texts.$rel) {" in SCRIPT
+
+
 def test_provenance_paths_are_relative_not_absolute():
     assert 'out\\$zipName' in SCRIPT or "out\\\"$zipName" in SCRIPT or '"out\\$' in SCRIPT
     assert "C:\\Users" not in SCRIPT
@@ -196,6 +258,39 @@ def test_l6_compares_the_extracted_tree_against_both_inventories():
     assert "'  L6-INVENTORY-MATCH: PASS'" in SCRIPT
     assert "--compare-tree" in SCRIPT and "--inventory" in SCRIPT
     assert "$CiInventory" in SCRIPT.split("--compare-tree", 1)[1]
+
+
+def test_p13b_l6_ci_compare_call_uses_ci_inventory_not_local():
+    # P13b: the specific mutant to kill -- the L6 call whose own
+    # -FailureMessage says it checked against -CiInventory is pointed at
+    # $localInventoryPath instead. Pair up each --compare-tree call's
+    # --inventory argument with its own -FailureMessage text and check
+    # them against each other, rather than just checking that each
+    # variable name appears *somewhere* in the script (which a mutant
+    # swapping the two calls' --inventory arguments would still pass).
+    calls = re.findall(
+        r"--compare-tree', \$extractedOnedir, '--inventory', (\$\w+)\) "
+        r"-FailureMessage '([^']+)'",
+        SCRIPT,
+    )
+    assert len(calls) == 2, f"expected exactly 2 L6 --compare-tree calls, found {len(calls)}"
+    by_message = {message: inventory_var for inventory_var, message in calls}
+    ci_message = next(m for m in by_message if "-CiInventory" in m)
+    local_message = next(m for m in by_message if "local ship-set-inventory" in m)
+    assert by_message[ci_message] == "$CiInventory"
+    assert by_message[local_message] == "$localInventoryPath"
+
+
+# --- NEW-2: a later L6/determinism failure must not leave the final zip --
+
+
+def test_a_later_l6_or_determinism_failure_deletes_the_final_zip():
+    section = SCRIPT.split("# --- i. Pack with the deterministic", 1)[1].split("# --- j.", 1)[0]
+    assert "$zipPath = $null" in section
+    catch_part = section.split("catch {", 1)[1].split("finally {", 1)[0]
+    assert "Test-Path $zipPath" in catch_part
+    assert "Remove-Item -Force $zipPath" in catch_part
+    assert re.search(r"^\s*throw\s*$", catch_part, re.MULTILINE), "catch must re-throw, not swallow the error"
 
 
 def test_inno_setup_version_is_read_from_file_version_info():
@@ -385,6 +480,36 @@ def test_dry_run_reminder_is_printed():
     assert "DRY RUN" in SCRIPT
 
 
+# --- NEW-1: a top-level try/catch reports a terminating failure through the
+# success stream (so Tee-Object sees it) and exits 1; the success path still
+# exits 0. -----------------------------------------------------------------
+
+
+def test_powershell_7_is_required_and_checked_before_strict_mode():
+    assert "Test-PowerShellVersionSupported" in HELPERS
+    assert "Test-PowerShellVersionSupported" in SCRIPT
+    gate_section = SCRIPT.split("Test-PowerShellVersionSupported", 1)[1].split("Set-StrictMode", 1)[0]
+    assert "PowerShell 7 or later is required" in gate_section
+    assert "BUILD FAILED" in gate_section
+    assert "exit 1" in gate_section
+    # The gate must run before Set-StrictMode, so a pre-7 host sees this
+    # script's own clear message rather than a strict-mode-related failure.
+    assert SCRIPT.index("Test-PowerShellVersionSupported") < SCRIPT.index("Set-StrictMode -Version Latest")
+
+
+def test_script_body_is_wrapped_in_a_top_level_try_catch_with_explicit_exits():
+    assert re.search(r"^try \{", SCRIPT, re.MULTILINE)
+    assert re.search(r"^\}\ncatch \{", SCRIPT, re.MULTILINE)
+    catch_block = SCRIPT.rsplit("catch {", 1)[1]
+    assert "BUILD FAILED" in catch_block
+    assert "Write-Output" in catch_block
+    assert "exit 1" in catch_block
+    # The success path (after the catch block) must still exit 0 explicitly,
+    # not rely on whatever $LASTEXITCODE a native command last set.
+    after_catch = catch_block.split("exit 1", 1)[1]
+    assert "exit 0" in after_catch
+
+
 def test_build_release_md_states_dry_run_up_front_and_in_steps():
     top = BUILD_RELEASE_MD.split("\n\n", 4)
     assert any("dry run" in block.lower() for block in top[:3])
@@ -402,6 +527,12 @@ def test_build_release_md_documents_inno_setup_per_user_path():
 def test_build_release_md_documents_execution_policy():
     assert "Set-ExecutionPolicy" in BUILD_RELEASE_MD
     assert "-Scope Process" in BUILD_RELEASE_MD
+
+
+def test_build_release_md_requires_pwsh_not_windows_powershell():
+    assert "PowerShell 7" in BUILD_RELEASE_MD
+    assert "pwsh -ExecutionPolicy Bypass -File" in BUILD_RELEASE_MD
+    assert "powershell -ExecutionPolicy Bypass -File" not in BUILD_RELEASE_MD
 
 
 def test_build_release_md_does_not_claim_nothing_half_built():
@@ -430,6 +561,45 @@ def test_build_release_md_documents_tee_object_console_capture():
     assert "Tee-Object" in BUILD_RELEASE_MD
     assert "Start-Transcript" in BUILD_RELEASE_MD  # named as the thing NOT to use
     assert "build-console.txt" in BUILD_RELEASE_MD
+
+
+# --- NEW-4: build-console.txt/out\ PII caveat, I-4/I-5/I-6 doc fixes --------
+
+
+def test_build_release_md_warns_build_console_may_contain_username():
+    assert "can end up containing" in BUILD_RELEASE_MD
+    assert "your Windows username" in BUILD_RELEASE_MD
+    assert "QA and Risk" in BUILD_RELEASE_MD
+    assert "never published" in BUILD_RELEASE_MD.lower() or "never publish" in BUILD_RELEASE_MD.lower()
+    assert "C:\\build\\..." in BUILD_RELEASE_MD or "C:\\build\\" in BUILD_RELEASE_MD
+    assert "prefer that over Downloads" in BUILD_RELEASE_MD_FLAT
+
+
+def test_build_release_md_i4_recommends_append_or_per_attempt_filenames():
+    assert "-Append" in BUILD_RELEASE_MD
+    assert "attempt2" in BUILD_RELEASE_MD or "per-attempt" in BUILD_RELEASE_MD.lower()
+
+
+def test_build_release_md_i5_send_back_list_reference_is_correct():
+    # The intro's forward-reference must point at the step that actually
+    # contains the "Send to QA/Risk (L10):" bullet list, not a step number
+    # that doesn't.
+    intro = re.sub(r"\s+", " ", BUILD_RELEASE_MD.split("## Prerequisites", 1)[0])
+    match = re.search(r"step (\d+)'s send-back list", intro)
+    assert match, "intro paragraph does not reference a step's send-back list"
+    referenced_step = match.group(1)
+    steps_section = BUILD_RELEASE_MD.split("## Steps", 1)[1]
+    step_text = steps_section.split(f"\n{referenced_step}. ", 1)
+    assert len(step_text) == 2, f"no step {referenced_step} found in the Steps section"
+    assert "Send to QA/Risk (L10):" in step_text[1].split("\n1", 1)[0] or "Send to QA/Risk (L10):" in step_text[1][:2000]
+
+
+def test_build_release_md_i6_chief_of_staff_supplies_the_dry_run_sha_too():
+    assert "dry-run SHA too" in BUILD_RELEASE_MD or "dry run SHA too" in BUILD_RELEASE_MD
+    assert "Chief of Staff" in BUILD_RELEASE_MD
+    sha_section = BUILD_RELEASE_MD.split("**Which SHA?**", 1)[1]
+    assert "Chief of Staff" in sha_section
+    assert "CI run" in sha_section
 
 
 def test_build_release_md_lists_everything_to_send_back():

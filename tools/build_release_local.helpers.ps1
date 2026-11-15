@@ -12,6 +12,16 @@
 
 Set-StrictMode -Version Latest
 
+# --- NEW-5: PowerShell version gate -------------------------------------------
+# A pure boolean decision (no $PSVersionTable read here) so pwsh-driven tests
+# can exercise the >=7 boundary with synthetic major-version numbers, without
+# needing an actual Windows PowerShell 5.1 engine to run it on.
+
+function Test-PowerShellVersionSupported {
+    param([int]$MajorVersion)
+    return $MajorVersion -ge 7
+}
+
 # --- Hash / pin comparison helpers -------------------------------------------
 
 function Get-Sha256Hex {
@@ -31,6 +41,57 @@ function Assert-Sha256Match {
         throw "$Label sha256 $actual != pinned $Expected."
     }
     return $actual
+}
+
+# P6: both the sha256 AND the md5 of the Python installer must match the
+# pin -- pulled out as its own function (taking already-computed hash
+# strings, not a path) so a test can assert the md5 half of this check
+# fires even when sha256 alone would already have failed first.
+
+function Assert-PythonInstallerHashesMatch {
+    param([string]$Sha256, [string]$Md5, [psobject]$PythonPin)
+    if ($Sha256 -ne $PythonPin.installer_sha256) {
+        throw "Python installer sha256 $Sha256 != pinned $($PythonPin.installer_sha256) (packaging/local_build_pins.json)."
+    }
+    if ($Md5 -ne $PythonPin.installer_md5) {
+        throw "Python installer md5 $Md5 != pinned $($PythonPin.installer_md5) (packaging/local_build_pins.json)."
+    }
+}
+
+# P8: shared by both the installer's and python.exe's Authenticode checks,
+# taking a signature-status object (as Get-AuthenticodeSignature would
+# return) rather than a path, so tests can exercise both the Status and the
+# signer-subject half of this check with synthetic objects -- no real
+# Authenticode-signed binary required.
+
+function Assert-AuthenticodeSignatureValid {
+    param([psobject]$Signature, [string]$Label, [string]$SignerSubjectContains)
+    if ($Signature.Status -ne 'Valid') {
+        throw "$Label Authenticode signature status is $($Signature.Status), expected Valid."
+    }
+    if ($Signature.SignerCertificate.Subject -notmatch [regex]::Escape($SignerSubjectContains)) {
+        throw "$Label signer subject '$($Signature.SignerCertificate.Subject)' does not contain '$SignerSubjectContains'."
+    }
+}
+
+# P12: the per-DLL half of the OpenSSL ship-set pin check (directory,
+# FileVersion, sha256), taking already-computed values rather than a real
+# file on disk, so a test can assert the sha256 half specifically fires
+# even when the other two would pass.
+
+function Get-OpenSslDllPinProblems {
+    param([string]$DllName, [string]$DirectoryName, [string]$ExpectedDirectory, [string]$FileVersion, [string]$Sha256, [psobject]$PinEntry)
+    $problems = @()
+    if ($DirectoryName -ne $ExpectedDirectory) {
+        $problems += "$DllName is not at _internal\$DllName."
+    }
+    if ($FileVersion -ne $PinEntry.file_version) {
+        $problems += "$DllName FileVersion $FileVersion != pinned $($PinEntry.file_version)."
+    }
+    if ($Sha256 -ne $PinEntry.sha256) {
+        $problems += "$DllName sha256 $Sha256 != pinned $($PinEntry.sha256)."
+    }
+    return $problems
 }
 
 # --- Attestation / SHA argument validation -----------------------------------
