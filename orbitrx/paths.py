@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shutil
 import sys
 from pathlib import Path
 
@@ -19,6 +21,47 @@ def project_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[1]
+
+
+APP_DATA_DIRNAME = "OrbitRx"
+
+
+def user_data_dir() -> Path:
+    """Folder for settings and data files (config.json, orbitrx.db, CSV logs).
+
+    Frozen builds use %APPDATA%\\OrbitRx (created on demand) so the app never
+    depends on the launch folder being writable; if APPDATA is unset or the
+    folder cannot be created they fall back to the exe folder. Source runs keep
+    the historical behaviour: a relative path, i.e. the current directory.
+    """
+    if not getattr(sys, "frozen", False):
+        return Path()
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        folder = Path(appdata) / APP_DATA_DIRNAME
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            return folder
+        except OSError:
+            pass
+    return project_root()
+
+
+def user_data_path(name: str) -> Path:
+    """Path of a named data file under user_data_dir().
+
+    Frozen builds copy (never move) a same-named file left next to the exe by
+    an earlier version the first time the new location has none.
+    """
+    path = user_data_dir() / name
+    if getattr(sys, "frozen", False) and not path.exists():
+        legacy = project_root() / name
+        try:
+            if legacy.is_file() and legacy.resolve() != path.resolve():
+                shutil.copy2(legacy, path)
+        except OSError:
+            pass
+    return path
 
 
 def bundled_root() -> Path | None:

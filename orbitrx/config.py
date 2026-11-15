@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from orbitrx.paths import user_data_path
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "cat_port": "COM3",
     "cat_baud": 9600,
@@ -61,7 +63,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 
 @dataclass
 class AppConfig:
-    path: Path = field(default_factory=lambda: Path("config.json"))
+    path: Path = field(default_factory=lambda: user_data_path("config.json"))
     data: dict[str, Any] = field(default_factory=lambda: deepcopy(DEFAULT_CONFIG))
 
     def load(self) -> AppConfig:
