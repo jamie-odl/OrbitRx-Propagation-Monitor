@@ -178,41 +178,140 @@ function Get-ProvenanceUnsafeMarkers {
 # applied to ordinary console output and gate-output text files, which are
 # expected to exist and be read even on a dry run.
 
+function Get-Windows83ShortPath {
+    # L-C: Format-RedactedText also redacts the 8.3 short form of the
+    # profile path (a short form ending in ~1, ~2, etc.), which some tools
+    # print despite every env var this script otherwise reads holding the
+    # long form. Windows itself is the only source for that mapping -- there is
+    # no way to compute an 8.3 name without asking the filesystem -- so
+    # this uses the legacy Scripting.FileSystemObject COM object, which
+    # exposes it as .ShortPath without needing a GetShortPathName P/Invoke
+    # signature. Off Windows, or if the path does not exist, or the COM
+    # object is unavailable, this returns $null; Format-RedactedText's
+    # -GetShortPathFunc parameter exists so a test on any OS can inject a
+    # fake short path instead of needing a real Windows host.
+    param([string]$Path)
+    if (-not $Path -or -not $IsWindows) { return $null }
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+    try {
+        $fso = New-Object -ComObject Scripting.FileSystemObject
+        $item = Get-Item -LiteralPath $Path -Force
+        if ($item.PSIsContainer) {
+            return $fso.GetFolder($Path).ShortPath
+        }
+        return $fso.GetFile($Path).ShortPath
+    }
+    catch {
+        return $null
+    }
+}
+
 function Format-RedactedText {
-    param([string]$Text)
+    param(
+        [string]$Text,
+        # L-C: default resolves the real profile path's 8.3 short form on
+        # Windows; tests on any OS pass a fake scriptblock here instead.
+        [scriptblock]$GetShortPathFunc = ${function:Get-Windows83ShortPath}
+    )
     if ($null -eq $Text) { return $Text }
 
-    # USERPROFILE/LOCALAPPDATA/APPDATA/TEMP all map to <profile>, each
-    # matched by its own literal value (a redirected profile can make these
-    # differ rather than nest under USERPROFILE) regardless of length -- an
-    # empty value is skipped outright, since PowerShell's -replace with an
-    # empty pattern matches between every character. USERNAME/COMPUTERNAME
-    # map to <user>/<host>; below 3 characters they are too easy to collide
-    # with ordinary text, so those are only redacted as a whole \name\ or
-    # /name/ path segment.
+    # USERPROFILE/LOCALAPPDATA/APPDATA/TEMP and the three OneDrive env vars
+    # (L-C) all map to <profile> -- IsPath, so besides the literal value the
+    # `/` form (forward slashes instead of back) is matched too, since some
+    # tools print paths that way even on Windows -- each matched by its own
+    # literal value (a redirected profile, or a business-named OneDrive
+    # folder such as "OneDrive - Contoso Ltd", can make these differ rather
+    # than nest under USERPROFILE) regardless of length. An empty value is
+    # skipped outright, since PowerShell's -replace with an empty pattern
+    # matches between every character.
+    #
+    # USERNAME/COMPUTERNAME/USERDOMAIN/USERDNSDOMAIN/LOGONSERVER (L-C; its
+    # leading \\ stripped) map to a short-token placeholder each; below 3
+    # characters any of them is too easy to collide with ordinary text, so
+    # those are only redacted as a whole \name\ or /name/ path segment --
+    # the same safety the previous round applied to USERNAME/COMPUTERNAME
+    # now covers the three new short-token values too. On a personal PC
+    # USERDOMAIN is often equal to COMPUTERNAME; that loses no meaning --
+    # whichever entry's pattern runs first (by length, see the sort below)
+    # redacts it, and the other then simply finds nothing left to match.
     $entries = @()
-    foreach ($value in @($env:USERPROFILE, $env:LOCALAPPDATA, $env:APPDATA, $env:TEMP)) {
+    foreach ($value in @($env:USERPROFILE, $env:LOCALAPPDATA, $env:APPDATA, $env:TEMP, $env:OneDrive, $env:OneDriveCommercial, $env:OneDriveConsumer)) {
         if ($value) {
-            $entries += [PSCustomObject]@{ Value = $value; With = '<profile>'; WholeSegmentOnly = $false }
+            $entries += [PSCustomObject]@{ Value = $value; With = '<profile>'; WholeSegmentOnly = $false; IsPath = $true }
         }
     }
     if ($env:USERNAME) {
-        $entries += [PSCustomObject]@{ Value = $env:USERNAME; With = '<user>'; WholeSegmentOnly = ($env:USERNAME.Length -lt 3) }
+        $entries += [PSCustomObject]@{ Value = $env:USERNAME; With = '<user>'; WholeSegmentOnly = ($env:USERNAME.Length -lt 3); IsPath = $false }
     }
     if ($env:COMPUTERNAME) {
-        $entries += [PSCustomObject]@{ Value = $env:COMPUTERNAME; With = '<host>'; WholeSegmentOnly = ($env:COMPUTERNAME.Length -lt 3) }
+        $entries += [PSCustomObject]@{ Value = $env:COMPUTERNAME; With = '<host>'; WholeSegmentOnly = ($env:COMPUTERNAME.Length -lt 3); IsPath = $false }
     }
+    if ($env:USERDOMAIN) {
+        $entries += [PSCustomObject]@{ Value = $env:USERDOMAIN; With = '<domain>'; WholeSegmentOnly = ($env:USERDOMAIN.Length -lt 3); IsPath = $false }
+    }
+    if ($env:USERDNSDOMAIN) {
+        $entries += [PSCustomObject]@{ Value = $env:USERDNSDOMAIN; With = '<dnsdomain>'; WholeSegmentOnly = ($env:USERDNSDOMAIN.Length -lt 3); IsPath = $false }
+    }
+    if ($env:LOGONSERVER) {
+        $logonServer = $env:LOGONSERVER -replace '^\\\\', ''
+        if ($logonServer) {
+            $entries += [PSCustomObject]@{ Value = $logonServer; With = '<logonserver>'; WholeSegmentOnly = ($logonServer.Length -lt 3); IsPath = $false }
+        }
+    }
+
+    # L-C: the profile path's 8.3 short form (if any) is just one more
+    # value mapped to <profile>, built from the real (or injected) short
+    # path rather than special-cased further down.
+    if ($env:USERPROFILE) {
+        $shortProfile = & $GetShortPathFunc $env:USERPROFILE
+        if ($shortProfile -and $shortProfile -ne $env:USERPROFILE) {
+            $entries += [PSCustomObject]@{ Value = $shortProfile; With = '<profile>'; WholeSegmentOnly = $false; IsPath = $true }
+        }
+    }
+
+    # L-C: every value above also gets a URL-encoded variant considered --
+    # the full [uri]::EscapeDataString form, and (separately, since
+    # EscapeDataString also escapes `\`, which real tool output showing
+    # just the space encoded as %20 would not) a version with only spaces
+    # turned into %20. Both are skipped when identical to the plain value
+    # (no special characters) or to each other, so a plain token without
+    # spaces or other encodable characters does not grow duplicate,
+    # functionally-identical patterns.
+    $urlEntries = @()
+    foreach ($entry in $entries) {
+        $fullyEncoded = [uri]::EscapeDataString($entry.Value)
+        if ($fullyEncoded -ne $entry.Value) {
+            $urlEntries += [PSCustomObject]@{ Value = $fullyEncoded; With = $entry.With; WholeSegmentOnly = $false; IsPath = $false }
+        }
+        $spaceEncoded = $entry.Value -replace ' ', '%20'
+        if ($spaceEncoded -ne $entry.Value -and $spaceEncoded -ne $fullyEncoded) {
+            $urlEntries += [PSCustomObject]@{ Value = $spaceEncoded; With = $entry.With; WholeSegmentOnly = $false; IsPath = $false }
+        }
+    }
+    $entries += $urlEntries
 
     $result = $Text
     # Longest value first, so a longer, more specific match (e.g. a
-    # redirected LOCALAPPDATA) is consumed before a shorter one (e.g.
-    # USERPROFILE) that might otherwise overlap it.
+    # redirected LOCALAPPDATA, or a URL-encoded form) is consumed before a
+    # shorter one (e.g. USERPROFILE) that might otherwise overlap it.
     foreach ($entry in ($entries | Sort-Object { $_.Value.Length } -Descending)) {
         $pattern = [regex]::Escape($entry.Value)
+        if ($entry.IsPath) {
+            # R3/L-C: also match the forward-slash form of a path value --
+            # [regex]::Escape turns each literal `\` into the two-character
+            # sequence `\\`, which this swaps for a character class
+            # matching either separator.
+            $pattern = $pattern -replace '\\\\', '[\\/]'
+        }
         if ($entry.WholeSegmentOnly) {
             $pattern = '(?<=[\\/])' + $pattern + '(?=[\\/])'
         }
-        $result = $result -replace $pattern, $entry.With
+        # L-C/R5: an explicit case-insensitive regex replace (rather than
+        # relying on -replace's own default case-insensitivity) so the
+        # intent is explicit and a mutant that narrows this to a
+        # case-sensitive match is caught by a test asserting a case
+        # mismatch still gets redacted.
+        $result = [regex]::Replace($result, $pattern, $entry.With, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     }
     return $result
 }

@@ -8,18 +8,24 @@
     step by step, against a clean checkout of a known commit, then packs a
     deterministic OrbitRx-Setup-<VERSION>.zip with tools/pack_setup_zip.py.
 
-    This script never uploads, publishes, tags or pushes anything. The one
-    network access it makes is pip downloading the wheels listed in the
-    committed, fully hash-pinned packaging/requirements-windows-build.lock.txt
-    from PyPI (--require-hashes enforces that every downloaded wheel matches
-    the pinned hash, not a live index's current contents). The local TESTS
-    gate (step e) runs the pytest suite with -m "not network", excluding
-    the one test that makes a live network call (CI's test job still runs
-    the full suite, including that test, at this SHA); nothing else in this
-    script touches the network, except that Get-AuthenticodeSignature may
-    let Windows itself fetch certificate revocation data in the background.
-    It never auto-installs Python or Inno Setup -- if either is missing or
-    fails a pin check, it stops with a clear message.
+    This script never uploads, publishes, tags or pushes anything. Network
+    access happens in three places: pip downloading the wheels listed in
+    the committed, fully hash-pinned
+    packaging/requirements-windows-build.lock.txt from PyPI
+    (--require-hashes enforces that every downloaded wheel matches the
+    pinned hash, not a live index's current contents); Get-
+    AuthenticodeSignature, which may let Windows itself fetch certificate
+    revocation data (CRL/OCSP) in the background; and several UI/capture
+    tests in the local TESTS gate (step e) that start the app, which then
+    attempts its normal background fetches (NOAA SWPC, hamqsl,
+    PSKReporter, the contest calendar, and an api.github.com update check)
+    and tolerates being offline -- those tests do not assert on the fetch
+    succeeding. The one test that makes a live, asserted network call is
+    marked @pytest.mark.network and is the only test this local gate
+    deselects with -m "not network" (CI's test job still runs it, and the
+    full suite, at this exact SHA). It never auto-installs Python or Inno
+    Setup -- if either is missing or fails a pin check, it stops with a
+    clear message.
 
     -CiInventory is REQUIRED (L5): this script will not build without the
     exact SHA's ship-set-inventory.txt from CI. See BUILD-RELEASE.md.
@@ -198,9 +204,39 @@ function Set-RedactedFileText {
     Set-Content -LiteralPath $Path -Value (Format-RedactedText -Text $text) -NoNewline -Encoding utf8
 }
 
+function Receive-RedactedNativeOutput {
+    # L-C: for call sites that capture a native command's own stdout into a
+    # variable (a short `python -c` one-liner, `git rev-parse`, etc.)
+    # instead of relaying everything via Invoke-Checked/Invoke-CheckedTee
+    # -- those call sites write `cmd args 2>&1 | Receive-
+    # RedactedNativeOutput` rather than leaving `2>&1` unhandled. PowerShell
+    # hands a merged native stderr line to the pipeline as an ErrorRecord;
+    # this relays any such line via the redacting Write-Host above (same
+    # as Invoke-Checked), while passing the command's own stdout lines on
+    # unchanged, so a caller that collects this into a variable (`-join`,
+    # `.Trim()`, `@(...)`) keeps working with exactly the same stdout it
+    # always got. $LASTEXITCODE is untouched: nothing in this function is
+    # itself a native command, and the real native command already ran
+    # (and set it) before this function sees anything, so an explicit
+    # `if ($LASTEXITCODE -ne 0)` check right after the whole pipeline
+    # expression still sees the real exit code.
+    param(
+        [Parameter(ValueFromPipeline = $true)]
+        [object]$InputObject
+    )
+    process {
+        if ($InputObject -is [System.Management.Automation.ErrorRecord]) {
+            Write-Host "$InputObject"
+        }
+        else {
+            $InputObject
+        }
+    }
+}
+
 function Invoke-OpenSslPinCheck {
     param([string]$Root, [psobject]$Pin, [string]$VenvPython)
-    $pyVer = (& $VenvPython -c "import platform; print(platform.python_version())").Trim()
+    $pyVer = ((& $VenvPython -c "import platform; print(platform.python_version())" 2>&1 | Receive-RedactedNativeOutput) -join "`n").Trim()
     if ($pyVer -ne $Pin.python) {
         throw "Build Python is $pyVer, manifest pins $($Pin.python)."
     }
@@ -241,7 +277,7 @@ function Invoke-ShippedNoticesCheck {
             throw "_internal/$rel sha256 $shippedHash != manifest $($Texts.$rel)."
         }
     }
-    $base = (& $VenvPython -c "import sys; print(sys.base_prefix)").Trim()
+    $base = ((& $VenvPython -c "import sys; print(sys.base_prefix)" 2>&1 | Receive-RedactedNativeOutput) -join "`n").Trim()
     $runnerLicence = Join-Path $base 'LICENSE.txt'
     if (-not (Test-Path $runnerLicence)) {
         throw "Build interpreter has no LICENSE.txt at $runnerLicence."
@@ -369,15 +405,15 @@ Write-Host "Build root: $BuildRoot"
 
 Push-Location $repoRoot
 try {
-    $headSha = (git rev-parse HEAD).Trim().ToLower()
+    $headSha = ((git rev-parse HEAD 2>&1 | Receive-RedactedNativeOutput) -join "`n").Trim().ToLower()
     if ($headSha -ne $ExpectedSha) {
         throw "HEAD is $headSha, expected $ExpectedSha (-ExpectedSha). Check out the exact commit before building."
     }
-    $porcelain = git status --porcelain --ignored
+    $porcelain = (git status --porcelain --ignored 2>&1 | Receive-RedactedNativeOutput) -join "`n"
     if ($porcelain) {
         throw "Working tree is not clean (untracked or ignored files present before the build). The clone must be freshly checked out -- see BUILD-RELEASE.md.`n$porcelain"
     }
-    $headTree = (git rev-parse 'HEAD^{tree}').Trim()
+    $headTree = ((git rev-parse 'HEAD^{tree}' 2>&1 | Receive-RedactedNativeOutput) -join "`n").Trim()
     $version = (Get-Content (Join-Path $repoRoot 'VERSION')).Trim()
     if ($version -ne $ExpectedVersion) {
         throw "VERSION is '$version', expected '$ExpectedVersion' (-ExpectedVersion)."
@@ -425,18 +461,18 @@ $pythonExeSignerSubject = $pythonExeSig.SignerCertificate.Subject
 $pythonExeSignerThumbprint = $pythonExeSig.SignerCertificate.Thumbprint
 Write-Host "PYTHON-INSTALLER-PIN: PASS (sha256=$installerSha256)"
 
-$pyVersionString = (& $PythonExe -c "import sys; print('%d.%d.%d' % sys.version_info[:3])").Trim()
+$pyVersionString = ((& $PythonExe -c "import sys; print('%d.%d.%d' % sys.version_info[:3])" 2>&1 | Receive-RedactedNativeOutput) -join "`n").Trim()
 if ($pyVersionString -ne $pins.python.version) {
     throw "python.exe reports $pyVersionString, pinned $($pins.python.version)."
 }
-$pyBits = (& $PythonExe -c "import struct; print(struct.calcsize('P') * 8)").Trim()
+$pyBits = ((& $PythonExe -c "import struct; print(struct.calcsize('P') * 8)" 2>&1 | Receive-RedactedNativeOutput) -join "`n").Trim()
 if ($pyBits -ne '64') {
     throw "python.exe is $pyBits-bit; a 64-bit interpreter is required."
 }
 
 $manifest = Get-Content (Join-Path $repoRoot 'packaging\distribution_manifest.json') -Raw | ConvertFrom-Json
 $opensslPin = $manifest.ship_set.openssl
-$pyBasePrefix = (& $PythonExe -c "import sys; print(sys.base_prefix)").Trim()
+$pyBasePrefix = ((& $PythonExe -c "import sys; print(sys.base_prefix)" 2>&1 | Receive-RedactedNativeOutput) -join "`n").Trim()
 foreach ($dllName in $opensslPin.dlls.PSObject.Properties.Name) {
     $dllPath = Join-Path (Join-Path $pyBasePrefix 'DLLs') $dllName
     if (-not (Test-Path $dllPath)) {
@@ -493,7 +529,7 @@ Invoke-Checked -FilePath $PythonExe -ArgumentList @('-m', 'venv', $venvDir) -Fai
 $venvPython = Join-Path $venvDir 'Scripts\python.exe'
 $venvPyinstaller = Join-Path $venvDir 'Scripts\pyinstaller.exe'
 
-$pipVersionLine = (& $venvPython -m pip --version).Trim()
+$pipVersionLine = ((& $venvPython -m pip --version 2>&1 | Receive-RedactedNativeOutput) -join "`n").Trim()
 
 $requirementsPath = Join-Path $repoRoot 'requirements.txt'
 $requirementsSha256 = Get-Sha256Hex $requirementsPath
@@ -511,7 +547,7 @@ $lockSha256 = Get-Sha256Hex $lockPath
 Invoke-Checked -FilePath $venvPython -ArgumentList @('-m', 'pip', 'install', '--require-hashes', '--no-deps', '-r', $lockPath) -FailureMessage 'pip install --require-hashes --no-deps -r packaging\requirements-windows-build.lock.txt failed'
 Invoke-Checked -FilePath $venvPython -ArgumentList @('-m', 'pip', 'check') -FailureMessage 'pip check failed after installing from the hash-pinned lock'
 
-$pipFreezeText = (& $venvPython -m pip freeze) -join "`n"
+$pipFreezeText = (& $venvPython -m pip freeze 2>&1 | Receive-RedactedNativeOutput) -join "`n"
 $pipFreezeBytes = [System.Text.Encoding]::UTF8.GetBytes($pipFreezeText)
 $pipFreezeSha256 = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($pipFreezeBytes)).Replace('-', '').ToLower()
 Write-Host "DEPENDENCIES: PASS (requirements.txt sha256=$requirementsSha256, lock sha256=$lockSha256, pip freeze sha256=$pipFreezeSha256)"
@@ -546,7 +582,7 @@ try {
         throw 'dist\OrbitRxMonitor\OrbitRxMonitor.exe is missing after pyinstaller.'
     }
 
-    $verNumericRaw = & $venvPython -c "from tools.make_version_info import version_tuple4; print('.'.join(str(n) for n in version_tuple4('$version')))"
+    $verNumericRaw = (& $venvPython -c "from tools.make_version_info import version_tuple4; print('.'.join(str(n) for n in version_tuple4('$version')))" 2>&1 | Receive-RedactedNativeOutput) -join "`n"
     if ($LASTEXITCODE -ne 0) {
         throw 'tools/make_version_info.version_tuple4 failed'
     }
@@ -555,7 +591,7 @@ try {
     if (-not (Test-Path $Iscc)) {
         throw "Inno Setup compiler not found at '$Iscc'. Install Inno Setup 6 yourself first (see BUILD-RELEASE.md); this script does not install it."
     }
-    $pyinstallerVersion = (& $venvPython -c "import PyInstaller; print(PyInstaller.__version__)").Trim()
+    $pyinstallerVersion = ((& $venvPython -c "import PyInstaller; print(PyInstaller.__version__)" 2>&1 | Receive-RedactedNativeOutput) -join "`n").Trim()
     $isccVersionInfo = (Get-Item $Iscc).VersionInfo
     $isccVersionLine = if ($isccVersionInfo.ProductVersion) {
         $isccVersionInfo.ProductVersion
@@ -575,7 +611,7 @@ try {
     # stamp_commit.py intentionally modifies the tracked orbitrx/_build_meta.py.
     # Confirm that is the ONLY tracked-file change the build introduced (dist/
     # and build/ are gitignored, so PyInstaller/ISCC output never shows here).
-    $statusLines = @(git status --porcelain | Where-Object { $_ -and $_.Trim().Length -gt 0 })
+    $statusLines = @(git status --porcelain 2>&1 | Receive-RedactedNativeOutput | Where-Object { $_ -and $_.Trim().Length -gt 0 })
     $unexpected = @($statusLines | Where-Object { $_ -notmatch '^\s*M\s+orbitrx/_build_meta\.py\s*$' })
     if ($unexpected.Count -gt 0) {
         throw "Unexpected working-tree changes after the build (expected only orbitrx/_build_meta.py to be modified):`n$($unexpected -join "`n")"
@@ -705,7 +741,7 @@ $extractDir = $null
 $zipFinalized = $false
 Push-Location $repoRoot
 try {
-    $commitEpoch = (git show -s --format=%ct $ExpectedSha).Trim()
+    $commitEpoch = ((git show -s --format=%ct $ExpectedSha 2>&1 | Receive-RedactedNativeOutput) -join "`n").Trim()
     $zipName = "OrbitRx-Setup-$version.zip"
     $zipFinalPath = Join-Path $outDir $zipName
     $zipPath = Join-Path $outDir "$zipName.pending"
@@ -911,7 +947,7 @@ Write-Host "REMINDER: do not upload anything until Jamie's explicit publish go (
 # clean again, matching the pre-build invariant checked in step b.
 Push-Location $repoRoot
 try {
-    git checkout -- orbitrx/_build_meta.py
+    git checkout -- orbitrx/_build_meta.py 2>&1 | Receive-RedactedNativeOutput | ForEach-Object { Write-Host "$_" }
 }
 finally {
     Pop-Location

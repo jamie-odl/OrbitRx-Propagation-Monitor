@@ -174,18 +174,24 @@ before anything is uploaded.
     PyInstaller's own build-path output, and whatever path you pass
     yourself as `-PythonInstaller`/`-CiInventory`. The script now
     auto-redacts: anything it prints, anything it relays from pip,
-    pytest, PyInstaller, ISCC or its own python tools, and the ship-set/
-    pe-check/pyz-scan files it writes under `out\`, have `$env:USERNAME`,
-    `$env:USERPROFILE` (and `$env:LOCALAPPDATA`/`$env:APPDATA`/`$env:TEMP`)
-    and `$env:COMPUTERNAME` replaced with `<user>`/`<profile>`/`<host>`
-    before you ever see them. That auto-redaction only matches those exact
-    environment values, though -- it is not a human review, so a manual
-    redaction scan (B4) over `build-console.txt` and `out\` is still
-    required before sending anything on, in case a different real name you
-    typed into a custom path slipped through untouched. These files still
-    go only to QA and Risk and are never published (see the send-back list
-    in step 17 below). Passing `-CiInventory` and `-PythonInstaller` from a
-    plain folder such as `C:\build\inputs\` instead of
+    pytest, PyInstaller, ISCC or its own python tools, any direct `git`/
+    `python` call this script itself makes, and the ship-set/pe-check/
+    pyz-scan files it writes under `out\`, have `$env:USERNAME`,
+    `$env:USERPROFILE` (and `$env:LOCALAPPDATA`/`$env:APPDATA`/`$env:TEMP`),
+    `$env:COMPUTERNAME`, `$env:USERDOMAIN`, `$env:USERDNSDOMAIN`,
+    `$env:LOGONSERVER` and `$env:OneDrive`/`$env:OneDriveCommercial`/
+    `$env:OneDriveConsumer` replaced with `<user>`/`<profile>`/`<host>`/
+    `<domain>`/`<dnsdomain>`/`<logonserver>` before you ever see them --
+    including the `/` form of a path value, its Windows 8.3 short form,
+    and a URL-encoded form, matched case-insensitively (L-C). That
+    auto-redaction only matches those exact environment values, though --
+    it is not a human review, so a manual redaction scan (B4) over
+    `build-console.txt` and `out\` is still required before sending
+    anything on, in case a different real name you typed into a custom
+    path slipped through untouched. These files still go only to QA and
+    Risk and are never published (see the send-back list in step 17
+    below). Passing `-CiInventory` and `-PythonInstaller` from a plain
+    folder such as `C:\build\inputs\` instead of
     `C:\Users\<you>\Downloads\...` reduces what the B4 scan has to catch in
     the first place -- prefer that over Downloads.
 
@@ -214,6 +220,16 @@ before anything is uploaded.
     to the local gate (rather than running the full suite unmodified) is a
     deliberate change Risk asked to review -- it is called out here, not
     hidden in a side comment, precisely so that review happens.
+
+    **Network use during this run (L-D):** besides pip's PyPI hash-pinned
+    downloads (step 13) and Windows' own Authenticode CRL/OCSP lookups
+    during a signature check, several UI/capture tests in that same TESTS
+    gate start the app, which then attempts its normal background fetches
+    (NOAA SWPC, hamqsl, PSKReporter, the contest calendar, and an
+    api.github.com update check). Those tests tolerate being offline and
+    do not assert on any fetch succeeding -- only the one test that makes
+    a live, *asserted* network call is marked `@pytest.mark.network` and
+    is the test this local gate deselects.
 
     Any failure stops the script immediately with a clear message and a
     non-zero exit code, and that message is always `BUILD FAILED: ...`
@@ -278,11 +294,27 @@ before anything is uploaded.
     - the antivirus scan result from step 16
 
     `build-console.txt` and the `out\` files above have `$env:USERNAME`,
-    `$env:USERPROFILE` and `$env:COMPUTERNAME` auto-redacted to
-    `<user>`/`<profile>`/`<host>` (see step 13), but that is not a
-    substitute for the manual B4 redaction scan over both before sending
-    -- they are for QA/Risk only and must never be published. The
-    provenance record is the file written to be publish-safe (it
+    `$env:USERPROFILE`, `$env:COMPUTERNAME` and the other values listed in
+    step 13 auto-redacted to `<user>`/`<profile>`/`<host>`/etc., but that
+    is not a substitute for the manual B4 redaction scan over both before
+    sending -- they are for QA/Risk only and must never be published.
+
+    **Run this wider B4 scan (C5)** in `pwsh`, from `C:\build\orbitrx-5.2.0`
+    (the clone), before sending anything on:
+    ```powershell
+    $vals = @($env:USERNAME, $env:COMPUTERNAME, $env:USERDOMAIN, $env:USERDNSDOMAIN, ($env:LOGONSERVER -replace '^\\\\','')) | Where-Object { $_ -and $_.Length -ge 3 }
+    $pat = (($vals | ForEach-Object { [regex]::Escape($_) }) + @('C:\\Users\\', 'OneDrive', 'Desktop', '~1', '%20')) -join '|'
+    Select-String -Path .\build-console*.txt, C:\build\orbitrx-5.2.0-work\out\*.txt -Pattern $pat
+    ```
+    - Hits that are already `<user>`, `<profile>` or `<host>` are fine.
+    - For any other hit, redact a **copy** and write "redacted N lines" in
+      the cover note you send with step 17's set. Otherwise write
+      "redaction scan: no hits".
+    - On a personal PC, `USERDOMAIN` usually equals `COMPUTERNAME`. A real
+      domain name showing up here would itself be an L1 red flag -- **stop
+      and tell Risk**, do not just redact it and carry on.
+
+    The provenance record is the file written to be publish-safe (it
     self-checks for your username, computer name, `$env:USERPROFILE`/
     `$env:HOME` and anything that looks like a UK postcode, and refuses to
     write itself if it finds any); send both, but only the provenance

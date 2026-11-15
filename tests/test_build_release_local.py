@@ -265,22 +265,30 @@ def test_docstring_accurately_describes_the_one_network_access_pip_makes():
     assert "never contacts any network host" not in SCRIPT
     assert "PyPI" in SCRIPT
     assert "--require-hashes" in SCRIPT.split(".DESCRIPTION", 1)[1].split(".PARAMETER", 1)[0]
-    assert "nothing else in" in SCRIPT and "touches the network" in SCRIPT
+    # L-D: the header must not claim this is the *only* network touchpoint
+    # -- several UI/capture tests also make non-asserting background
+    # fetches, and that must be said too, not buried.
+    assert "nothing else in" not in SCRIPT
+    assert "Network access happens in three places" in re.sub(r"\s+", " ", SCRIPT)
 
 
-def test_docstring_network_wording_matches_qa_fix_2_and_nothing_more():
-    # R-d (Risk round): confirm the header lists exactly the three known
-    # network touchpoints -- pip's PyPI hash-pinned downloads, the local
-    # TESTS gate excluding network-marked tests, and Windows possibly
-    # fetching certificate revocation data during an Authenticode check --
-    # and says nothing else does.
+def test_docstring_network_wording_lists_all_three_touchpoints_exactly(): # L-D
+    # Risk round 4 (L-D): the header must list exactly pip's PyPI
+    # hash-pinned downloads, Windows' own Authenticode CRL/OCSP lookups,
+    # AND the UI/capture tests' tolerated-offline background fetches
+    # (NOAA SWPC, hamqsl, PSKReporter, the contest calendar, the
+    # api.github.com update check) -- not just the first two.
     description = SCRIPT.split(".DESCRIPTION", 1)[1].split(".PARAMETER", 1)[0]
     description_flat = re.sub(r"\s+", " ", description)
     assert "pip downloading the wheels" in description_flat
     assert "from PyPI" in description_flat
     assert "'not network'" in description_flat or '"not network"' in description_flat
+    assert "CRL/OCSP" in description_flat
     assert "certificate revocation data" in description_flat
-    assert "nothing else in" in description_flat and "touches the network" in description_flat
+    for host_or_fetch in ("NOAA SWPC", "hamqsl", "PSKReporter", "contest calendar", "api.github.com"):
+        assert host_or_fetch in description_flat, host_or_fetch
+    assert "tolerates being offline" in description_flat
+    assert "do not assert on the fetch" in description_flat
 
 
 def test_does_not_auto_install_python_or_inno_setup():

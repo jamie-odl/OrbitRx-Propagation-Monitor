@@ -1741,6 +1741,254 @@ def test_format_redacted_text_only_redacts_short_names_as_a_whole_path_segment()
     assert "pcworld" in result.stdout
 
 
+# --- L-C (Risk round 4): USERDOMAIN/USERDNSDOMAIN/LOGONSERVER/OneDrive*,
+# the `/` form, the 8.3 short-profile form (injected), the URL-encoded
+# form, and an explicit case-mismatch. ---------------------------------------
+
+
+_CLEAR_NEW_REDACTION_ENV_VARS = (
+    "$env:USERDOMAIN = ''\n$env:USERDNSDOMAIN = ''\n$env:LOGONSERVER = ''\n"
+    "$env:OneDrive = ''\n$env:OneDriveCommercial = ''\n$env:OneDriveConsumer = ''\n"
+)
+
+
+def test_format_redacted_text_redacts_userdomain_userdnsdomain_and_logonserver():
+    result = run_helper(
+        "$env:USERNAME = ''\n$env:COMPUTERNAME = ''\n$env:USERPROFILE = ''\n"
+        "$env:LOCALAPPDATA = ''\n$env:APPDATA = ''\n$env:TEMP = ''\n"
+        "$env:OneDrive = ''\n$env:OneDriveCommercial = ''\n$env:OneDriveConsumer = ''\n"
+        "$env:USERDOMAIN = 'CONTOSO'\n$env:USERDNSDOMAIN = 'corp.contoso.example'\n"
+        "$env:LOGONSERVER = '\\\\DC01'\n"
+        "Write-Host (Format-RedactedText -Text "
+        "'domain CONTOSO, dns corp.contoso.example, logon server \\\\DC01\\share')"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "<domain>" in result.stdout
+    assert "<dnsdomain>" in result.stdout
+    assert "<logonserver>" in result.stdout
+    assert "CONTOSO" not in result.stdout
+    assert "corp.contoso.example" not in result.stdout
+    assert "DC01" not in result.stdout
+
+
+def test_format_redacted_text_redacts_onedrive_env_values():
+    result = run_helper(
+        "$env:USERNAME = ''\n$env:COMPUTERNAME = ''\n$env:USERPROFILE = ''\n"
+        "$env:LOCALAPPDATA = ''\n$env:APPDATA = ''\n$env:TEMP = ''\n"
+        "$env:USERDOMAIN = ''\n$env:USERDNSDOMAIN = ''\n$env:LOGONSERVER = ''\n"
+        "$env:OneDrive = 'C:\\Users\\testuser\\OneDrive - Contoso Ltd'\n"
+        "$env:OneDriveCommercial = 'C:\\Users\\testuser\\OneDrive - Contoso Ltd'\n"
+        "$env:OneDriveConsumer = 'C:\\Users\\testuser\\OneDrive'\n"
+        "Write-Host (Format-RedactedText -Text "
+        "'synced at C:\\Users\\testuser\\OneDrive - Contoso Ltd\\docs and "
+        "C:\\Users\\testuser\\OneDrive\\photos')"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "<profile>" in result.stdout
+    assert "OneDrive" not in result.stdout
+    assert "Contoso" not in result.stdout
+
+
+def test_format_redacted_text_matches_the_forward_slash_form_of_a_path_value():
+    result = run_helper(
+        "$env:USERNAME = ''\n$env:COMPUTERNAME = ''\n"
+        + _CLEAR_NEW_REDACTION_ENV_VARS
+        + "$env:USERPROFILE = 'C:\\Users\\testuser'\n"
+        "$env:LOCALAPPDATA = ''\n$env:APPDATA = ''\n$env:TEMP = ''\n"
+        "Write-Host (Format-RedactedText -Text "
+        "'backslash C:\\Users\\testuser\\Downloads and slash C:/Users/testuser/Downloads')"
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("<profile>") >= 2
+    assert "testuser" not in result.stdout
+
+
+def test_format_redacted_text_matches_an_injected_8_3_short_profile_path():
+    result = run_helper(
+        "$env:USERNAME = ''\n$env:COMPUTERNAME = ''\n"
+        + _CLEAR_NEW_REDACTION_ENV_VARS
+        + "$env:USERPROFILE = 'C:\\Users\\testuser'\n"
+        "$env:LOCALAPPDATA = ''\n$env:APPDATA = ''\n$env:TEMP = ''\n"
+        "$fakeShort = { param($p) 'C:\\Users\\TESTUS~1' }\n"
+        "Write-Host (Format-RedactedText -GetShortPathFunc $fakeShort -Text "
+        "'long C:\\Users\\testuser\\Downloads and short C:\\Users\\TESTUS~1\\Downloads')"
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("<profile>") >= 2
+    assert "testuser" not in result.stdout
+    assert "TESTUS~1" not in result.stdout
+
+
+def test_format_redacted_text_does_not_call_the_short_path_resolver_off_windows_by_default():
+    # Get-Windows83ShortPath (the real default resolver) returns $null
+    # whenever -not $IsWindows, which this non-Windows test host already
+    # is -- confirms the default wiring is itself safe without an
+    # injected override, not just that an override works when supplied.
+    result = run_helper(
+        "$env:USERNAME = ''\n$env:COMPUTERNAME = ''\n"
+        + _CLEAR_NEW_REDACTION_ENV_VARS
+        + "$env:USERPROFILE = 'C:\\Users\\testuser'\n"
+        "$env:LOCALAPPDATA = ''\n$env:APPDATA = ''\n$env:TEMP = ''\n"
+        "Write-Host (Format-RedactedText -Text 'C:\\Users\\testuser\\Downloads')\n"
+        "Write-Host DONE"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "<profile>" in result.stdout
+    assert "DONE" in result.stdout
+
+
+def test_format_redacted_text_matches_url_encoded_forms():
+    result = run_helper(
+        "$env:USERNAME = ''\n$env:COMPUTERNAME = ''\n"
+        + _CLEAR_NEW_REDACTION_ENV_VARS
+        + "$env:USERPROFILE = 'C:\\Users\\jamie sibley'\n"
+        "$env:LOCALAPPDATA = ''\n$env:APPDATA = ''\n$env:TEMP = ''\n"
+        "$full = [uri]::EscapeDataString('C:\\Users\\jamie sibley')\n"
+        "$spaceOnly = 'C:\\Users\\jamie%20sibley'\n"
+        "Write-Host (Format-RedactedText -Text \"full=$full space=$spaceOnly\")"
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("<profile>") >= 2
+    assert "jamie" not in result.stdout
+
+
+def test_format_redacted_text_is_case_insensitive_on_a_case_mismatch():
+    # L-C/R5: a mutant that narrows the replace to case-sensitive must be
+    # caught here -- the env value's own case ('Jamie') differs from both
+    # occurrences in the text being redacted.
+    result = run_helper(
+        "$env:USERNAME = 'Jamie'\n$env:COMPUTERNAME = ''\n"
+        + _CLEAR_NEW_REDACTION_ENV_VARS
+        + "$env:USERPROFILE = ''\n$env:LOCALAPPDATA = ''\n$env:APPDATA = ''\n$env:TEMP = ''\n"
+        "Write-Host (Format-RedactedText -Text 'seen as JAMIE and also jamie')"
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.count("<user>") == 2
+    assert "JAMIE" not in result.stdout
+    assert "jamie" not in result.stdout
+
+
+def test_format_redacted_text_userdomain_equal_to_computername_still_fully_redacts():
+    # Risk R3 note: on a personal PC USERDOMAIN often equals COMPUTERNAME --
+    # confirm that coincidence does not leave the raw value behind (either
+    # placeholder winning is fine; a raw leak is not).
+    result = run_helper(
+        "$env:USERNAME = ''\n"
+        + _CLEAR_NEW_REDACTION_ENV_VARS.replace("$env:USERDOMAIN = ''\n", "")
+        + "$env:USERPROFILE = ''\n$env:LOCALAPPDATA = ''\n$env:APPDATA = ''\n$env:TEMP = ''\n"
+        "$env:COMPUTERNAME = 'MYPC01'\n$env:USERDOMAIN = 'MYPC01'\n"
+        "Write-Host (Format-RedactedText -Text 'host MYPC01 and domain MYPC01')"
+    )
+    assert result.returncode == 0, result.stderr
+    assert "MYPC01" not in result.stdout
+    assert ("<host>" in result.stdout) or ("<domain>" in result.stdout)
+
+
+# --- L-C (Risk round 4): raw stderr of direct native calls is routed
+# through the redactor, via Receive-RedactedNativeOutput. --------------------
+
+
+def test_receive_redacted_native_output_redacts_stderr_keeps_stdout_and_exit_code(tmp_path):
+    # L-C: the specific mutant to kill -- a call site's `2>&1 | Receive-
+    # RedactedNativeOutput` removed (or the function's ErrorRecord branch
+    # removed), letting a native tool's raw stderr reach the console/
+    # build-console.txt unredacted. A real external process (python,
+    # exactly like the call sites this backs) is used so the stderr-
+    # becomes-an-ErrorRecord behaviour under `2>&1` is the real mechanism,
+    # not a simulated one.
+    write_host_fn = _extract_function_text("Write-Host")
+    receive_fn = _extract_function_text("Receive-RedactedNativeOutput")
+    stub = tmp_path / "stub_stderr_tool.py"
+    stub.write_text(
+        "import sys\n"
+        "print(r'C:\\Users\\testuser\\Downloads\\python.exe', file=sys.stderr)\n"
+        "print('clean-stdout-line')\n"
+        "sys.exit(5)\n",
+        encoding="utf-8",
+    )
+    command = (
+        f". '{HELPERS}'\n{write_host_fn}\n{receive_fn}\n"
+        "$env:USERNAME = 'testuser'\n$env:USERPROFILE = 'C:\\Users\\testuser'\n"
+        f"$captured = (& '{sys.executable}' '{stub}' 2>&1 | Receive-RedactedNativeOutput) -join \"`n\"\n"
+        "Write-Host \"EXIT=$LASTEXITCODE\"\n"
+        "Write-Host \"CAPTURED=$captured\""
+    )
+    result = run_pwsh(command)
+    text = combined_text(result)
+    assert "<profile>" in text
+    assert "testuser" not in text
+    assert "EXIT=5" in text
+    assert "CAPTURED=clean-stdout-line" in text
+
+
+def test_git_rev_parse_head_call_site_redacts_a_mocked_stderr_line(tmp_path):
+    # L-C: run the main script's own `$headSha = (...)` statement
+    # (extracted via AST, not retyped) with `git` mocked as a PowerShell
+    # function -- Get-Command resolves a function ahead of any real git on
+    # PATH, the same trick the existing dsregcmd mocks use -- so a
+    # genuinely routed call site (not just Receive-RedactedNativeOutput in
+    # isolation) is shown to redact stderr while still returning the real
+    # commit sha on stdout.
+    write_host_fn = _extract_function_text("Write-Host")
+    receive_fn = _extract_function_text("Receive-RedactedNativeOutput")
+    head_sha_stmt = _extract_ast_node_text("AssignmentStatementAst", r"^\$headSha =")
+    sha = "a" * 40
+    git_mock = (
+        "function git {\n"
+        "    Write-Error 'fatal: unable to read config for C:\\Users\\testuser'\n"
+        f"    Write-Output '{sha}'\n"
+        "    $global:LASTEXITCODE = 0\n"
+        "}\n"
+    )
+    command = (
+        f". '{HELPERS}'\n{write_host_fn}\n{receive_fn}\n{git_mock}\n"
+        "$env:USERNAME = 'testuser'\n$env:USERPROFILE = 'C:\\Users\\testuser'\n"
+        f"{head_sha_stmt}\n"
+        "Write-Host \"HEAD=$headSha\""
+    )
+    result = run_pwsh(command)
+    text = combined_text(result)
+    assert "<profile>" in text
+    assert "testuser" not in text
+    assert f"HEAD={sha}" in result.stdout
+
+
+def test_invoke_openssl_pin_check_redacts_python_stderr(tmp_path):
+    # L-C: same mutant class as the git test above, for the `& $VenvPython
+    # -c "..." 2>&1 | Receive-RedactedNativeOutput` call sites -- the
+    # fake interpreter is a .ps1 stub (not a real python.exe) so it can
+    # emit a fixed stderr line regardless of which -c one-liner the real,
+    # unmodified function text passes it.
+    root = tmp_path / "onedir"
+    (root / "_internal").mkdir(parents=True)
+    dll = root / "_internal" / "libcrypto-3.dll"
+    dll.write_bytes(b"fake openssl dll bytes for the pin check test\n")
+    real_hash = hashlib.sha256(dll.read_bytes()).hexdigest()
+
+    fake_venv_python = tmp_path / "fake-venv-python-stderr.ps1"
+    fake_venv_python.write_text(
+        "Write-Error 'profile at C:\\Users\\testuser in use'\n"
+        f"Write-Output '{platform.python_version()}'\n",
+        encoding="utf-8",
+    )
+    command = (
+        f". '{HELPERS}'\n"
+        f"{_extract_function_text('Write-Host')}\n"
+        f"{_extract_function_text('Receive-RedactedNativeOutput')}\n"
+        f"{_extract_function_text('Invoke-OpenSslPinCheck')}\n"
+        "$env:USERNAME = 'testuser'\n$env:USERPROFILE = 'C:\\Users\\testuser'\n"
+        f"$pin = {_openssl_pin_expr('', real_hash)}\n"
+        f"Invoke-OpenSslPinCheck -Root '{root}' -Pin $pin -VenvPython '{fake_venv_python}'\n"
+        "Write-Host DONE"
+    )
+    result = run_pwsh(command)
+    text = combined_text(result)
+    assert result.returncode == 0, text
+    assert "<profile>" in text
+    assert "testuser" not in text
+    assert "DONE" in result.stdout
+
+
 def test_invoke_checked_redacts_relayed_tool_output_and_still_passes(tmp_path):
     # R-c: the specific mutant to kill -- Invoke-Checked's relayed-output
     # pipe no longer re-emitted through the redacting Write-Host, letting a
@@ -1901,12 +2149,15 @@ def test_set_redacted_file_text_rewrites_a_gate_output_file_in_place(tmp_path):
 # main script), run against a fake onedir tree. -------------------------------
 
 
-def _run_openssl_pin_check(root: Path, pin_expr: str) -> subprocess.CompletedProcess:
+def _run_openssl_pin_check(root: Path, pin_expr: str, venv_python: str | None = None) -> subprocess.CompletedProcess:
     fn_text = _extract_function_text("Invoke-OpenSslPinCheck")
+    # L-C: the function's own `& $VenvPython -c "..." 2>&1 | Receive-
+    # RedactedNativeOutput` call needs this function defined too.
+    receive_redacted_native_output = _extract_function_text("Receive-RedactedNativeOutput")
     command = (
-        f". '{HELPERS}'\n{fn_text}\n"
+        f". '{HELPERS}'\n{receive_redacted_native_output}\n{fn_text}\n"
         f"$pin = {pin_expr}\n"
-        f"Invoke-OpenSslPinCheck -Root '{root}' -Pin $pin -VenvPython '{sys.executable}'\n"
+        f"Invoke-OpenSslPinCheck -Root '{root}' -Pin $pin -VenvPython '{venv_python or sys.executable}'\n"
         "Write-Host DONE"
     )
     return run_pwsh(command)
@@ -2009,8 +2260,11 @@ def test_invoke_shipped_notices_check_rejects_a_tampered_notices_hash(tmp_path):
     hashes[tampered_rel] = "f" * 64
 
     fn_text = _extract_function_text("Invoke-ShippedNoticesCheck")
+    # L-C: the function's own `& $VenvPython -c "..." 2>&1 | Receive-
+    # RedactedNativeOutput` call needs this function defined too.
+    receive_redacted_native_output = _extract_function_text("Receive-RedactedNativeOutput")
     command = (
-        f". '{HELPERS}'\n{fn_text}\n"
+        f". '{HELPERS}'\n{receive_redacted_native_output}\n{fn_text}\n"
         f"$texts = {_texts_expr(hashes)}\n"
         f"Invoke-ShippedNoticesCheck -Root '{root}' -Texts $texts -VenvPython '{sys.executable}'"
     )
@@ -2044,8 +2298,9 @@ def test_invoke_shipped_notices_check_passes_when_all_hashes_match(tmp_path):
     fake_venv_python.write_text(f"Write-Output '{fake_base_prefix_literal}'\n", encoding="utf-8")
 
     fn_text = _extract_function_text("Invoke-ShippedNoticesCheck")
+    receive_redacted_native_output = _extract_function_text("Receive-RedactedNativeOutput")
     command = (
-        f". '{HELPERS}'\n{fn_text}\n"
+        f". '{HELPERS}'\n{receive_redacted_native_output}\n{fn_text}\n"
         f"$texts = {_texts_expr(hashes)}\n"
         f"Invoke-ShippedNoticesCheck -Root '{root}' -Texts $texts -VenvPython '{fake_venv_python}'"
     )
@@ -2145,7 +2400,7 @@ def _make_pack_l6_repo(tmp_path: Path) -> tuple[Path, str]:
 
 
 def _run_pack_l6_region(
-    repo: Path, sha: str, pack_stub: str, ship_set_stub: str
+    repo: Path, sha: str, pack_stub: str, ship_set_stub: str, extra_harness: str = ""
 ) -> subprocess.CompletedProcess:
     _write_literal_backslash_file(repo, "tools\\pack_setup_zip.py", pack_stub)
     _write_literal_backslash_file(repo, "tools\\ship_set.py", ship_set_stub)
@@ -2164,10 +2419,15 @@ def _run_pack_l6_region(
     region_text = _extract_region_text("pack-l6")
     invoke_checked = _extract_function_text("Invoke-Checked")
     invoke_checked_tee = _extract_function_text("Invoke-CheckedTee")
+    # L-C: the region's own `$commitEpoch = (git show ... 2>&1 | Receive-
+    # RedactedNativeOutput) ...` line needs this function defined too, same
+    # as Invoke-Checked/Invoke-CheckedTee above.
+    receive_redacted_native_output = _extract_function_text("Receive-RedactedNativeOutput")
 
     harness = (
         f". '{HELPERS}'\n"
-        f"{invoke_checked}\n{invoke_checked_tee}\n"
+        f"{invoke_checked}\n{invoke_checked_tee}\n{receive_redacted_native_output}\n"
+        f"{extra_harness}\n"
         f"$repoRoot = '{repo}'\n"
         f"$ExpectedSha = '{sha}'\n"
         "$version = '5.2.0'\n"
