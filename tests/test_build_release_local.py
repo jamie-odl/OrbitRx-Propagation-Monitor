@@ -114,11 +114,21 @@ def test_checks_authenticode_signatures_for_python():
     assert "authenticode_signer_subject_contains" in SCRIPT
     # P8: the Status/signer-subject decision is a shared pure helper
     # (Assert-AuthenticodeSignatureValid, in HELPERS) so it can be tested
-    # with a synthetic signature object; each main-script call site must
-    # read the pin, not a hardcoded literal.
+    # with a synthetic signature object.
     assert "[regex]::Escape($SignerSubjectContains)" in HELPERS
-    call_sites = SCRIPT.count("-SignerSubjectContains $pins.python.authenticode_signer_subject_contains")
-    assert call_sites >= 2, "expected both the installer and python.exe signer checks to read the pin"
+    # P8c2: the main script reads the pin at exactly one call site, which
+    # forwards both already-retrieved signature objects by name to a
+    # shared helper (Assert-PythonAndInstallerSignaturesValid, in HELPERS)
+    # that itself calls Assert-AuthenticodeSignatureValid twice, once per
+    # label -- see test_assert_python_and_installer_signatures_valid_* in
+    # test_build_release_local_pwsh.py for the behavioural check that the
+    # python.exe check really receives $pythonExeSig, not $installerSig.
+    assert "Assert-PythonAndInstallerSignaturesValid -InstallerSignature $installerSig -PythonExeSignature $pythonExeSig -SignerSubjectContains $pins.python.authenticode_signer_subject_contains" in SCRIPT
+    assert "Assert-PythonAndInstallerSignaturesValid" in HELPERS
+    helper_body = HELPERS.split("function Assert-PythonAndInstallerSignaturesValid", 1)[1].split("\n}\n", 1)[0]
+    assert helper_body.count("Assert-AuthenticodeSignatureValid") == 2
+    assert "-Label 'Python installer'" in helper_body
+    assert "-Label 'python.exe'" in helper_body
 
 
 def test_n8_records_signer_thumbprints_in_provenance():
@@ -153,6 +163,33 @@ def test_never_contacts_the_network_or_publishes():
         assert needle not in HELPERS, needle
 
 
+def test_r_c_console_and_out_file_redaction_is_wired_up():
+    # R-c: Format-RedactedText is the pure helper; Write-Host is shadowed so
+    # every existing call site (and the top-level catch's own BUILD FAILED
+    # line) is covered without being rewritten individually; Invoke-Checked
+    # and Invoke-CheckedTee relay tool output through it; Set-RedactedFileText
+    # rewrites the three out\ files the python tools write directly.
+    assert "function Format-RedactedText" in HELPERS
+    assert "function Write-Host" in SCRIPT
+    assert "Format-RedactedText -Text \"$Object\"" in SCRIPT
+    assert "Invoke-Checked" in SCRIPT and "ForEach-Object { Write-Host \"$_\" }" in SCRIPT
+    assert "Invoke-CheckedTee" in SCRIPT and "Format-RedactedText -Text \"$_\"" in SCRIPT
+    assert "Get-Command Format-RedactedText -ErrorAction SilentlyContinue" in SCRIPT
+    for call in (
+        "Set-RedactedFileText -Path $shipSetQtList",
+        "Set-RedactedFileText -Path $shipSetTlsList",
+        "Set-RedactedFileText -Path $peCheckOut",
+        "Set-RedactedFileText -Path $pyzScanOut",
+    ):
+        assert call in SCRIPT, call
+    # ship-set-inventory.txt (local) is the one out\ file deliberately left
+    # unredacted (it is compared byte-for-byte via --compare-tree); confirm
+    # the decision is documented at its construction site, not silently
+    # dropped.
+    assert "Set-RedactedFileText -Path $localInventoryPath" not in SCRIPT
+    assert "deliberately NOT passed through" in re.sub(r"\s+", " ", SCRIPT)
+
+
 def test_docstring_accurately_describes_the_one_network_access_pip_makes():
     # NEW-3: the script does reach a network host -- pip fetching the
     # hash-pinned wheels from PyPI -- so the header must say that, not
@@ -161,6 +198,21 @@ def test_docstring_accurately_describes_the_one_network_access_pip_makes():
     assert "PyPI" in SCRIPT
     assert "--require-hashes" in SCRIPT.split(".DESCRIPTION", 1)[1].split(".PARAMETER", 1)[0]
     assert "nothing else in" in SCRIPT and "touches the network" in SCRIPT
+
+
+def test_docstring_network_wording_matches_qa_fix_2_and_nothing_more():
+    # R-d (Risk round): confirm the header lists exactly the three known
+    # network touchpoints -- pip's PyPI hash-pinned downloads, the local
+    # TESTS gate excluding network-marked tests, and Windows possibly
+    # fetching certificate revocation data during an Authenticode check --
+    # and says nothing else does.
+    description = SCRIPT.split(".DESCRIPTION", 1)[1].split(".PARAMETER", 1)[0]
+    description_flat = re.sub(r"\s+", " ", description)
+    assert "pip downloading the wheels" in description_flat
+    assert "from PyPI" in description_flat
+    assert "'not network'" in description_flat or '"not network"' in description_flat
+    assert "certificate revocation data" in description_flat
+    assert "nothing else in" in description_flat and "touches the network" in description_flat
 
 
 def test_does_not_auto_install_python_or_inno_setup():
@@ -291,6 +343,31 @@ def test_a_later_l6_or_determinism_failure_deletes_the_final_zip():
     assert "Test-Path $zipPath" in catch_part
     assert "Remove-Item -Force $zipPath" in catch_part
     assert re.search(r"^\s*throw\s*$", catch_part, re.MULTILINE), "catch must re-throw, not swallow the error"
+
+
+# --- L-4c/L-5 (item 5): a failure in the provenance write or its unsafe-
+# marker self-check must still leave nothing at the public zip name. -------
+
+
+def test_zip_is_built_pending_and_renamed_only_after_provenance_self_check():
+    rename_pos = SCRIPT.index("Rename-Item -LiteralPath $zipPath -NewName $zipName")
+    selfcheck_pos = SCRIPT.index("Get-ProvenanceUnsafeMarkers -Text $provenanceText")
+    write_pos = SCRIPT.index("Set-Content -Path $provenancePath -Value $provenanceText")
+    finalized_pos = SCRIPT.index("$zipFinalized = $true")
+    assert selfcheck_pos < write_pos < rename_pos < finalized_pos
+    assert '$zipPath = Join-Path $outDir "$zipName.pending"' in SCRIPT
+
+
+def test_top_level_catch_removes_a_still_pending_zip_and_extracted_dir():
+    catch_block = SCRIPT.rsplit("catch {", 1)[1]
+    assert "-not $zipFinalized" in catch_block
+    assert "Remove-Item -Force $zipPath" in catch_block
+    assert "Remove-Item -Recurse -Force $extractDir" in catch_block
+    # These must be declared before any throw-able step can run, so the
+    # catch can always reference them under Set-StrictMode.
+    declare_pos = SCRIPT.index("$zipFinalized = $false")
+    first_risky_pos = SCRIPT.index("Assert-PersonalKitAttested -Attested:")
+    assert declare_pos < first_risky_pos
 
 
 def test_inno_setup_version_is_read_from_file_version_info():
@@ -444,6 +521,40 @@ def test_lock_file_is_consistent_with_requirements_txt():
         assert "--hash=sha256:" in block, block.splitlines()[0]
 
 
+# --- L-2: the local TESTS gate excludes network-marked tests; CI does not -
+
+
+def test_network_marker_is_registered_in_pyproject():
+    import tomllib
+
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    markers = pyproject.get("tool", {}).get("pytest", {}).get("ini_options", {}).get("markers", [])
+    assert any(m.startswith("network:") for m in markers), "no 'network' marker registered in pyproject.toml"
+
+
+def test_local_tests_gate_excludes_network_marked_tests():
+    assert "'-m', 'not network'" in SCRIPT
+
+
+def test_ci_test_job_does_not_deselect_network_tests():
+    ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    test_job = ci.split("build-windows:", 1)[0]
+    pytest_lines = [line for line in test_job.splitlines() if re.search(r"\bpytest\b", line)]
+    assert pytest_lines, "no pytest invocation found in the test job"
+    for line in pytest_lines:
+        assert "not network" not in line, (
+            "CI's test job must run the full suite, including network-marked tests, "
+            f"unlike the local TESTS gate: {line}"
+        )
+        assert not re.search(r"-m\s+['\"]?not\b", line)
+
+
+def test_live_noaa_test_is_marked_network():
+    noaa_text = (ROOT / "tests" / "test_weather_fixtures.py").read_text(encoding="utf-8")
+    marked = noaa_text.split("def test_live_noaa_populates_core_fields", 1)[0].splitlines()[-1]
+    assert "pytest.mark.network" in marked
+
+
 def test_lock_file_header_has_no_absolute_tmp_paths():
     lock_text = (ROOT / "packaging" / "requirements-windows-build.lock.txt").read_text(encoding="utf-8")
     header = "\n".join(lock_text.splitlines()[:3])
@@ -485,16 +596,53 @@ def test_dry_run_reminder_is_printed():
 # exits 0. -----------------------------------------------------------------
 
 
-def test_powershell_7_is_required_and_checked_before_strict_mode():
-    assert "Test-PowerShellVersionSupported" in HELPERS
-    assert "Test-PowerShellVersionSupported" in SCRIPT
-    gate_section = SCRIPT.split("Test-PowerShellVersionSupported", 1)[1].split("Set-StrictMode", 1)[0]
+def test_requires_statement_gates_powershell_7():
+    # L-1: #Requires stops a pre-7 host (including one that would otherwise
+    # ignore the inline check below) before any of this script's own code
+    # runs at all. Must appear before the param block.
+    assert "#Requires -Version 7.0" in SCRIPT
+    assert SCRIPT.index("#Requires -Version 7.0") < SCRIPT.index("[CmdletBinding()]")
+
+
+def test_inline_version_check_runs_before_strict_mode_and_dot_source():
+    # L-1: fail closed even if a host somehow ignores #Requires, or the
+    # dot-sourced helpers file below fails to load -- this plain check (no
+    # dependency on the helpers file, so it survives a broken/missing one)
+    # must run before Set-StrictMode and before the dot-source.
+    gate_section = SCRIPT.split("$PSVersionTable.PSVersion.Major -lt 7", 1)[1].split("Set-StrictMode", 1)[0]
     assert "PowerShell 7 or later is required" in gate_section
     assert "BUILD FAILED" in gate_section
     assert "exit 1" in gate_section
-    # The gate must run before Set-StrictMode, so a pre-7 host sees this
-    # script's own clear message rather than a strict-mode-related failure.
-    assert SCRIPT.index("Test-PowerShellVersionSupported") < SCRIPT.index("Set-StrictMode -Version Latest")
+    dot_source_line = ". (Join-Path $PSScriptRoot 'build_release_local.helpers.ps1')"
+    assert SCRIPT.index("$PSVersionTable.PSVersion.Major -lt 7") < SCRIPT.index("Set-StrictMode -Version Latest")
+    assert SCRIPT.index("$PSVersionTable.PSVersion.Major -lt 7") < SCRIPT.index(dot_source_line)
+
+
+def test_helpers_dot_source_is_guarded_and_inside_the_top_level_try():
+    # L-1: a load failure (missing or unparsable helpers file) must be a
+    # terminating error the top-level try/catch reports as a BUILD FAILED
+    # line naming the file -- not an uncaught error that bypasses
+    # Tee-Object -- so the dot-source itself must be inside the try,
+    # preceded by a Test-Path check that names the file in its message.
+    try_pos = SCRIPT.index("\ntry {")
+    dot_source_pos = SCRIPT.index(". (Join-Path $PSScriptRoot 'build_release_local.helpers.ps1')")
+    assert try_pos < dot_source_pos
+    section = SCRIPT[try_pos:dot_source_pos]
+    assert "Test-Path -LiteralPath $helpersPath" in section
+    assert "Helpers file not found: $helpersPath" in section
+    assert "throw" in section
+
+
+def test_powershell_7_helper_check_still_used_inside_try():
+    # NEW-5 (kept as a backstop, per L-1): Test-PowerShellVersionSupported
+    # is still called from the main script, now after Set-StrictMode
+    # (inside the top-level try, right after the dot-source), unlike the
+    # plain inline check above which runs before it.
+    assert "Test-PowerShellVersionSupported" in HELPERS
+    assert "Test-PowerShellVersionSupported" in SCRIPT
+    gate_section = SCRIPT.split("Test-PowerShellVersionSupported -MajorVersion", 1)[1][:400]
+    assert "PowerShell 7 or later is required" in gate_section
+    assert SCRIPT.index("Test-PowerShellVersionSupported -MajorVersion") > SCRIPT.index("Set-StrictMode -Version Latest")
 
 
 def test_script_body_is_wrapped_in_a_top_level_try_catch_with_explicit_exits():
@@ -567,12 +715,24 @@ def test_build_release_md_documents_tee_object_console_capture():
 
 
 def test_build_release_md_warns_build_console_may_contain_username():
-    assert "can end up containing" in BUILD_RELEASE_MD
+    assert "used to be able to end" in BUILD_RELEASE_MD
     assert "your Windows username" in BUILD_RELEASE_MD
     assert "QA and Risk" in BUILD_RELEASE_MD
     assert "never published" in BUILD_RELEASE_MD.lower() or "never publish" in BUILD_RELEASE_MD.lower()
     assert "C:\\build\\..." in BUILD_RELEASE_MD or "C:\\build\\" in BUILD_RELEASE_MD
     assert "prefer that over Downloads" in BUILD_RELEASE_MD_FLAT
+
+
+def test_build_release_md_documents_the_auto_redaction_and_the_b4_manual_scan():
+    # R-c (Risk round): the script now auto-redacts $env:USERNAME/
+    # USERPROFILE/COMPUTERNAME from console output and out\ files, but that
+    # is pattern-matching on those specific values, not a human review --
+    # BUILD-RELEASE.md must still call out the manual B4 redaction scan.
+    assert "auto-redacts" in BUILD_RELEASE_MD_FLAT
+    assert "<user>" in BUILD_RELEASE_MD and "<profile>" in BUILD_RELEASE_MD and "<host>" in BUILD_RELEASE_MD
+    assert "B4" in BUILD_RELEASE_MD
+    assert "redaction scan" in BUILD_RELEASE_MD_FLAT
+    assert "is not a human review" in BUILD_RELEASE_MD_FLAT or "not a human review" in BUILD_RELEASE_MD_FLAT
 
 
 def test_build_release_md_i4_recommends_append_or_per_attempt_filenames():
@@ -615,3 +775,47 @@ def test_build_release_md_lists_everything_to_send_back():
         "antivirus",
     ):
         assert needle in BUILD_RELEASE_MD
+
+
+# --- item 7 (QA round 3, L-7 doc fixes): step 13 example, -PythonInstaller
+# wording, PowerShell 7.4+ prerequisite, step 14 no-BUILD-FAILED note, the
+# local TESTS gate skipping the network-marked live NOAA test. -------------
+
+
+def test_build_release_md_step13_example_uses_build_inputs_not_downloads():
+    step13 = BUILD_RELEASE_MD.split("\n13. ", 1)[1].split("\n14. ", 1)[0]
+    assert r"C:\build\inputs\python-3.12.10-amd64.exe" in step13
+    assert r"C:\build\inputs\ship-set-inventory.txt" in step13
+    assert r"C:\Downloads\python-3.12.10-amd64.exe" not in step13
+    assert r"C:\Downloads\ship-set-inventory.txt" not in step13
+    assert "put" in step13.lower() and r"C:\build\inputs" in step13
+
+
+def test_build_release_md_explains_pythoninstaller_has_no_default():
+    step13 = BUILD_RELEASE_MD.split("\n13. ", 1)[1].split("\n14. ", 1)[0]
+    assert "`-PythonInstaller` has no default" in step13
+    assert "must always be passed explicitly" in step13
+
+
+def test_build_release_md_prerequisite_pins_powershell_7_4_and_winget():
+    prereqs = BUILD_RELEASE_MD.split("## Prerequisites", 1)[1].split("## Steps", 1)[0]
+    assert "PowerShell 7.4" in prereqs
+    assert "winget install --id Microsoft.PowerShell" in prereqs
+    assert "pwsh -v" in prereqs
+
+
+def test_build_release_md_step14_explains_a_missing_build_failed_line():
+    step14_flat = re.sub(r"\s+", " ", BUILD_RELEASE_MD.split("\n14. ", 1)[1].split("\n15. ", 1)[0])
+    assert "no `BUILD FAILED` line" in step14_flat or "no BUILD FAILED line" in step14_flat
+    assert "command line itself was wrong" in step14_flat
+    assert "mistyped" in step14_flat
+
+
+def test_build_release_md_mentions_the_local_tests_gate_skips_the_live_noaa_test():
+    step14_flat = re.sub(r"\s+", " ", BUILD_RELEASE_MD.split("\n14. ", 1)[1].split("\n15. ", 1)[0])
+    assert "network-marked" in step14_flat
+    assert "NOAA" in step14_flat
+    assert "CI" in step14_flat
+    # R-d (Risk round): this is a deliberate departure from "run CI's exact
+    # suite" -- it must be surfaced for Risk to review, not buried.
+    assert "Risk asked to review" in step14_flat

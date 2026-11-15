@@ -74,6 +74,19 @@ function Assert-AuthenticodeSignatureValid {
     }
 }
 
+# P8c2: the main script's single call site for both of the above, taking
+# both already-retrieved signature objects by name. Pulling this into one
+# function (rather than two separate call-site statements) means a mutant
+# that feeds the python.exe check $InstallerSignature a second time instead
+# of $PythonExeSignature can be caught by calling this function directly
+# with a good installer signature and a bad python.exe signature.
+
+function Assert-PythonAndInstallerSignaturesValid {
+    param([psobject]$InstallerSignature, [psobject]$PythonExeSignature, [string]$SignerSubjectContains)
+    Assert-AuthenticodeSignatureValid -Signature $InstallerSignature -Label 'Python installer' -SignerSubjectContains $SignerSubjectContains
+    Assert-AuthenticodeSignatureValid -Signature $PythonExeSignature -Label 'python.exe' -SignerSubjectContains $SignerSubjectContains
+}
+
 # P12: the per-DLL half of the OpenSSL ship-set pin check (directory,
 # FileVersion, sha256), taking already-computed values rather than a real
 # file on disk, so a test can assert the sha256 half specifically fires
@@ -154,6 +167,51 @@ function Get-ProvenanceUnsafeMarkers {
         $found += 'UK-postcode-pattern'
     }
     return $found
+}
+
+# --- R-c: console/out\ redaction of this PC's identity -----------------------
+# Unlike Get-ProvenanceUnsafeMarkers above (which fails the build closed if a
+# marker slips into the provenance record), this is a best-effort rewrite
+# applied to ordinary console output and gate-output text files, which are
+# expected to exist and be read even on a dry run.
+
+function Format-RedactedText {
+    param([string]$Text)
+    if ($null -eq $Text) { return $Text }
+
+    # USERPROFILE/LOCALAPPDATA/APPDATA/TEMP all map to <profile>, each
+    # matched by its own literal value (a redirected profile can make these
+    # differ rather than nest under USERPROFILE) regardless of length -- an
+    # empty value is skipped outright, since PowerShell's -replace with an
+    # empty pattern matches between every character. USERNAME/COMPUTERNAME
+    # map to <user>/<host>; below 3 characters they are too easy to collide
+    # with ordinary text, so those are only redacted as a whole \name\ or
+    # /name/ path segment.
+    $entries = @()
+    foreach ($value in @($env:USERPROFILE, $env:LOCALAPPDATA, $env:APPDATA, $env:TEMP)) {
+        if ($value) {
+            $entries += [PSCustomObject]@{ Value = $value; With = '<profile>'; WholeSegmentOnly = $false }
+        }
+    }
+    if ($env:USERNAME) {
+        $entries += [PSCustomObject]@{ Value = $env:USERNAME; With = '<user>'; WholeSegmentOnly = ($env:USERNAME.Length -lt 3) }
+    }
+    if ($env:COMPUTERNAME) {
+        $entries += [PSCustomObject]@{ Value = $env:COMPUTERNAME; With = '<host>'; WholeSegmentOnly = ($env:COMPUTERNAME.Length -lt 3) }
+    }
+
+    $result = $Text
+    # Longest value first, so a longer, more specific match (e.g. a
+    # redirected LOCALAPPDATA) is consumed before a shorter one (e.g.
+    # USERPROFILE) that might otherwise overlap it.
+    foreach ($entry in ($entries | Sort-Object { $_.Value.Length } -Descending)) {
+        $pattern = [regex]::Escape($entry.Value)
+        if ($entry.WholeSegmentOnly) {
+            $pattern = '(?<=[\\/])' + $pattern + '(?=[\\/])'
+        }
+        $result = $result -replace $pattern, $entry.With
+    }
+    return $result
 }
 
 # --- Path guard (N4): OneDrive, Desktop, reparse points, subst/UNC ----------
@@ -336,19 +394,18 @@ function ConvertFrom-DsregcmdStatus {
 
 function Test-ManagedDeviceStatus {
     param([hashtable]$Flags)
-    # Returns @{ Refuse = $bool; Message = ...; Warning = ... (or $null) }
-    $joinKeys = @('DomainJoined', 'AzureAdJoined', 'EnterpriseJoined')
+    # Returns @{ Refuse = $bool; Message = ... (or $null) }
+    # Risk round R-a: WorkplaceJoined=YES used to only warn; it now refuses
+    # like the other three flags -- a workplace/school account on this PC
+    # means it is not a personal kit, full stop.
+    $joinKeys = @('DomainJoined', 'AzureAdJoined', 'EnterpriseJoined', 'WorkplaceJoined')
     $joined = @($joinKeys | Where-Object { $Flags.ContainsKey($_) -and $Flags[$_] -eq 'YES' })
     $result = [PSCustomObject]@{
         Refuse  = $joined.Count -gt 0
         Message = $null
-        Warning = $null
     }
     if ($result.Refuse) {
-        $result.Message = "This looks like a managed/employer device ($($joined -join ', ') = YES). L1 requires a personal kit; refusing to build here."
-    }
-    if ($Flags.ContainsKey('WorkplaceJoined') -and $Flags['WorkplaceJoined'] -eq 'YES') {
-        $result.Warning = "WorkplaceJoined=YES: this PC is registered with a workplace account. Confirm this is still your own personal PC (L1) before continuing."
+        $result.Message = "This PC has a work/school account or is managed ($($joined -join ', ') = YES). L1 requires personal kit. Stop and tell Risk."
     }
     return $result
 }

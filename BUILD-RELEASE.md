@@ -22,14 +22,18 @@ before anything is uploaded.
 1. Your own personal PC only. Not employer equipment, not over a VPN, not
    inside a remote session (L1). The script also runs a best-effort check
    with `dsregcmd /status` (if present) and refuses to continue if the
-   machine reports as domain-joined, Azure AD-joined or Intune/MDM
-   ("Enterprise") joined; it only warns if the machine is "workplace
-   joined". This heuristic is not a substitute for actually knowing whose
-   PC this is.
-2. **PowerShell 7 (`pwsh`).** This script requires it and refuses to run on
-   Windows PowerShell 5.1 with a clear message rather than failing partway
-   through. Install PowerShell 7 from Microsoft if `pwsh -v` does not
-   already work in your terminal.
+   machine reports as domain-joined, Azure AD-joined, Intune/MDM
+   ("Enterprise") joined, **or "workplace joined"** -- any one of those four
+   means this PC has a work/school account or is otherwise managed, which
+   fails L1 regardless of who owns the hardware. The script stops with a
+   message telling you to tell Risk; this heuristic is not a substitute for
+   actually knowing whose PC this is.
+2. **PowerShell 7.4 or later (`pwsh`).** This script requires it (`#Requires
+   -Version 7.0`, plus its own inline check) and refuses to run on Windows
+   PowerShell 5.1 with a clear message rather than failing partway through.
+   Check what you have with `pwsh -v`; if that does not already work, or
+   reports an older 7.x, install the current release with
+   `winget install --id Microsoft.PowerShell`, then re-check with `pwsh -v`.
 3. **Git for Windows** (for `git clone`, `git rev-parse`, etc.).
 4. **Python 3.12.10 for Windows (64-bit)**, downloaded yourself from
    python.org and installed "for the current user". The script never
@@ -92,21 +96,28 @@ before anything is uploaded.
     already expired, re-running CI at that SHA just to regenerate it is a
     decision for QA/Risk to make, not something to do unilaterally --
     ask first; do not build without it.
-13. Open PowerShell 7 (`pwsh`) in the cloned repo and run the build script,
-    for example:
+13. Put the Python installer you downloaded in step 10 and the
+    `ship-set-inventory.txt` you got in step 12 into a plain local folder,
+    e.g. `C:\build\inputs\` (not `Downloads` -- see why below). Open
+    PowerShell 7 (`pwsh`) in the cloned repo and run the build script, for
+    example:
     ```
     pwsh -ExecutionPolicy Bypass -File tools\build_release_local.ps1 `
       -ExpectedSha <the 40-char commit SHA> `
-      -PythonInstaller C:\Downloads\python-3.12.10-amd64.exe `
-      -CiInventory C:\Downloads\ship-set-inventory.txt `
+      -PythonInstaller C:\build\inputs\python-3.12.10-amd64.exe `
+      -CiInventory C:\build\inputs\ship-set-inventory.txt `
       -AttestPersonalKit `
       *>&1 | Tee-Object -FilePath C:\build\orbitrx-5.2.0\build-console.txt
     ```
-    Add `-Iscc`, `-PythonExe` or `-BuildRoot` only if your installs are not
-    at the script's default locations. `*>&1 | Tee-Object -FilePath ...`
-    (not `Start-Transcript`) saves a copy of everything the script printed,
-    for QA/Risk, without also stamping your username and computer name
-    into the saved file's own header the way `Start-Transcript` would.
+    `-PythonInstaller` has no default -- unlike `-Iscc`, `-PythonExe` and
+    `-BuildRoot`, which fall back to the locations described above if
+    omitted, `-PythonInstaller` must always be passed explicitly; the
+    script refuses to run without it. Add `-Iscc`, `-PythonExe` or
+    `-BuildRoot` only if your installs are not at the script's default
+    locations. `*>&1 | Tee-Object -FilePath ...` (not `Start-Transcript`)
+    saves a copy of everything the script printed, for QA/Risk, without
+    also stamping your username and computer name into the saved file's
+    own header the way `Start-Transcript` would.
 
     If you have to re-run after a failure, use
     `Tee-Object -FilePath ... -Append`, or give each attempt its own file
@@ -115,16 +126,26 @@ before anything is uploaded.
     retry would silently wipe out the previous attempt's build-console.txt
     before QA/Risk ever see it.
 
-    `build-console.txt`, and some files under `out\`, can end up containing
-    your Windows username -- by way of the default
-    `-PythonExe`/`-PythonInstaller` paths (which sit under your profile),
-    pip's and PyInstaller's own build-path output, and whatever path you
-    pass as `-CiInventory`. That is one more reason these files go only to
-    QA and Risk and are never published (see the send-back list in step 17
-    below). Passing `-CiInventory` and `-PythonInstaller` from a plain
-    folder such as `C:\build\...` instead of `C:\Users\<you>\Downloads\...`
-    keeps your username out of these files in the first place -- prefer
-    that over Downloads.
+    `build-console.txt`, and some files under `out\`, used to be able to end
+    up containing your Windows username -- by way of the default
+    `-PythonExe` path (which sits under your profile), pip's and
+    PyInstaller's own build-path output, and whatever path you pass
+    yourself as `-PythonInstaller`/`-CiInventory`. The script now
+    auto-redacts: anything it prints, anything it relays from pip,
+    pytest, PyInstaller, ISCC or its own python tools, and the ship-set/
+    pe-check/pyz-scan files it writes under `out\`, have `$env:USERNAME`,
+    `$env:USERPROFILE` (and `$env:LOCALAPPDATA`/`$env:APPDATA`/`$env:TEMP`)
+    and `$env:COMPUTERNAME` replaced with `<user>`/`<profile>`/`<host>`
+    before you ever see them. That auto-redaction only matches those exact
+    environment values, though -- it is not a human review, so a manual
+    redaction scan (B4) over `build-console.txt` and `out\` is still
+    required before sending anything on, in case a different real name you
+    typed into a custom path slipped through untouched. These files still
+    go only to QA and Risk and are never published (see the send-back list
+    in step 17 below). Passing `-CiInventory` and `-PythonInstaller` from a
+    plain folder such as `C:\build\inputs\` instead of
+    `C:\Users\<you>\Downloads\...` reduces what the B4 scan has to catch in
+    the first place -- prefer that over Downloads.
 
     **Which SHA?** Use `<CLEARED_SHA>` as a placeholder here, never a
     commit you picked yourself. The actual value must be the final head
@@ -144,10 +165,23 @@ before anything is uploaded.
     Python pins, tests, the build-meta check, the ship-set and
     OpenSSL/publisher/PE/PYZ-scan gates, the L5 and L6 checks and the
     determinism self-check), and the script finishes by printing both exe
-    hashes, the zip's sha256 and size, and the reminders below.
+    hashes, the zip's sha256 and size, and the reminders below. The TESTS
+    gate (step e) runs with the one network-marked live NOAA test excluded
+    -- that test is skipped here, not failing; CI already ran it at this
+    exact SHA, in both OSes' full suites. Adding that network-marker skip
+    to the local gate (rather than running the full suite unmodified) is a
+    deliberate change Risk asked to review -- it is called out here, not
+    hidden in a side comment, precisely so that review happens.
 
     Any failure stops the script immediately with a clear message and a
-    non-zero exit code. **This does not mean nothing was left on disk.** If
+    non-zero exit code, and that message is always `BUILD FAILED: ...`
+    (see the top of this script's output or `build-console.txt`). If an
+    invocation instead errors out with no `BUILD FAILED` line at all --
+    e.g. a PowerShell parameter-binding error -- the command line itself
+    was wrong before the script's own logic ever ran (a mistyped
+    parameter name, a missing required value); check what you typed
+    against step 13's example rather than treating it as one of the
+    gates above failing. **This does not mean nothing was left on disk.** If
     the failure happens after the commit-stamping step (f), the tracked
     file `orbitrx/_build_meta.py` can be left locally modified, and
     `dist\`, `build\`, the venv under `-BuildRoot`, and a partial `out\` can
@@ -197,18 +231,28 @@ before anything is uploaded.
     - the L7 evidence (screenshot or note of the SWPC fetch)
     - the antivirus scan result from step 16
 
-    `build-console.txt` can contain local paths (your username, folder
-    layout) and is for QA/Risk only -- never publish it. The provenance
-    record is the file written to be publish-safe (it self-checks for your
-    username, computer name, `$env:USERPROFILE`/`$env:HOME` and anything
-    that looks like a UK postcode, and refuses to write itself if it finds
-    any); send both, but only the provenance record is meant to ever leave
-    that reviewing circle.
+    `build-console.txt` and the `out\` files above have `$env:USERNAME`,
+    `$env:USERPROFILE` and `$env:COMPUTERNAME` auto-redacted to
+    `<user>`/`<profile>`/`<host>` (see step 13), but that is not a
+    substitute for the manual B4 redaction scan over both before sending
+    -- they are for QA/Risk only and must never be published. The
+    provenance record is the file written to be publish-safe (it
+    self-checks for your username, computer name, `$env:USERPROFILE`/
+    `$env:HOME` and anything that looks like a UK postcode, and refuses to
+    write itself if it finds any); send both, but only the provenance
+    record is meant to ever leave that reviewing circle.
 18. Do not upload or publish anything yet. Wait for both: your own explicit
     publish go-ahead (P8), and the recorded N1 acceptance (P9).
-19. Only once both of those are in hand: append the single line the script
-    printed to **both** SUMS locations, additively. Do not edit, reorder or
-    remove the existing 5.1.0 line (L9).
+19. Only once both of those are in hand: append the single `<sha256>  <zip
+    filename>` line the script printed to **both** SUMS locations,
+    additively. Do not edit, reorder or remove the existing 5.1.0 line (L9).
+    The script always prints that line directly beneath a
+    `DRY-RUN ONLY -- NOT FOR PUBLICATION` marker (it has no way to know
+    whether a given run is the cleared build, so it cannot suppress the
+    marker) -- that marker line is a reminder for you, not part of the SUMS
+    line; copy only the `<sha256>  <zip filename>` line itself into the SUMS
+    files, and only once this is genuinely the `<CLEARED_SHA>` build QA/Risk
+    cleared and you have both P8 and P9 in hand.
 
 See `docs/SETUP_ZIP.md` for the exact zip layout and determinism rules the
 script's packer enforces.

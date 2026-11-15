@@ -22,6 +22,7 @@ from tools.pack_setup_zip import (
     FIXED_EXTERNAL_ATTR,
     INSTALLER_ARCNAME,
     ONEDIR_PREFIX,
+    PackError,
     build_deterministic_zip,
     collect_onedir_members,
     compare_inventory,
@@ -440,6 +441,172 @@ def test_post_write_verification_failure_leaves_no_final_zip_and_no_partial(tmp_
     assert rc == 1
     assert not out.exists()
     assert not out.with_name(out.name + ".partial").exists()
+
+
+def test_run_pack_always_builds_at_the_partial_path_not_the_final_name(tmp_path, monkeypatch):
+    # N2d: the specific mutant to kill -- build_deterministic_zip pointed at
+    # args.out directly instead of "<out>.partial". Spy on the real
+    # function's out_path argument (not just the end state) so the mutant
+    # is caught even if some other step would coincidentally also leave the
+    # final name absent.
+    import tools.pack_setup_zip as pack_module
+
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    out = tmp_path / "out.zip"
+    partial = out.with_name(out.name + ".partial")
+
+    real_build = pack_module.build_deterministic_zip
+    seen_out_paths = []
+
+    def spy(onedir_arg, installer_arg, out_path, epoch):
+        seen_out_paths.append(out_path)
+        return real_build(onedir_arg, installer_arg, out_path, epoch)
+
+    monkeypatch.setattr(pack_module, "build_deterministic_zip", spy)
+    rc = pack_module.main([
+        "--onedir", str(onedir), "--installer", str(installer), "--out", str(out),
+        "--epoch", str(EPOCH),
+    ])
+    assert rc == 0
+    assert seen_out_paths == [partial]
+    assert out.exists()
+    assert not partial.exists()
+
+
+def test_a_pre_existing_final_zip_is_removed_even_when_the_new_pack_fails(tmp_path):
+    # L-4a/c: a stale zip from an earlier successful pack must not survive
+    # under the final name after a *later* failed attempt at the same path.
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    out = tmp_path / "out.zip"
+    out.write_bytes(b"stale zip bytes from an earlier successful pack")
+
+    inventory = tmp_path / "ship-set-inventory.txt"
+    _write_inventory(inventory, ["a.txt\t999"])  # deliberately wrong size
+    rc = main([
+        "--onedir", str(onedir), "--installer", str(installer), "--out", str(out),
+        "--epoch", str(EPOCH), "--expect-inventory", str(inventory),
+    ])
+    assert rc == 1
+    assert not out.exists(), "a failed re-pack must not leave an earlier zip under the final name"
+    assert not out.with_name(out.name + ".partial").exists()
+
+
+def test_a_stale_pre_existing_partial_is_removed_before_a_fresh_pack_starts(tmp_path):
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    out = tmp_path / "out.zip"
+    partial = out.with_name(out.name + ".partial")
+    partial.write_bytes(b"stale partial bytes from a crashed earlier run")
+
+    rc = main([
+        "--onedir", str(onedir), "--installer", str(installer), "--out", str(out),
+        "--epoch", str(EPOCH),
+    ])
+    assert rc == 0
+    assert out.exists()
+    assert not partial.exists()
+    # The stale bytes must not have ended up inside the real zip somehow.
+    with zipfile.ZipFile(out) as zf:
+        assert INSTALLER_ARCNAME in zf.namelist()
+
+
+def test_partial_is_cleaned_up_even_on_an_exception_type_not_explicitly_anticipated(tmp_path, monkeypatch):
+    # L-4a: try/finally (not just an except PackError/ValueError clause)
+    # deletes "<out>.partial" for ANY exception raised while packing, so a
+    # bug class this code does not anticipate still never leaves scratch
+    # state behind.
+    import tools.pack_setup_zip as pack_module
+
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    out = tmp_path / "out.zip"
+    partial = out.with_name(out.name + ".partial")
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("synthetic unexpected failure")
+
+    monkeypatch.setattr(pack_module, "verify_zip_layout", boom)
+    with pytest.raises(RuntimeError):
+        pack_module.main([
+            "--onedir", str(onedir), "--installer", str(installer), "--out", str(out),
+            "--epoch", str(EPOCH),
+        ])
+    assert not partial.exists()
+    assert not out.exists()
+
+
+# --- L-4a/b: a missing/unreadable ship-set-inventory.txt (not just a bad
+# value in it) must fail closed through PackError, with a clean message,
+# in every mode that reads one -- never a traceback. ------------------------
+
+
+def test_parse_ci_inventory_raises_pack_error_on_a_missing_file(tmp_path):
+    with pytest.raises(PackError):
+        parse_ci_inventory(tmp_path / "does-not-exist.txt")
+
+
+def test_parse_ci_inventory_raises_pack_error_on_invalid_utf8(tmp_path):
+    bad = tmp_path / "bad-encoding.txt"
+    bad.write_bytes(b"version=5.2.0 commit=abc\xff\xfe\x80\x81not valid utf-8\n")
+    with pytest.raises(PackError):
+        parse_ci_inventory(bad)
+
+
+def test_parse_ci_inventory_raises_pack_error_on_a_directory(tmp_path):
+    a_directory = tmp_path / "inventory-is-actually-a-dir"
+    a_directory.mkdir()
+    with pytest.raises(PackError):
+        parse_ci_inventory(a_directory)
+
+
+def test_pack_mode_with_a_missing_expect_inventory_file_exits_cleanly_no_traceback(tmp_path, capsys):
+    onedir = _make_onedir(tmp_path)
+    installer = _make_installer(tmp_path)
+    out = tmp_path / "out.zip"
+    missing_inventory = tmp_path / "does-not-exist.txt"
+
+    rc = main([
+        "--onedir", str(onedir), "--installer", str(installer), "--out", str(out),
+        "--epoch", str(EPOCH), "--expect-inventory", str(missing_inventory),
+    ])
+    assert rc == 1
+    assert not out.exists()
+    assert not out.with_name(out.name + ".partial").exists()
+    captured = capsys.readouterr()
+    assert "pack failed" in captured.err
+    assert "not found" in captured.err
+
+
+def test_compare_tree_cli_mode_with_a_missing_inventory_exits_cleanly_no_traceback(tmp_path, capsys):
+    onedir = _make_onedir(tmp_path)
+    missing_inventory = tmp_path / "does-not-exist.txt"
+    rc = main(["--compare-tree", str(onedir), "--inventory", str(missing_inventory)])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "pack failed" in captured.err
+    assert "not found" in captured.err
+
+
+# --- L-4b: --verify on a missing/unreadable zip exits 1 cleanly, no traceback -
+
+
+def test_verify_mode_on_a_missing_zip_exits_cleanly_no_traceback(tmp_path, capsys):
+    missing = tmp_path / "does-not-exist.zip"
+    rc = main(["--verify", str(missing)])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "verify failed" in captured.err
+
+
+def test_verify_mode_on_an_unreadable_zip_exits_cleanly_no_traceback(tmp_path, capsys):
+    not_a_zip = tmp_path / "not-a-zip.zip"
+    not_a_zip.write_bytes(b"this is not a zip file at all, just plain bytes")
+    rc = main(["--verify", str(not_a_zip)])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "verify failed" in captured.err
 
 
 def test_parse_ci_inventory_ignores_non_tab_lines(tmp_path):

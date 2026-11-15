@@ -12,10 +12,14 @@
     network access it makes is pip downloading the wheels listed in the
     committed, fully hash-pinned packaging/requirements-windows-build.lock.txt
     from PyPI (--require-hashes enforces that every downloaded wheel matches
-    the pinned hash, not a live index's current contents); nothing else in
-    this script touches the network. It never auto-installs Python or Inno
-    Setup -- if either is missing or fails a pin check, it stops with a
-    clear message.
+    the pinned hash, not a live index's current contents). The local TESTS
+    gate (step e) runs the pytest suite with -m "not network", excluding
+    the one test that makes a live network call (CI's test job still runs
+    the full suite, including that test, at this SHA); nothing else in this
+    script touches the network, except that Get-AuthenticodeSignature may
+    let Windows itself fetch certificate revocation data in the background.
+    It never auto-installs Python or Inno Setup -- if either is missing or
+    fails a pin check, it stops with a clear message.
 
     -CiInventory is REQUIRED (L5): this script will not build without the
     exact SHA's ship-set-inventory.txt from CI. See BUILD-RELEASE.md.
@@ -60,6 +64,8 @@
     build is running on personal equipment, not an employer's.
 #>
 
+#Requires -Version 7.0
+
 [CmdletBinding()]
 param(
     [string]$ExpectedSha,
@@ -72,20 +78,16 @@ param(
     [switch]$AttestPersonalKit
 )
 
-# --- Pure helpers (path guard, provenance PII check, inventory header parse,
-# hash/pin helpers, SHA/attestation validation, publisher-check logic,
-# PowerShell-version-support decision) live in a dot-sourced file so
-# tests/test_build_release_local_pwsh.py can call them directly with pwsh.
-# This dot-source itself, and the version gate right after it, are written
-# in plain syntax that also parses under Windows PowerShell 5.1, so a 5.1
-# user gets this script's own clear message below rather than a confusing
-# parse error or a failure midway into a step written for 7. See
-# tools/build_release_local.helpers.ps1.
-. (Join-Path $PSScriptRoot 'build_release_local.helpers.ps1')
-
-# --- NEW-5: PowerShell 7 (pwsh) is required ----------------------------------
-if (-not (Test-PowerShellVersionSupported -MajorVersion $PSVersionTable.PSVersion.Major)) {
-    Write-Output "BUILD FAILED: PowerShell 7 or later is required (found $($PSVersionTable.PSVersion)). Install PowerShell 7 and run this script with pwsh, not Windows PowerShell 5.1's powershell.exe -- see BUILD-RELEASE.md's Prerequisites."
+# --- L-1: fail closed even if a host somehow ignores the #Requires
+# statement above, or the dot-sourced helpers file below fails to load for
+# any reason. This inline check is plain syntax that also parses under
+# Windows PowerShell 5.1, so a 5.1 user gets this script's own clear
+# message here -- before Set-StrictMode, before the dot-source, before
+# anything written for 7 -- rather than depending on #Requires alone or
+# hitting a confusing parse/strict-mode error partway into a step written
+# for 7.
+if ($PSVersionTable.PSVersion.Major -lt 7) {
+    Write-Output "BUILD FAILED: PowerShell 7 or later is required (run with pwsh; found $($PSVersionTable.PSVersion)). Install PowerShell 7 and run this script with pwsh, not Windows PowerShell 5.1's powershell.exe -- see BUILD-RELEASE.md's Prerequisites."
     exit 1
 }
 
@@ -103,14 +105,67 @@ $ErrorActionPreference = 'Stop'
 # explains why the dry run failed. Catching it here and reporting it with
 # Write-Output keeps the script's own execution "successful" from
 # PowerShell's point of view, so the message is carried by *>&1 just like
-# any other output.
+# any other output. The dot-source of the helpers file (below) is inside
+# this try too (L-1): a missing or unparsable helpers file is then just
+# another terminating error the catch below reports as a BUILD FAILED line
+# naming that file, instead of an uncaught error that bypasses Tee-Object.
 try {
+
+# --- Pure helpers (path guard, provenance PII check, inventory header parse,
+# hash/pin helpers, SHA/attestation validation, publisher-check logic,
+# PowerShell-version-support decision) live in a dot-sourced file so
+# tests/test_build_release_local_pwsh.py can call them directly with pwsh.
+# See tools/build_release_local.helpers.ps1.
+$helpersPath = Join-Path $PSScriptRoot 'build_release_local.helpers.ps1'
+if (-not (Test-Path -LiteralPath $helpersPath)) {
+    throw "Helpers file not found: $helpersPath"
+}
+. (Join-Path $PSScriptRoot 'build_release_local.helpers.ps1')
+
+# --- NEW-5: PowerShell 7 (pwsh) is required. This is a second, helper-based
+# check: the plain inline check above already stops a pre-7 host long
+# before this point, but Test-PowerShellVersionSupported is kept here too
+# (it is still the function tests/test_build_release_local_pwsh.py exercises
+# directly) as a backstop and so it stays a used, not dead, helper.
+if (-not (Test-PowerShellVersionSupported -MajorVersion $PSVersionTable.PSVersion.Major)) {
+    throw "PowerShell 7 or later is required (found $($PSVersionTable.PSVersion)). Install PowerShell 7 and run this script with pwsh, not Windows PowerShell 5.1's powershell.exe -- see BUILD-RELEASE.md's Prerequisites."
+}
+
+# --- L-4c/L-5: declared here, at the very top of the try block, so the
+# outer catch at the bottom of this script can always reference them (under
+# Set-StrictMode) however early a failure happens -- including before
+# section i (the pack) ever runs, in which case both stay $null/$false and
+# the catch's cleanup is simply a no-op.
+$zipPath = $null
+$extractDir = $null
+$zipFinalized = $false
 
 # --- Local helpers that need real processes/files (not pure, not dot-sourced)
 
+# R-c: shadows the Write-Host cmdlet for the rest of this script (a function
+# always wins over a same-named cmdlet in its own scope, and try/catch do not
+# introduce a new scope, so this also covers the top-level catch far below).
+# Every existing Write-Host call site is covered without rewriting each one,
+# and this is also what reaches build-console.txt: Jamie's documented
+# invocation pipes this whole script's output via `*>&1 | Tee-Object`, and
+# `*>&1` merges Write-Host's Information stream into that pipe.
+function Write-Host {
+    param(
+        [Parameter(Position = 0, ValueFromPipeline = $true)]
+        [object]$Object,
+        [switch]$NoNewline
+    )
+    Microsoft.PowerShell.Utility\Write-Host -Object (Format-RedactedText -Text "$Object") -NoNewline:$NoNewline
+}
+
 function Invoke-Checked {
     param([string]$FilePath, [string[]]$ArgumentList, [string]$FailureMessage)
-    & $FilePath @ArgumentList
+    # R-c: relayed tool output (pip, pytest, PyInstaller, ISCC, the python
+    # tools) is captured and re-emitted via the redacting Write-Host above,
+    # rather than left to flow to the console directly -- same reason as
+    # Invoke-CheckedTee below. This does not disturb $LASTEXITCODE: only a
+    # native executable sets it, and nothing after `&` here is native.
+    & $FilePath @ArgumentList 2>&1 | ForEach-Object { Write-Host "$_" }
     if ($LASTEXITCODE -ne 0) {
         throw "$FailureMessage (exit code $LASTEXITCODE)"
     }
@@ -118,10 +173,23 @@ function Invoke-Checked {
 
 function Invoke-CheckedTee {
     param([string]$FilePath, [string[]]$ArgumentList, [string]$FailureMessage, [string]$OutputFile)
-    & $FilePath @ArgumentList 2>&1 | Tee-Object -FilePath $OutputFile
+    # R-c: redact before Tee-Object, so both the console-bound copy and
+    # $OutputFile (one of the out\ gate-result files) get the redacted text,
+    # not the raw one. $LASTEXITCODE is unaffected (see Invoke-Checked).
+    & $FilePath @ArgumentList 2>&1 | ForEach-Object { Format-RedactedText -Text "$_" } | Tee-Object -FilePath $OutputFile
     if ($LASTEXITCODE -ne 0) {
         throw "$FailureMessage (exit code $LASTEXITCODE)"
     }
+}
+
+function Set-RedactedFileText {
+    # R-c: ship_set.py/pe_check.py/scan_pyz.py write their out\ files
+    # directly (not relayed via this script's own streams), so those files
+    # are redacted in place, immediately after each tool call and before
+    # anything later hashes them for the provenance record.
+    param([string]$Path)
+    $text = Get-Content -LiteralPath $Path -Raw
+    Set-Content -LiteralPath $Path -Value (Format-RedactedText -Text $text) -NoNewline -Encoding utf8
 }
 
 function Invoke-OpenSslPinCheck {
@@ -197,7 +265,6 @@ function Invoke-PublisherCheck {
 
 Assert-PersonalKitAttested -Attested:([bool]$AttestPersonalKit)
 
-$managedDeviceWarning = $null
 $dsregcmdDomainJoined = 'not available'
 $dsregcmdAzureAdJoined = 'not available'
 $dsregcmdEnterpriseJoined = 'not available'
@@ -212,10 +279,6 @@ if (Get-Command dsregcmd -ErrorAction SilentlyContinue) {
     $managedStatus = Test-ManagedDeviceStatus -Flags $dsregFlags
     if ($managedStatus.Refuse) {
         throw $managedStatus.Message
-    }
-    if ($managedStatus.Warning) {
-        Write-Warning $managedStatus.Warning
-        $managedDeviceWarning = $managedStatus.Warning
     }
     Write-Host "MANAGED-DEVICE-CHECK: PASS (DomainJoined=$dsregcmdDomainJoined AzureAdJoined=$dsregcmdAzureAdJoined EnterpriseJoined=$dsregcmdEnterpriseJoined WorkplaceJoined=$dsregcmdWorkplaceJoined)"
 }
@@ -293,18 +356,23 @@ $installerSha256 = Get-Sha256Hex $PythonInstaller
 $installerMd5 = Get-Md5Hex $PythonInstaller
 Assert-PythonInstallerHashesMatch -Sha256 $installerSha256 -Md5 $installerMd5 -PythonPin $pins.python
 $installerSig = Get-AuthenticodeSignature -FilePath $PythonInstaller
-Assert-AuthenticodeSignatureValid -Signature $installerSig -Label 'Python installer' -SignerSubjectContains $pins.python.authenticode_signer_subject_contains
-$installerSignerSubject = $installerSig.SignerCertificate.Subject
-$installerSignerThumbprint = $installerSig.SignerCertificate.Thumbprint
-Write-Host "PYTHON-INSTALLER-PIN: PASS (sha256=$installerSha256)"
 
 if (-not (Test-Path $PythonExe)) {
     throw "-PythonExe not found: '$PythonExe'. Install python-3.12.10-amd64.exe for the current user yourself; this script does not install it."
 }
 $pythonExeSig = Get-AuthenticodeSignature -FilePath $PythonExe
-Assert-AuthenticodeSignatureValid -Signature $pythonExeSig -Label 'python.exe' -SignerSubjectContains $pins.python.authenticode_signer_subject_contains
+
+# P8c2: one shared helper call, fed both already-retrieved signature
+# objects by name -- so the python.exe check cannot accidentally be passed
+# $installerSig a second time instead of $pythonExeSig (see
+# Assert-PythonAndInstallerSignaturesValid in build_release_local.helpers.ps1).
+Assert-PythonAndInstallerSignaturesValid -InstallerSignature $installerSig -PythonExeSignature $pythonExeSig -SignerSubjectContains $pins.python.authenticode_signer_subject_contains
+$installerSignerSubject = $installerSig.SignerCertificate.Subject
+$installerSignerThumbprint = $installerSig.SignerCertificate.Thumbprint
 $pythonExeSignerSubject = $pythonExeSig.SignerCertificate.Subject
 $pythonExeSignerThumbprint = $pythonExeSig.SignerCertificate.Thumbprint
+Write-Host "PYTHON-INSTALLER-PIN: PASS (sha256=$installerSha256)"
+
 $pyVersionString = (& $PythonExe -c "import sys; print('%d.%d.%d' % sys.version_info[:3])").Trim()
 if ($pyVersionString -ne $pins.python.version) {
     throw "python.exe reports $pyVersionString, pinned $($pins.python.version)."
@@ -369,13 +437,18 @@ $pipFreezeBytes = [System.Text.Encoding]::UTF8.GetBytes($pipFreezeText)
 $pipFreezeSha256 = [System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($pipFreezeBytes)).Replace('-', '').ToLower()
 Write-Host "DEPENDENCIES: PASS (requirements.txt sha256=$requirementsSha256, lock sha256=$lockSha256, pip freeze sha256=$pipFreezeSha256)"
 
-# --- e. Full pytest suite and compileall, exactly as CI's test job -----------
+# --- e. pytest suite (network-marked tests excluded) and compileall, as in
+# CI's test job -- except CI runs the full suite including the
+# network-marked live NOAA test (registered in pyproject.toml); this local
+# gate excludes it with -m "not network" so a dry run on a disconnected or
+# flaky-network PC does not fail on something CI has already proven passes
+# at this exact SHA.
 
 Push-Location $repoRoot
 try {
     $env:QT_QPA_PLATFORM = 'offscreen'
     Invoke-Checked -FilePath $venvPython -ArgumentList @('-m', 'compileall', '-q', 'app.py', 'orbitrx') -FailureMessage 'compileall failed'
-    Invoke-Checked -FilePath $venvPython -ArgumentList @('-m', 'pytest', '-q') -FailureMessage 'pytest failed'
+    Invoke-Checked -FilePath $venvPython -ArgumentList @('-m', 'pytest', '-q', '-m', 'not network') -FailureMessage 'pytest failed'
 }
 finally {
     Pop-Location
@@ -455,6 +528,12 @@ try {
 
     $outDir = Join-Path $BuildRoot 'out'
     New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+    # R-c: ship-set-inventory.txt is deliberately NOT passed through
+    # Format-RedactedText -- it is compared byte-for-byte later (--compare-
+    # tree, against both this file and -CiInventory), and every line
+    # written into it below is either a sha256+leaf-filename pair, a path
+    # relative to $onedirRoot, or a FileVersion/ProductName/sha256 triple --
+    # none of which can contain $env:USERPROFILE/USERNAME/COMPUTERNAME.
     $localInventoryPath = Join-Path $outDir 'ship-set-inventory.txt'
     "version=$version commit=$ExpectedSha" | Out-File $localInventoryPath -Encoding utf8
     Get-Content 'dist\SHA256SUMS.txt' | Out-File $localInventoryPath -Append -Encoding utf8
@@ -480,12 +559,21 @@ try {
     $shipSetQtList = Join-Path $outDir 'ship-set-qt.txt'
     $shipSetTlsList = Join-Path $outDir 'ship-set-tls.txt'
     Invoke-Checked -FilePath $venvPython -ArgumentList @('tools\ship_set.py', '--check', $onedirRoot, '--write-qt-list', $shipSetQtList, '--write-tls-list', $shipSetTlsList) -FailureMessage 'ship-set gate failed'
+    Set-RedactedFileText -Path $shipSetQtList
+    Set-RedactedFileText -Path $shipSetTlsList
     Write-Host "SHIP-SET-GATE: PASS"
 
     Invoke-PublisherCheck -Exes @($exePath, $installerExePath) -ExpectedAppVersion $version
 
+    # region pe-check-redact
+    # (tests/test_build_release_local_pwsh.py extracts this region the same
+    # way as the pack-l6/provenance-finalize regions, to exercise the real
+    # call site behaviourally: does out\installer-publisher.txt actually
+    # get redacted, not just the Set-RedactedFileText function in isolation?)
     $peCheckOut = Join-Path $outDir 'installer-publisher.txt'
     Invoke-Checked -FilePath $venvPython -ArgumentList @('tools\pe_check.py', $peCheckOut, $exePath, $installerExePath) -FailureMessage 'tools/pe_check.py failed'
+    Set-RedactedFileText -Path $peCheckOut
+    # endregion pe-check-redact
     Write-Host "PE-CHECK: PASS"
 
     # N6: the same static PYZ scan CI's "Scan the bundled PYZ" step runs, so
@@ -495,6 +583,7 @@ try {
     # run at this exact SHA for those.
     $pyzScanOut = Join-Path $outDir 'pyz-scan.txt'
     Invoke-Checked -FilePath $venvPython -ArgumentList @('tools\scan_pyz.py', $exePath, $pyzScanOut) -FailureMessage 'tools/scan_pyz.py failed'
+    Set-RedactedFileText -Path $pyzScanOut
     Write-Host "PYZ-SCAN: PASS"
 }
 finally {
@@ -512,12 +601,33 @@ finally {
 # finding a problem with a zip that did pass L5 -- that zip must not survive
 # as the final $zipPath either, so it is deleted before the error
 # propagates.
+#
+# L-4c/L-5: $zipPath itself is built under a "<name>.pending" name here and
+# stays that way across the whole provenance section below -- it is renamed to its real
+# public $zipName only as the very last step, once the provenance record
+# has been written AND its own unsafe-marker self-check has passed (see
+# "$zipFinalized" near the end of section j). That closes the remaining
+# gap NEW-2 did not cover: a failure in the provenance write/self-check,
+# which runs after this try/catch has already exited cleanly, must still
+# leave nothing at the public $zipName. The top-level catch at the bottom
+# of this script deletes the still-pending file (and out\extracted) for
+# exactly that case.
+#
+# region pack-l6
+# (tests/test_build_release_local_pwsh.py extracts this whole region by its
+# start/end marker comments via plain text slicing -- validated as
+# parseable PowerShell with the AST parser -- and runs it standalone with
+# stubbed tools\pack_setup_zip.py / tools\ship_set.py, to exercise
+# N2e/P14/P15 behaviourally without a real Windows build.)
 $zipPath = $null
+$extractDir = $null
+$zipFinalized = $false
 Push-Location $repoRoot
 try {
     $commitEpoch = (git show -s --format=%ct $ExpectedSha).Trim()
     $zipName = "OrbitRx-Setup-$version.zip"
-    $zipPath = Join-Path $outDir $zipName
+    $zipFinalPath = Join-Path $outDir $zipName
+    $zipPath = Join-Path $outDir "$zipName.pending"
     $packArgs = @(
         'tools\pack_setup_zip.py',
         '--onedir', $onedirRoot,
@@ -566,6 +676,7 @@ catch {
 finally {
     Pop-Location
 }
+# endregion pack-l6
 
 # --- j. Provenance record -------------------------------------------------------
 
@@ -607,9 +718,6 @@ $provenanceLines = @(
     'Built on personal PC, not employer equipment (attested by builder)',
     "Managed-device heuristic (dsregcmd): DomainJoined=$dsregcmdDomainJoined AzureAdJoined=$dsregcmdAzureAdJoined EnterpriseJoined=$dsregcmdEnterpriseJoined WorkplaceJoined=$dsregcmdWorkplaceJoined"
 )
-if ($managedDeviceWarning) {
-    $provenanceLines += "Managed-device warning: $managedDeviceWarning"
-}
 $provenanceLines += @(
     "Python installer: $($pins.python.installer_filename) sha256=$installerSha256 md5=$installerMd5 signer='$installerSignerSubject' thumbprint=$installerSignerThumbprint",
     "python.exe: sha256=$pythonExeSha256 version=$pyVersionString signer='$pythonExeSignerSubject' thumbprint=$pythonExeSignerThumbprint",
@@ -661,6 +769,12 @@ foreach ($label in $gateOutputFiles.Keys) {
 }
 $provenanceText = ($provenanceLines -join "`r`n")
 
+# region provenance-finalize
+# (tests/test_build_release_local_pwsh.py extracts this region the same way
+# as the pack-l6 region above, to exercise P10's self-check call site
+# behaviourally: does it really block the write and the rename when
+# $provenanceText contains an unsafe marker?)
+#
 # @(...): same empty-array-collapses-to-$null guard as Invoke-PublisherCheck
 # above -- without it, a clean provenance text (the common case) would make
 # the ".Count" check below throw under Set-StrictMode instead of passing.
@@ -674,6 +788,18 @@ Set-Content -Path $provenancePath -Value $provenanceText -Encoding utf8
 Write-Host ""
 Write-Host "Wrote provenance record: $provenancePath"
 
+# --- L-4c/L-5: only now -- after the provenance record has been written
+# and the unsafe-marker self-check above has passed -- promote the pending
+# zip to its public $zipName. This is the very last step of the validated-
+# artifact path; any failure before this point (including the self-check
+# or the write itself) leaves nothing at all under the public name. See
+# the top-level catch at the bottom of this script, which removes the
+# still-pending file (and out\extracted) if this rename never ran.
+Rename-Item -LiteralPath $zipPath -NewName $zipName
+$zipPath = $zipFinalPath
+$zipFinalized = $true
+# endregion provenance-finalize
+
 # --- Reminders for the steps this script does not and should not do ----------
 
 Write-Host ""
@@ -681,7 +807,13 @@ Write-Host "REMINDER: this is a DRY RUN unless you have been told otherwise -- d
 Write-Host "REMINDER (L7): run the HTTPS smoke test by hand -- launch dist\OrbitRxMonitor\OrbitRxMonitor.exe and confirm a live SWPC fetch succeeds. Capture a screenshot or a short note (what you saw, and the timestamp) as L7 evidence. This script does not launch the app for you."
 Write-Host "REMINDER: run an antivirus scan over dist\OrbitRxMonitor, the installer and the zip before sharing them."
 Write-Host "REMINDER (L9): append exactly this one line to both SUMS locations -- do NOT touch the existing 5.1.0 line:"
+# region sums-line
+# R-b (Risk round): the script cannot know whether this run is the cleared
+# build, so this marker is printed unconditionally, immediately before the
+# SUMS line it guards -- there is no flag to suppress it.
+Write-Host "DRY-RUN ONLY -- NOT FOR PUBLICATION: do not append this line anywhere unless this run is the QA/Risk-cleared <CLEARED_SHA> build and Jamie has given the publish go (P8)."
 Write-Host "$zipSha256  $zipName"
+# endregion sums-line
 Write-Host "REMINDER: do not upload anything until Jamie's explicit publish go (P8) and the N1 acceptance (P9). This script never uploads, publishes, tags or pushes."
 
 # --- Restore the one tracked file the build stamped ---------------------------
@@ -702,8 +834,43 @@ Write-Host "Restored orbitrx/_build_meta.py; the clone's working tree is clean a
 
 }
 catch {
+    # L-4c/L-5 (item 5): a failure anywhere after section i's own
+    # catch/finally -- including the provenance write and its unsafe-marker
+    # self-check -- must still leave nothing at the public $zipName. $zipPath
+    # holds the still-pending file until $zipFinalized is set $true (the
+    # very last step of the validated-artifact path, right after the
+    # provenance record is written and self-checked), so deleting it here
+    # whenever it was not finalized covers that whole window. out\extracted
+    # is removed too (I-3) rather than left behind for a failed run.
+    if ($zipPath -and -not $zipFinalized -and (Test-Path $zipPath)) {
+        Remove-Item -Force $zipPath
+    }
+    if ($extractDir -and (Test-Path $extractDir)) {
+        Remove-Item -Recurse -Force $extractDir
+    }
+    # L-3: name the file the error was actually thrown from (e.g. the
+    # dot-sourced helpers file, not always this script), not just a line
+    # number with no file -- Split-Path -Leaf keeps the line short and free
+    # of any local path (see N8's "no absolute paths in provenance" rule).
     $failingLine = if ($_.InvocationInfo) { $_.InvocationInfo.ScriptLineNumber } else { 'unknown' }
-    Write-Output "BUILD FAILED: $($_.Exception.Message) (script line $failingLine)"
+    $failingFile = if ($_.InvocationInfo -and $_.InvocationInfo.ScriptName) {
+        Split-Path -Leaf $_.InvocationInfo.ScriptName
+    }
+    elseif ($PSCommandPath) {
+        Split-Path -Leaf $PSCommandPath
+    }
+    else {
+        'build_release_local.ps1'
+    }
+    # R-c: an exception's own message can carry a path under this PC's
+    # profile (e.g. a bad -PythonExe argument) -- redact it too, but guard
+    # the call in case the very first thing to fail was dot-sourcing the
+    # helpers file itself (Format-RedactedText then would not exist yet).
+    $buildFailedLine = "BUILD FAILED: $($_.Exception.Message) (${failingFile}:${failingLine})"
+    if (Get-Command Format-RedactedText -ErrorAction SilentlyContinue) {
+        $buildFailedLine = Format-RedactedText -Text $buildFailedLine
+    }
+    Write-Output $buildFailedLine
     exit 1
 }
 exit 0

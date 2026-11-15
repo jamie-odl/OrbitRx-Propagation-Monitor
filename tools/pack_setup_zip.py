@@ -429,9 +429,23 @@ def parse_ci_inventory(path: Path) -> dict[str, int]:
     "Ship-set inventory" step writes into ship-set-inventory.txt (see
     .github/workflows/ci.yml). Other lines in that file (the version/commit
     header, the SHA256SUMS.txt lines, the OpenSSL DLL report lines) contain
-    no tab character and are ignored here."""
+    no tab character and are ignored here.
+
+    L-4a/b: a missing file, any other OSError (permission denied, a
+    directory passed by mistake, ...) or a file that is not valid UTF-8
+    fails closed with a clean PackError, not a traceback -- this is read
+    both by the pack-mode --expect-inventory path and by --compare-tree,
+    and both call sites must exit 1 with a message, not crash."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise PackError(f"ship-set-inventory file not found: {path}") from None
+    except UnicodeDecodeError as exc:
+        raise PackError(f"ship-set-inventory file {path} is not valid UTF-8: {exc}") from None
+    except OSError as exc:
+        raise PackError(f"could not read ship-set-inventory file {path}: {exc}") from None
     entries: dict[str, int] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         if "\t" not in line:
             continue
         rel, _, size_text = line.rpartition("\t")
@@ -506,37 +520,43 @@ def _run_pack(args: argparse.Namespace) -> int:
     if args.onedir is None or args.installer is None or args.out is None:
         print("--onedir, --installer and --out are all required together", file=sys.stderr)
         return 2
-    # NEW-2: never leave a ready-made zip at the final name unless it has
-    # already passed both verify_zip_layout and (when given) the L5
+    # NEW-2 / L-4a,c: never leave a ready-made zip at the final name unless
+    # it has already passed verify_zip_layout and (when given) the L5
     # --expect-inventory compare. Build and check it at "<out>.partial"
     # first; only os.replace() it to args.out once every check has passed.
-    # Any failure along the way deletes the partial -- the final name is
-    # never created at all for a failed attempt, so a caller can't mistake
-    # a half-checked zip for a good one.
+    # A pre-existing final zip (or a stale partial left by an earlier,
+    # interrupted attempt) is deleted before a pack starts, so a failed run
+    # never leaves an *earlier* zip sitting under the final name either.
+    # The partial is deleted in `finally` so it is never left behind for
+    # ANY exception along the way, not just the ones this function
+    # anticipates with an explicit except clause.
     partial_path = args.out.with_name(args.out.name + ".partial")
+    args.out.unlink(missing_ok=True)
+    partial_path.unlink(missing_ok=True)
     try:
-        epoch = resolve_epoch(args.epoch, args.source_date_epoch)
-        build_deterministic_zip(args.onedir, args.installer, partial_path, epoch)
-        problems = verify_zip_layout(partial_path, expect_epoch=epoch)
-    except (PackError, ValueError) as exc:
-        print(f"pack failed: {exc}", file=sys.stderr)
-        partial_path.unlink(missing_ok=True)
-        return 1
-    if problems:
-        print("post-write verification failed:", file=sys.stderr)
-        for problem in problems:
-            print(f"  {problem}", file=sys.stderr)
-        partial_path.unlink(missing_ok=True)
-        return 1
-    if args.expect_inventory is not None:
-        inventory_problems = compare_inventory(partial_path, args.expect_inventory)
-        if inventory_problems:
-            print(f"ship-set-inventory mismatch against {args.expect_inventory}:", file=sys.stderr)
-            for problem in inventory_problems:
-                print(f"  {problem}", file=sys.stderr)
-            partial_path.unlink(missing_ok=True)
+        try:
+            epoch = resolve_epoch(args.epoch, args.source_date_epoch)
+            build_deterministic_zip(args.onedir, args.installer, partial_path, epoch)
+            problems = verify_zip_layout(partial_path, expect_epoch=epoch)
+            if not problems and args.expect_inventory is not None:
+                problems = compare_inventory(partial_path, args.expect_inventory)
+                inventory_checked = True
+            else:
+                inventory_checked = False
+        except (PackError, ValueError) as exc:
+            print(f"pack failed: {exc}", file=sys.stderr)
             return 1
-    os.replace(partial_path, args.out)
+        if problems:
+            if inventory_checked:
+                print(f"ship-set-inventory mismatch against {args.expect_inventory}:", file=sys.stderr)
+            else:
+                print("post-write verification failed:", file=sys.stderr)
+            for problem in problems:
+                print(f"  {problem}", file=sys.stderr)
+            return 1
+        os.replace(partial_path, args.out)
+    finally:
+        partial_path.unlink(missing_ok=True)
     with zipfile.ZipFile(args.out) as zf:
         member_count = len(zf.namelist())
     digest = hashlib.sha256(args.out.read_bytes()).hexdigest()
@@ -554,7 +574,11 @@ def _run_compare_tree(args: argparse.Namespace) -> int:
     if not args.compare_tree.is_dir():
         print(f"--compare-tree directory not found: {args.compare_tree}", file=sys.stderr)
         return 1
-    problems = compare_tree_to_inventory(args.compare_tree, args.inventory)
+    try:
+        problems = compare_tree_to_inventory(args.compare_tree, args.inventory)
+    except (PackError, ValueError) as exc:
+        print(f"pack failed: {exc}", file=sys.stderr)
+        return 1
     if problems:
         print(f"tree/inventory mismatch for {args.compare_tree} against {args.inventory}:", file=sys.stderr)
         for problem in problems:
@@ -568,7 +592,11 @@ def _run_verify(args: argparse.Namespace) -> int:
     try:
         expect_epoch = resolve_optional_epoch(args.epoch, args.source_date_epoch)
         problems = verify_zip_layout(args.verify, expect_epoch=expect_epoch)
-    except (PackError, ValueError) as exc:
+    except (PackError, ValueError, OSError, zipfile.BadZipFile) as exc:
+        # L-4b: a missing or unreadable zip (OSError from zipfile.ZipFile's
+        # own open, or zipfile.BadZipFile for one that opens but is not a
+        # valid archive) must exit 1 cleanly here too, not raise past this
+        # function as a traceback.
         print(f"verify failed for {args.verify}: {exc}", file=sys.stderr)
         return 1
     if (args.onedir is None) != (args.installer is None):

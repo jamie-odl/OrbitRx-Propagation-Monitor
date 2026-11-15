@@ -1,3 +1,5 @@
+import pytest
+
 from orbitrx.weather import fetch_space_weather_data
 from unittest.mock import patch
 
@@ -51,6 +53,7 @@ def test_fetch_space_weather_parses_dict_rows():
     assert data["time_utc"] is not None
 
 
+@pytest.mark.network
 def test_live_noaa_populates_core_fields():
     """Integration test — requires network."""
     data = fetch_space_weather_data()
