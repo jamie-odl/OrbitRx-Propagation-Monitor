@@ -1,8 +1,12 @@
-"""P2A: a proper File/View/Tools/Help menu bar plus a toolbar slimmed to four
-primary actions (Map, Bands, Log, Settings). Every command that used to live
-on the old toolbar or its » overflow menu must stay reachable from the menu
-bar, and commands shared between the toolbar and a menu must be the same
-QAction object (one handler per command, not duplicated)."""
+"""P2A: a proper File/View/Tools/Help menu bar. Every command that used to
+live on the old toolbar or its » overflow menu must stay reachable from the
+menu bar.
+
+P4-4 removes the toolbar row entirely -- Map/Bands/Log move to a segmented
+control in the map header (_build_view_switch), wired to the same QAction
+objects as Ctrl+1/2/3 and the View menu (one handler per command, still not
+duplicated, just via _activate_view instead of a toolbar widget). P4-3 adds
+a QMenuBar.setCornerWidget with a UTC clock and the DX cluster status."""
 
 from __future__ import annotations
 
@@ -14,8 +18,8 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
 
 EXPECTED_MENUS = ["menuFile", "menuView", "menuTools", "menuHelp"]
-PRIMARY_TOOLBAR_ACTIONS = ["Map", "Bands", "Log", "Settings"]
-# Every command that existed before this chunk (toolbar buttons + » overflow).
+SEGMENTED_VIEW_ACTIONS = ["Map", "Bands", "Log"]
+# Every command that existed before the P2A/P4-4 chunks (toolbar buttons + » overflow).
 PRE_EXISTING_COMMANDS = [
     "Settings", "Rig", "About", "Location", "Weather",
     "Export snapshot", "Export DX CSV",
@@ -100,43 +104,73 @@ def test_view_menu_has_panel_focus_and_refresh(window):
     assert "Refresh" in labels
 
 
-def test_toolbar_has_exactly_four_primary_actions(window):
+def test_no_main_toolbar_exists(window):
+    """P4-4: the old mainToolbar row is gone outright, not just hidden."""
     from PySide6.QtWidgets import QToolBar
 
-    toolbar = window.findChild(QToolBar, "mainToolbar")
-    assert toolbar is not None
-    action_texts = [a.text() for a in toolbar.actions() if not a.isSeparator()]
-    assert action_texts == PRIMARY_TOOLBAR_ACTIONS
+    assert window.findChild(QToolBar, "mainToolbar") is None
+    assert not hasattr(window, "_toolbar")
+    assert not hasattr(window, "_toolbar_actions")
 
 
-def test_toolbar_has_no_overflow_chevron_button(window):
-    from PySide6.QtWidgets import QToolButton
+def test_segmented_view_switch_has_exactly_map_bands_log(window):
+    """P4-4: the map header's segmented control replaces the toolbar row."""
+    assert list(window._seg_buttons.keys()) == SEGMENTED_VIEW_ACTIONS
+    for name in SEGMENTED_VIEW_ACTIONS:
+        btn = window._seg_buttons[name]
+        assert btn.objectName() == "segButton"
+        assert btn.isCheckable()
+        assert btn.text() == name
 
-    toolbar = window._toolbar
-    overflow_buttons = [
-        btn for btn in toolbar.findChildren(QToolButton)
-        if btn.text() == "»" or btn.objectName() == "toolbarOverflow"
-    ]
-    assert overflow_buttons == []
+
+def test_segmented_view_switch_defaults_to_map_checked(window):
+    checked = [name for name, btn in window._seg_buttons.items() if btn.isChecked()]
+    assert checked == ["Map"]
 
 
-def test_settings_action_shared_between_toolbar_and_menu(window):
+def test_settings_action_only_reachable_via_tools_menu(window):
     from PySide6.QtWidgets import QMenu
 
     menu_tools = window.findChild(QMenu, "menuTools")
     settings_in_menu = next(a for a in menu_tools.actions() if a.text() == "Settings")
-    settings_in_toolbar = window._toolbar_actions["Settings"]
-    assert settings_in_menu is settings_in_toolbar
+    assert settings_in_menu is window._actions["Settings"]
 
 
-def test_panel_focus_actions_shared_between_toolbar_and_view_menu(window):
+def test_panel_focus_actions_shared_between_segmented_control_and_view_menu(window):
+    """Clicking a segmented-control button must trigger the exact same
+    QAction as the View menu's equivalent entry (Ctrl+1/2/3), not a second,
+    independent handler."""
     from PySide6.QtWidgets import QMenu
 
     menu_view = window.findChild(QMenu, "menuView")
-    for name in ("Map", "Bands", "Log"):
+    for name in SEGMENTED_VIEW_ACTIONS:
         in_menu = next(a for a in menu_view.actions() if a.text() == name)
-        in_toolbar = window._toolbar_actions[name]
-        assert in_menu is in_toolbar
+        assert in_menu is window._actions[name]
+
+
+@pytest.mark.parametrize("name", SEGMENTED_VIEW_ACTIONS)
+def test_clicking_segmented_button_triggers_its_action_and_checks_it(window, name):
+    for other in SEGMENTED_VIEW_ACTIONS:
+        if other != name:
+            window._seg_buttons[other].setChecked(True)
+
+    window._seg_buttons[name].click()
+
+    assert window._seg_buttons[name].isChecked()
+    for other in SEGMENTED_VIEW_ACTIONS:
+        if other != name:
+            assert not window._seg_buttons[other].isChecked()
+
+
+def test_menu_bar_has_corner_widget_with_clock_and_cluster(window):
+    """P4-3: QMenuBar.setCornerWidget carries the UTC clock + cluster dot."""
+    import re
+
+    corner = window.menuBar().cornerWidget()
+    assert corner is not None
+    assert corner.objectName() == "statusCorner"
+    assert re.search(r"UTC \d{2}:\d{2}", window._corner_clock_lbl.text())
+    assert "Cluster" in window._corner_cluster_lbl.text()
 
 
 def test_all_pre_existing_commands_remain_reachable(window):

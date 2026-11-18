@@ -305,16 +305,6 @@ class OrbitRxController:
             return float(tlat), float(tlon), "configured"
         return 35.68, 139.65, "JA default"
 
-    def last_updated_text(self) -> str:
-        parts = []
-        w = self.state.last_weather_update
-        d = self.state.last_dx_update
-        if w:
-            parts.append(f"Weather updated {w.strftime('%H:%M')} UTC")
-        if d:
-            parts.append(f"DX updated {d.strftime('%H:%M')} UTC")
-        return " · ".join(parts) if parts else "Last updated: never"
-
     def coord_source_summary(self, callsign: str) -> str:
         src = self.state.dx_coord_source.get(callsign, "")
         if src == "qrz":

@@ -46,10 +46,10 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QSizePolicy,
     QGridLayout,
-    QApplication, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QDoubleSpinBox,
+    QApplication, QButtonGroup, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QScrollArea, QSlider,
-    QSpinBox, QSplitter, QStackedWidget, QTabWidget, QToolBar, QToolButton, QVBoxLayout, QWidget, QFileDialog,
+    QSpinBox, QSplitter, QStackedWidget, QTabWidget, QToolButton, QVBoxLayout, QWidget, QFileDialog,
     QSystemTrayIcon, QMenu,
 )
 
@@ -516,6 +516,13 @@ class QtOrbitRxApplication(QMainWindow):
         self._cluster_pulse_timer.timeout.connect(self._tick_cluster_pulse)
         self._cluster_pulse_timer.start(700)
 
+        # P4-3: menu-bar corner clock. Minute resolution, so a 15s tick is
+        # plenty to stay visibly in sync without waking the event loop every
+        # second for a label that only ever shows HH:MM.
+        self._clock_timer = QTimer(self)
+        self._clock_timer.timeout.connect(self._tick_clock)
+        self._clock_timer.start(15000)
+
         self.ctrl.log.info(
             "perf: cold_start_to_first_paint_ready_ms=%.1f",
             (time.perf_counter() - self._t_init_start) * 1000,
@@ -531,8 +538,55 @@ class QtOrbitRxApplication(QMainWindow):
     def _create_map_widget(self):
         return PropagationMapWidget(self.renderer)
 
+    def _build_view_switch(self) -> QFrame:
+        """P4-4: Map/Bands/Log segmented control in the map header, replacing
+        the removed mainToolbar row (SPEC §6.1/§14 "viewSwitch"). Wired to the
+        same QAction objects as Ctrl+1/2/3 and the View menu (_build_actions)
+        rather than duplicating _focus_panel, so there is still exactly one
+        handler per command; _activate_view keeps the checked segment in sync
+        no matter which of the three entry points (click, shortcut, menu) was
+        used."""
+        track = QFrame()
+        track.setObjectName("segTrack")
+        layout = QHBoxLayout(track)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self._seg_buttons: dict[str, QToolButton] = {}
+        self._seg_group = QButtonGroup(track)
+        self._seg_group.setExclusive(True)
+        for key, shortcut in (("Map", "Ctrl+1"), ("Bands", "Ctrl+2"), ("Log", "Ctrl+3")):
+            btn = QToolButton()
+            btn.setObjectName("segButton")
+            btn.setText(key)
+            btn.setCheckable(True)
+            btn.setAutoRaise(True)
+            btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            btn.setToolTip(f"{key} ({shortcut})")
+            btn.clicked.connect(lambda _=False, k=key: self._actions[k].trigger())
+            self._seg_group.addButton(btn)
+            layout.addWidget(btn)
+            self._seg_buttons[key] = btn
+        self._seg_buttons["Map"].setChecked(True)
+        return track
+
+    def _activate_view(self, which: str) -> None:
+        """Shared by the Map/Bands/Log QActions (Ctrl+1/2/3, View menu and the
+        segmented control's own click handler) so all three entry points keep
+        the segmented control's checked segment in sync with whichever pane is
+        actually focused, instead of three independent triggers."""
+        self._focus_panel(which)
+        seg_buttons = getattr(self, "_seg_buttons", None)
+        if seg_buttons is None:
+            return
+        btn = seg_buttons.get(which.capitalize())
+        if btn is not None and not btn.isChecked():
+            btn.blockSignals(True)
+            btn.setChecked(True)
+            btn.blockSignals(False)
+
     def _build_ui(self) -> None:
-        self._build_toolbar()
+        self._build_actions()
+        self._build_menu_bar()
         self._build_status_bar()
 
         central = QWidget()
@@ -542,15 +596,17 @@ class QtOrbitRxApplication(QMainWindow):
 
         map_pane = QWidget()
         map_layout = QVBoxLayout(map_pane)
-        # P4: one slim header row -- title, Cluster combo, the side-panel
-        # collapse toggle and the help chip -- replaces the old three stacked
-        # rows (title / greyline subtitle / cluster) so the map starts right
-        # under the toolbar. The old greyline subtitle now lives in the
-        # status bar (_status_subtitle_lbl) instead of inline here.
+        # P4: one slim header row -- view switch, title, Cluster combo, the
+        # side-panel collapse toggle and the help chip -- replaces the old
+        # three stacked rows (title / greyline subtitle / cluster) plus the
+        # removed mainToolbar row (P4-4), so the map starts right under the
+        # menu bar. The old greyline subtitle now lives in the status bar
+        # (_status_subtitle_lbl) instead of inline here.
         map_layout.setContentsMargins(SPACE_3, 0, SPACE_3, 0)
         map_layout.setSpacing(SPACE_1)
         header_row = QHBoxLayout()
         header_row.setSpacing(SPACE_2)
+        header_row.addWidget(self._build_view_switch())
         self.banner = QLabel("Loading map...")
         self.banner.setObjectName("panelTitle")
         self.banner.setWordWrap(False)
@@ -689,26 +745,11 @@ class QtOrbitRxApplication(QMainWindow):
         right_layout.setSpacing(SPACE_2)
 
         right_panel.setMinimumWidth(0)
-        # P4: stacked (not side-by-side) -- the narrower ~300px side panel
-        # doesn't reliably fit both labels on one row at their natural width
-        # (e.g. "Last updated: never" + "Cluster: disconnected"), and unlike
-        # a plain QLabel's sizeHint, a QHBoxLayout won't shrink either below
-        # its own minimum, so a one-row layout can overflow the panel's edge.
-        # Each gets the full row to itself instead.
-        header_row = QVBoxLayout()
-        header_row.setSpacing(0)
-        self.last_updated_lbl = _ElidedLabel()
-        self.last_updated_lbl.setObjectName("muted")
-        self.last_updated_lbl.setFullText("Last updated: never")
-        header_row.addWidget(self.last_updated_lbl)
-        # N2: live cluster indicator, always visible at the top of the panel.
-        # Plain QLabel (not _ElidedLabel): this can carry rich-text HTML (a
-        # coloured dot span) once connected, and eliding would mangle markup;
-        # its own full-width row is ample for the longest status text anyway.
-        self.cluster_live_lbl = QLabel("Cluster: connecting")
-        self.cluster_live_lbl.setObjectName("muted")
-        header_row.addWidget(self.cluster_live_lbl)
-        right_layout.addLayout(header_row)
+        # P4-3: the panel's old "Last updated: ..." / "Cluster: ..." header
+        # rows are gone -- both facts already live elsewhere (refresh time
+        # and cluster status in the status bar, cluster also in the menu-bar
+        # corner widget), so repeating them here was pure duplication
+        # (SPEC §1 #4, §6.1 "Removed: the panel's top status lines").
 
         self.band_panel = BandPanelWidget()
         right_layout.addWidget(self.band_panel)
@@ -884,8 +925,8 @@ class QtOrbitRxApplication(QMainWindow):
         right_layout.addStretch()
         right_scroll.setWidget(right_panel)
 
-        # M1: action buttons live in the top toolbar (see _build_toolbar), not here,
-        # so the side panel only needs its own vertical scroll for the band
+        # M1: action buttons live in the menu bar/map header, not here, so the
+        # side panel only needs its own vertical scroll for the band
         # tiles/tabs above.
         side_scroll = QScrollArea()
         side_scroll.setObjectName("sidePaneScroll")
@@ -933,11 +974,11 @@ class QtOrbitRxApplication(QMainWindow):
         self._update_compact_mode()
 
     def _build_actions(self) -> None:
-        """One QAction per command, shared between the menu bar and the toolbar
-        (P2A) so there is a single handler per command instead of duplicates.
-        Window-wide (Qt.WindowShortcut, QAction's default context) so e.g.
-        Ctrl+1 fires no matter which child widget inside the main window has
-        focus (P2C)."""
+        """One QAction per command, shared between the menu bar and the map
+        header's segmented control (P2A/P4-4) so there is a single handler
+        per command instead of duplicates. Window-wide (Qt.WindowShortcut,
+        QAction's default context) so e.g. Ctrl+1 fires no matter which child
+        widget inside the main window has focus (P2C)."""
         self._actions: dict[str, QAction] = {}
 
         def make(
@@ -964,10 +1005,10 @@ class QtOrbitRxApplication(QMainWindow):
             self._actions[key] = action
             return action
 
-        # Shared between the primary toolbar and the View/Tools menus.
-        make("Map", "Map", lambda: self._focus_panel("map"), "Ctrl+1")
-        make("Bands", "Bands", lambda: self._focus_panel("bands"), "Ctrl+2")
-        make("Log", "Log", lambda: self._focus_panel("log"), "Ctrl+3")
+        # Shared between the map header's segmented control and the View menu.
+        make("Map", "Map", lambda: self._activate_view("map"), "Ctrl+1")
+        make("Bands", "Bands", lambda: self._activate_view("bands"), "Ctrl+2")
+        make("Log", "Log", lambda: self._activate_view("log"), "Ctrl+3")
 
         # P4: collapsible side panel -- checkable, shared with the header's
         # collapse button via _set_side_panel_visible.
@@ -1011,8 +1052,10 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _build_menu_bar(self) -> None:
         """File/View/Tools/Help (P2A): every command that used to live on the
-        toolbar or its » overflow menu is reachable here, even once the
-        toolbar itself is slimmed down to four primary actions."""
+        old toolbar or its » overflow menu is reachable here. P4-4 removes
+        the toolbar row entirely -- Map/Bands/Log move to the map header's
+        segmented control (_build_view_switch) and Settings/Rig/About/etc.
+        stay exactly where they already were, in these menus."""
         menu_bar = self.menuBar()
 
         menu_file = menu_bar.addMenu("&File")
@@ -1044,26 +1087,51 @@ class QtOrbitRxApplication(QMainWindow):
         menu_help.addAction(self._actions["About"])
         menu_help.addAction(self._actions["Check for Updates"])
 
-    def _build_toolbar(self) -> None:
-        """Slim primary toolbar (P2A): exactly Map, Bands, Log, Settings. Every
-        other command that used to live here (Rig/About/Location/Weather, the
-        » Export overflow) moved to the menu bar in _build_menu_bar."""
-        self._build_actions()
+        menu_bar.setCornerWidget(self._build_status_corner(), Qt.Corner.TopRightCorner)
 
-        toolbar = QToolBar("Main", self)
-        toolbar.setObjectName("mainToolbar")
-        toolbar.setMovable(False)
-        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        toolbar.setIconSize(toolbar.iconSize())  # keep density
-        self.addToolBar(toolbar)
-        self._toolbar = toolbar
-        self._toolbar_actions: dict[str, QAction] = {}
-        for key in ("Map", "Bands", "Log", "Settings"):
-            action = self._actions[key]
-            toolbar.addAction(action)
-            self._toolbar_actions[key] = action
+    def _build_status_corner(self) -> QWidget:
+        """P4-3: QMenuBar.setCornerWidget -- a live UTC clock plus the DX
+        cluster dot/status (SPEC §6.1 "merged menu bar plus corner status"),
+        reusing _render_cluster_label's existing text so there is still one
+        formatter for cluster status, not a second copy. The status bar keeps
+        its own statusCluster label too (tests/test_status_bar.py pins it);
+        this corner widget is additive, not a relocation -- see the P4 round
+        log for why the full SPEC §6.2 "cluster only in the corner" consolidation
+        is deferred past this chunk."""
+        corner = QWidget()
+        corner.setObjectName("statusCorner")
+        layout = QHBoxLayout(corner)
+        layout.setContentsMargins(0, 0, SPACE_2, 0)
+        layout.setSpacing(SPACE_2)
 
-        self._build_menu_bar()
+        self._corner_cluster_lbl = QLabel("Cluster: disconnected")
+        self._corner_cluster_lbl.setObjectName("statusCornerCluster")
+        self._corner_cluster_lbl.setTextFormat(Qt.TextFormat.RichText)
+        layout.addWidget(self._corner_cluster_lbl)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.VLine)
+        sep.setFrameShadow(QFrame.Shadow.Plain)
+        layout.addWidget(sep)
+
+        self._corner_clock_lbl = QLabel("")
+        self._corner_clock_lbl.setObjectName("statusCornerClock")
+        layout.addWidget(self._corner_clock_lbl)
+        self._tick_clock()
+        # Keep a Python-side reference: QMenuBar.setCornerWidget takes visual
+        # ownership but a local-only widget can otherwise get garbage
+        # collected by shiboken once this method returns, deleting the C++
+        # object (and its children) out from under the menu bar.
+        self._status_corner = corner
+        return corner
+
+    def _tick_clock(self) -> None:
+        """Minute-resolution UTC clock in the menu-bar corner (SPEC §6.1/§6.2).
+        Real current time, not derived from any data feed -- matches the
+        "UTC 13:46" mockup element, which the spec notes becomes a live clock
+        rather than a static table row."""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        self._corner_clock_lbl.setText(f"UTC {now.strftime('%H:%M')}")
 
     def _build_status_bar(self) -> None:
         """Permanent status bar widgets (P2B): rig/CAT, DX cluster, last-refresh
@@ -1144,20 +1212,16 @@ class QtOrbitRxApplication(QMainWindow):
             self.alerts_list.setFocus()
 
     def controls_reachable(self) -> dict[str, bool]:
-        """Every tracked command: toolbar actions are reachable if their
-        widget (or Qt's own toolbar overflow chevron) is visible; menu-only
-        actions are reachable as long as the menu bar itself is shown."""
-        ext_button = self._toolbar.findChild(QWidget, "qt_toolbar_ext_button")
-        qt_overflow = bool(ext_button and ext_button.isVisible())
-        result: dict[str, bool] = {}
-        for name, action in self._toolbar_actions.items():
-            widget = self._toolbar.widgetForAction(action)
-            result[name] = bool(widget and widget.isVisible()) or qt_overflow
+        """Every tracked command is reachable as long as the menu bar itself
+        is shown (P4-4: there is no toolbar any more, so this no longer has
+        a separate toolbar-widget-visibility branch). Map/Bands/Log are also
+        reachable via the map header's segmented control, but the menu bar
+        alone is already sufficient for every entry in self._actions."""
         menu_bar_visible = self.menuBar().isVisible()
-        for name, action in self._actions.items():
-            reachable = menu_bar_visible and action.isVisible() and action.isEnabled()
-            result[name] = result.get(name, False) or reachable
-        return result
+        return {
+            name: menu_bar_visible and action.isVisible() and action.isEnabled()
+            for name, action in self._actions.items()
+        }
 
     def hscroll_visible(self) -> bool:
         """M1: whether any scroll area inside the main window currently shows a
@@ -1353,7 +1417,6 @@ class QtOrbitRxApplication(QMainWindow):
             self.alerts_list.addItem(item)
         self._render_cluster_label()
         self.band_panel.update_grid(self.ctrl.state.band_grid)
-        self.last_updated_lbl.setFullText(self.ctrl.last_updated_text())
         # P2B: "whenever data refresh completes" -- on_weather and on_dx are
         # both wired to this same method, so this covers both triggers.
         self._status_refresh_lbl.setText(
@@ -1470,10 +1533,10 @@ class QtOrbitRxApplication(QMainWindow):
         else:
             text = f"Cluster: {status}"
             self._labels["cluster"].setText(text)
-        if hasattr(self, "cluster_live_lbl"):
-            self.cluster_live_lbl.setText(text)
         if hasattr(self, "_status_cluster_lbl"):
             self._status_cluster_lbl.setText(text)
+        if hasattr(self, "_corner_cluster_lbl"):
+            self._corner_cluster_lbl.setText(text)
 
     def _update_location_hint_visibility(self) -> None:
         """M5: path_muf/sunrise/sunset only mean anything once a location is set;
@@ -2515,7 +2578,7 @@ def quiet_capture_shutdown(app, win, stage_log: Path | None) -> None:
     join_rebuild = getattr(map_widget, "join_rebuild_thread", None)
     if join_rebuild is not None:
         join_rebuild(timeout=2.0)
-    for name in ("_timer", "_cluster_pulse_timer"):
+    for name in ("_timer", "_cluster_pulse_timer", "_clock_timer"):
         timer = getattr(win, name, None)
         if timer is not None:
             timer.stop()

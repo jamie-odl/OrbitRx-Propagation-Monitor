@@ -286,14 +286,17 @@ def test_spin_box_border_spans_full_field_width_with_buttons_inside(window): # M
     assert checked > 0
 
 
-def test_cluster_live_indicator_in_panel_header(window):
+def test_cluster_live_indicator_in_menu_bar_corner(window):
+    """P4-3: the panel-header cluster indicator was deleted as a duplicate of
+    the status bar (tests/test_status_bar.py) and the menu-bar corner widget
+    now carries it instead -- see _build_status_corner/_render_cluster_label."""
     window.ctrl.state.cluster_status = "connected"
     window._render_cluster_label()
-    assert "Cluster: live" in window.cluster_live_lbl.text()
-    assert "●" in window.cluster_live_lbl.text()
+    assert "Cluster: live" in window._corner_cluster_lbl.text()
+    assert "●" in window._corner_cluster_lbl.text()
     window.ctrl.state.cluster_status = "disconnected"
     window._render_cluster_label()
-    assert window.cluster_live_lbl.text() == "Cluster: disconnected"
+    assert window._corner_cluster_lbl.text() == "Cluster: disconnected"
 
 
 def test_spinbox_text_inset_matches_line_edit(window):  # M3

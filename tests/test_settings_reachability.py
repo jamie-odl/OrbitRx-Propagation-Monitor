@@ -1,9 +1,8 @@
 """P4 owner decision (c): Settings must stay reachable via the Tools menu and
 Ctrl+, both before and after the toolbar row is removed (plan item P4-4).
-These tests deliberately never touch window._toolbar / _toolbar_actions, so
-they keep passing once that toolbar is deleted -- unlike
-test_menu_bar.py::test_settings_action_shared_between_toolbar_and_menu, which
-is toolbar-dependent by design and will need updating in that later round."""
+These tests deliberately never touch window._toolbar / _toolbar_actions --
+P4-4 has now actually deleted that toolbar (see tests/test_menu_bar.py::
+test_no_main_toolbar_exists), so there's nothing left to simulate removing."""
 
 from __future__ import annotations
 
@@ -86,12 +85,12 @@ def test_ctrl_comma_opens_the_settings_dialog(window, monkeypatch):
 
 
 def test_settings_reachable_via_tools_menu_and_shortcut_without_the_toolbar(window, monkeypatch):
-    """Simulates the post-P4-4 world: delete the toolbar outright and confirm
-    both routes to Settings still work, per owner decision (c)."""
-    from PySide6.QtWidgets import QDialog, QMenu
+    """P4-4 has deleted the toolbar outright (tests/test_menu_bar.py::
+    test_no_main_toolbar_exists pins that); confirm both routes to Settings
+    still work on the real post-P4-4 window, per owner decision (c)."""
+    from PySide6.QtWidgets import QDialog, QMenu, QToolBar
 
-    window.removeToolBar(window._toolbar)
-    window._toolbar.deleteLater()
+    assert window.findChild(QToolBar, "mainToolbar") is None
 
     menu_tools = window.findChild(QMenu, "menuTools")
     assert window._actions["Settings"] in menu_tools.actions()

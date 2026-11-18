@@ -141,16 +141,6 @@ _SPIN_DOWN_DIM = (ASSETS_DIR / "spin-down-dim.svg").as_posix()
 QSS = f"""
 QWidget {{ background: {BG}; color: {TEXT}; font-size: {FONT_BODY}px; }}
 QDialog, QMainWindow {{ background: {BG}; }}
-QToolBar {{
-    background: {BG}; border: none; border-bottom: 1px solid {BORDER};
-    spacing: 4px; padding: 2px 8px; min-height: 32px;
-}}
-QToolBar QToolButton {{
-    color: {MUTED}; font-size: 13; font-weight: 500; padding: 6px 10px;
-    border: none; border-radius: 6px; background: transparent;
-}}
-QToolBar QToolButton:hover {{ color: {TEXT}; background: {ACCENT_SOFT}; }}
-QToolBar::separator {{ background: {BORDER}; width: 1px; height: 16px; margin: 0 6px; }}
 QMenuBar {{
     background: {BG}; color: {MUTED}; border: none; border-bottom: 1px solid {BORDER};
     padding: 2px 4px;
@@ -272,6 +262,23 @@ QToolButton#sidePanelToggle {{
 QToolButton#sidePanelToggle:checked {{
     color: {TEXT}; background: {ACCENT_SOFT}; border-color: {ACCENT};
 }}
+/* P4-4: Map/Bands/Log segmented control in the map header, replacing the
+   removed mainToolbar row (SPEC §6.1/§14 "viewSwitch"). New BG_RAISED/
+   BORDER_SUBTLE/BG_HOVER/BORDER_DEFAULT tokens from P4-1, radius 6 (controls). */
+QFrame#segTrack {{
+    background: {BG_RAISED}; border: 1px solid {BORDER_SUBTLE}; border-radius: {RADIUS_S}px;
+}}
+QToolButton#segButton {{
+    color: {TEXT_SECONDARY}; border: none; border-radius: {RADIUS_S}px;
+    padding: 3px 14px; background: transparent;
+}}
+QToolButton#segButton:hover {{ color: {TEXT_PRIMARY}; background: {BG_HOVER}; }}
+QToolButton#segButton:checked {{
+    color: {TEXT_PRIMARY}; background: {BG_HOVER}; border: 1px solid {BORDER_DEFAULT}; font-weight: 600;
+}}
+/* P4-3: QMenuBar.setCornerWidget -- cluster dot + UTC clock (SPEC §6.1/§6.2). */
+QWidget#statusCorner QLabel {{ color: {TEXT_TERTIARY}; font-size: {FONT_CAPTION}px; background: transparent; }}
+QLabel#statusCornerClock {{ font-family: {FONT_MONO}; }}
 QFrame#statsCard {{
     background: {BG_ELEVATED}; border: 1px solid {BORDER}; border-radius: {RADIUS_M}px;
 }}
