@@ -712,47 +712,58 @@ def test_band_panel_relayout_and_reflow_keep_all_cards_populated(window):
             assert panel._name_labels[band].text() != ""
 
 
-# --- Key-metric tiles (Kp / SFI / MUF) --------------------------------------
+# --- Key-metric tiles (SFI / Kp / A-index) + Propagation tiles (MUF / LUF) -
+# (SPEC §9 items 2/3/5: the old Kp/SFI/MUF trio is replaced by SFI/Kp/A-index
+# key tiles plus separate MUF/LUF Propagation tiles, so Kp appears exactly
+# once instead of in both a tile and a grouped-card row.)
 
 
-def test_key_metric_tiles_exist_for_kp_sfi_and_muf(window):
+def test_key_metric_tiles_exist_for_sfi_kp_and_a_index(window):
     from PySide6.QtWidgets import QLabel
 
-    assert set(window._kpi_labels.keys()) == {"kp", "solar", "muf"}
+    assert set(window._kpi_labels.keys()) == {"sfi", "kp", "a_index"}
     for lbl in window._kpi_labels.values():
         assert isinstance(lbl, QLabel)
         assert lbl.objectName() == "keyMetricValue"
 
 
-def test_key_metric_tiles_mirror_the_grouped_stats_card_values(window):
-    window.ctrl.state.kp_index = 3.67
-    window._refresh_labels_and_map()
-
-    for key in ("kp", "solar"):
-        assert window._kpi_labels[key].text() == window._labels[key].text()
-
-
-def test_key_metric_tiles_and_stats_card_show_no_data_dash_when_never_loaded(window):
+def test_key_metric_tiles_and_propagation_tiles_show_no_data_dash_when_never_loaded(window):
     """Never-loaded state (SPEC §10/states-sheet.png 'Never updated' panel):
-    flux/muf/luf default to None, so once labels are synced to that state
-    (_startup's 200ms QTimer hasn't fired yet in this fixture, hence the
-    explicit call -- same pattern as the other key-metric tests below), the
-    SFI/MUF tiles and their grouped stats-card rows must show the shared
-    NO_DATA dash, never "n/a"."""
-    from orbitrx.ui.formatting import NONE_TEXT
+    before the first successful fetch, every key tile, the MUF/LUF tiles and
+    the new detail rows must show the shared NO_DATA dash, never "n/a" or a
+    bare "--" placeholder (_startup's 200ms QTimer hasn't fired yet in this
+    fixture, hence the explicit call)."""
+    from orbitrx.ui.theme import NO_DATA
 
-    assert window.ctrl.state.flux is None
-    assert window.ctrl.state.muf is None and window.ctrl.state.luf is None
+    assert window.ctrl.state.last_weather_update is None
     window._refresh_labels_and_map()
-    assert window._kpi_labels["solar"].text() == NONE_TEXT
-    assert window._kpi_labels["muf"].text() == NONE_TEXT
-    assert window._muf_luf_caption.text() == f"LUF: {NONE_TEXT}"
-    # "sunspot" has a strip_map prefix (its caption is the adjacent name
-    # label, not repeated in the value), "hamqsl" does not -- both still
-    # resolve through NONE_TEXT, never "n/a".
-    assert window._labels["sunspot"].text() == NONE_TEXT
-    assert window._labels["hamqsl"].text() == f"HamQSL: {NONE_TEXT}"
+    for key in ("sfi", "kp", "a_index"):
+        assert window._kpi_labels[key].text() == NO_DATA
+    for key in ("muf", "luf", "sunspot", "bands"):
+        assert window._labels[key].text() == NO_DATA
     assert "n/a" not in window._labels["sunspot"].text()
+    assert window._kp_caption_lbl.text() == "Kp"  # no colour word with no data
+
+
+@pytest.mark.parametrize(
+    "kp,expected_word,expected_color_token",
+    [(3.0, "quiet", "GOOD"), (4.0, "unsettled", "FAIR"), (5.0, "storm", "POOR")],
+)
+def test_kp_tile_caption_shows_kp_state_word_in_colour(window, kp, expected_word, expected_color_token):
+    """SPEC §9 item 2: the Kp tile caption adds the kp_state() word in a
+    semantic colour; the value label itself stays uncoloured (plain text)."""
+    import datetime
+
+    from orbitrx.ui.theme import FAIR, GOOD, POOR
+
+    color = {"GOOD": GOOD, "FAIR": FAIR, "POOR": POOR}[expected_color_token]
+    window.ctrl.state.kp_index = kp
+    window.ctrl.state.last_weather_update = datetime.datetime.now(datetime.timezone.utc)
+    window._refresh_labels_and_map()
+
+    assert expected_word in window._kp_caption_lbl.text()
+    assert color in window._kp_caption_lbl.text()
+    assert window._kpi_labels["kp"].text() == f"{kp:.1f}"
 
 
 def test_weather_never_loaded_hint_visible_before_first_fetch_then_hidden(window):
@@ -772,34 +783,34 @@ def test_weather_never_loaded_hint_visible_before_first_fetch_then_hidden(window
     assert window._weather_never_loaded_lbl.isHidden()
 
 
-def test_muf_tile_shows_only_the_muf_value_with_luf_as_a_small_caption(window):
-    """The MUF tile used to show the full combined MUF/LUF stats-card string
-    in big type, overflowing the tile. The big number must be just the MUF
-    value; LUF moves to its own small caption. Both tile fields drop the
-    " MHz" unit suffix (the tile is only ~65-90px wide once squeezed into a
-    3-up row inside the default side pane) -- the grouped stats card below
-    (window._labels["muf"]) keeps the full combined text, unit included,
-    unchanged."""
-    window.ctrl.state.muf = 21.3
-    window.ctrl.state.luf = 3.2
+def test_muf_luf_tiles_show_values_with_mhz_unit(window):
+    """SPEC §9 item 5: MUF/LUF are now their own Propagation tiles (not the
+    old key-metric row), each showing the value with its "MHz" unit."""
+    import datetime
+
+    window.ctrl.state.muf = 21.4
+    window.ctrl.state.luf = 4.1
+    window.ctrl.state.last_weather_update = datetime.datetime.now(datetime.timezone.utc)
     window._refresh_labels_and_map()
 
-    assert window._kpi_labels["muf"].text() == "21.3"
-    assert window._muf_luf_caption.text() == "LUF: 3.2"
-    assert window._labels["muf"].text() == "21.3 MHz / LUF: 3.2 MHz"
+    assert window._labels["muf"].text() == "21.4 MHz"
+    assert window._labels["luf"].text() == "4.1 MHz"
 
 
-def test_solar_tile_shows_only_the_flux_number_without_the_trend_suffix(window):
-    """The SFI tile mirrored the grouped stats card's full "<flux> <trend
-    arrow/word>" text (e.g. "123.4 ↓ (falling)"), which overflows the tile
-    just as badly as the MUF tile did. The big number must be just the flux
-    value; the full text (trend included) stays in the grouped stats card."""
+def test_sfi_tile_shows_only_the_flux_number_with_trend_in_tooltip(window):
+    """The SFI tile is populated directly from state.flux (_refresh_key_tiles).
+    SPEC §9's tile has no room for the old grouped-card's "<flux> <trend
+    arrow/word>" text, so the big number is just the flux value; the trend
+    survives as the tile's tooltip rather than being silently dropped."""
+    import datetime
+
     window.ctrl.state.flux = 123.4
     window.ctrl.state.flux_trend = "↓ (falling)"
+    window.ctrl.state.last_weather_update = datetime.datetime.now(datetime.timezone.utc)
     window._refresh_labels_and_map()
 
-    assert window._kpi_labels["solar"].text() == "123.4"
-    assert window._labels["solar"].text() == "123.4 ↓ (falling)"
+    assert window._kpi_labels["sfi"].text() == "123.4"
+    assert window._kpi_labels["sfi"].toolTip() == "Trend: ↓ (falling)"
 
 
 @pytest.mark.parametrize("width,height", [(1280, 800), (683, 485)])
@@ -808,7 +819,9 @@ def test_no_key_metric_tile_label_text_overflows_its_width(window, width, height
     the space the tile actually gives it, at either size this app supports.
     Exercises the worst-case values this layout has to accommodate: the
     default no-data (NO_DATA dash) state, and a realistic longest-reading
-    value/trend combination for each tile."""
+    value for each tile."""
+    import datetime
+
     from PySide6.QtGui import QFontMetrics
 
     window.resize(width, height)
@@ -817,16 +830,19 @@ def test_no_key_metric_tile_label_text_overflows_its_width(window, width, height
     cases = [
         {},
         {"kp_index": 8.0},
-        {"flux": 999.9, "flux_trend": "↓ (falling)"},
+        {"flux": 999.9, "a_index": 88},
         {"muf": 28.5, "luf": 28.5},
     ]
     for state_kwargs in cases:
         for attr, value in state_kwargs.items():
             setattr(window.ctrl.state, attr, value)
+        window.ctrl.state.last_weather_update = datetime.datetime.now(datetime.timezone.utc)
         window._refresh_labels_and_map()
 
-        labels = [window._kpi_labels["kp"], window._kpi_labels["solar"],
-                  window._kpi_labels["muf"], window._muf_luf_caption]
+        labels = [
+            window._kpi_labels["sfi"], window._kpi_labels["kp"], window._kpi_labels["a_index"],
+            window._labels["muf"], window._labels["luf"],
+        ]
         for lbl in labels:
             fm = QFontMetrics(lbl.font())
             advance = fm.horizontalAdvance(lbl.text())
@@ -834,19 +850,123 @@ def test_no_key_metric_tile_label_text_overflows_its_width(window, width, height
             assert advance <= width_available, (lbl.objectName(), lbl.text(), advance, width_available)
 
 
-def test_grouped_stats_card_captions_are_left_aligned_with_comfortable_spacing(window):
-    """Owner fix: the caption column in the grouped stats cards (SPACE
-    WEATHER / PROPAGATION / PATH / OPS) was right-aligned and crowded the
-    value column -- captions must read left-aligned, with a comfortable
-    SPACE_3+ gutter between the caption and value columns, not jammed up
-    against them."""
+def test_ops_card_captions_are_left_aligned_with_comfortable_spacing(window):
+    """Owner fix (pre-P4-7): the caption column in a grouped stats card was
+    right-aligned and crowded the value column. OPS is the one grouped
+    QGridLayout card left after the P4-7 panel rebuild (SPACE WEATHER/
+    PROPAGATION/PATH moved to boxless detail rows) -- its captions must still
+    read left-aligned with a comfortable SPACE_3+ gutter."""
     from orbitrx.ui.theme import SPACE_3
 
-    assert window._stat_name_labels, "no stat caption labels were built"
-    for key, name_lbl in window._stat_name_labels.items():
+    ops_keys = ("time", "cluster", "solar_forecast", "contest", "dx")
+    for key in ops_keys:
+        name_lbl = window._stat_name_labels[key]
         assert name_lbl.alignment() & Qt.AlignmentFlag.AlignLeft, key
         assert not (name_lbl.alignment() & Qt.AlignmentFlag.AlignRight), key
 
         card = name_lbl.parentWidget()
         grid = card.layout()
         assert grid.horizontalSpacing() >= SPACE_3, (key, grid.horizontalSpacing())
+
+
+def test_detail_rows_are_left_label_right_mono_value_with_no_box(window):
+    """SPEC §9 item 4: Kp forecast/Sunspot/Solar wind/Bz (and the Bands row)
+    are QFrame#detailRow -- label left (tertiary), value right (mono,
+    primary), no card background/border."""
+    for key in ("kp_forecast", "sunspot", "solar_wind", "bz", "bands"):
+        name_lbl = window._stat_name_labels[key]
+        value_lbl = window._labels[key]
+        assert name_lbl.objectName() == "rowLabel"
+        assert value_lbl.objectName() == "rowValue"
+        assert name_lbl.alignment() & Qt.AlignmentFlag.AlignLeft
+        assert value_lbl.alignment() & Qt.AlignmentFlag.AlignRight
+        row = value_lbl.parentWidget()
+        assert row.objectName() == "detailRow"
+        assert row.styleSheet() == ""  # themed via QSS, no inline per-row style
+
+
+def test_space_weather_header_shows_section_title_and_freshness_stamp(window):
+    assert window._freshness_lbl.objectName() == "freshness"
+    sw_title = next(
+        lbl for lbl in window.findChildren(type(window._freshness_lbl))
+        if lbl.objectName() == "sectionTitle" and lbl.text() == "Space weather"
+    )
+    assert sw_title.text() == "Space weather"
+
+
+def test_propagation_header_shows_hamqsl_source_label(window):
+    prop_title = next(
+        lbl for lbl in window.findChildren(type(window._freshness_lbl))
+        if lbl.objectName() == "sectionTitle" and lbl.text() == "Propagation"
+    )
+    assert prop_title.text() == "Propagation"
+    hamqsl_lbl = next(
+        lbl for lbl in window.findChildren(type(window._freshness_lbl))
+        if lbl.objectName() == "rowLabel" and lbl.text() == "HamQSL"
+    )
+    assert hamqsl_lbl.text() == "HamQSL"
+
+
+def test_path_row_is_collapsed_by_default_and_toggles(window):
+    assert window._path_toggle_btn.isChecked() is False
+    assert window._path_body.isHidden()
+
+    window._path_toggle_btn.setChecked(True)
+    assert window._path_body.isVisible()
+
+    window._path_toggle_btn.setChecked(False)
+    assert window._path_body.isHidden()
+
+
+def test_path_header_hint_links_to_location_settings_when_unset(window, monkeypatch):
+    window.ctrl.state.user_lat = None
+    window.ctrl.state.user_lon = None
+    window._update_location_hint_visibility()
+    assert not window._path_hint_lbl.isHidden()
+    assert "Set location to enable" in window._path_hint_lbl.text()
+
+    opened = {}
+    monkeypatch.setattr(window, "_settings", lambda **kw: opened.update(kw))
+    window._path_hint_lbl.linkActivated.emit("#")
+    assert opened == {"initial_page": "Station"}
+
+    window.ctrl.state.user_lat = 51.5
+    window.ctrl.state.user_lon = -0.1
+    window._update_location_hint_visibility()
+    assert window._path_hint_lbl.isHidden()
+
+
+def test_tile_and_row_geometry_is_identical_empty_vs_populated(window):
+    """SPEC §10/UXR §7 "layout stability": switching between the never-loaded
+    (NO_DATA) and populated states must not move anything by 4px or more --
+    pinned here across every real state the controller can inject (never a
+    sample value shipped in code)."""
+    import datetime
+
+    window.resize(1280, 800)
+    window._update_compact_mode()
+    tracked = (
+        [window._kpi_labels[k] for k in ("sfi", "kp", "a_index")]
+        + [window._labels[k] for k in ("muf", "luf", "bands", "kp_forecast", "sunspot", "solar_wind", "bz")]
+    )
+
+    assert window.ctrl.state.last_weather_update is None
+    window._refresh_labels_and_map()
+    empty_geoms = [(w.x(), w.y(), w.width(), w.height()) for w in tracked]
+
+    window.ctrl.state.flux = 142.0
+    window.ctrl.state.kp_index = 3.0
+    window.ctrl.state.a_index = 12.0
+    window.ctrl.state.muf = 21.4
+    window.ctrl.state.luf = 4.1
+    window.ctrl.state.hamqsl_band_hint = "40m | 20m"
+    window.ctrl.state.kp_forecast = "3.33"
+    window.ctrl.state.sunspot_observed = 118.0
+    window.ctrl.state.solar_wind_speed = 412.0
+    window.ctrl.state.bz = -2.1
+    window.ctrl.state.last_weather_update = datetime.datetime.now(datetime.timezone.utc)
+    window._refresh_labels_and_map()
+    populated_geoms = [(w.x(), w.y(), w.width(), w.height()) for w in tracked]
+
+    for before, after, widget in zip(empty_geoms, populated_geoms, tracked):
+        assert before[1] == after[1] and before[3] == after[3], (widget.objectName(), before, after)

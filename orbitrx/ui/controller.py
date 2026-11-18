@@ -223,6 +223,11 @@ class OrbitRxController:
                     self._on_status(f"Weather error: {e}")
                     self._on_error(f"Weather update failed: {e}")
                     self.state.weather_fetch_in_progress = False
+                    # P4-7: no cache to fall back to either -- if there is
+                    # last-good data on screen it is now stale, even though
+                    # _apply_weather (which would normally flip this) never
+                    # runs on this path.
+                    self.state.weather_last_fetch_ok = False
                     return
                 self._on_error("Weather update failed, showing cached data")
             try:
@@ -270,6 +275,14 @@ class OrbitRxController:
             self.state.path_muf = None
             self.state.path_muf_label = None
         self.state.last_weather_update = datetime.datetime.now(datetime.timezone.utc)
+        # P4-7/SPEC §9 header freshness stamp: only a live fetch (offline is
+        # False) counts as "the last time this actually succeeded" -- a
+        # cache-fallback apply still updates last_weather_update (existing
+        # "has data ever loaded" semantics other code already relies on) but
+        # must not claim to be fresh.
+        self.state.weather_last_fetch_ok = not offline
+        if not offline:
+            self.state.last_weather_success_update = self.state.last_weather_update
         ss = self.state.sunspot_observed or self.state.sunspot_predicted
         self.store.log_propagation({
             "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
@@ -371,12 +384,20 @@ class OrbitRxController:
             "solar": f"Solar Flux: {format_value(s.flux)} {flux_trend}".rstrip(),
             "sunspot": f"Sunspot: {ss:.1f}" if ss else f"Sunspot: {NONE_TEXT}",
             "a_index": f"A-index: {a_txt}",
-            "solar_wind": f"Wind: {fmt(s.solar_wind_speed, 'km/s')}  Bz: {fmt(s.bz, 'nT')}",
+            # P4-7/SPEC §9: the old combined "Wind: x  Bz: y" cell becomes two
+            # separate rows, each through the same fmt() value+unit helper.
+            "solar_wind": f"Solar wind: {fmt(s.solar_wind_speed, 'km/s')}",
+            "bz": f"Bz: {fmt(s.bz, 'nT')}",
             "time": f"NOAA data: {format_iso_utc(s.time_utc)}",
-            "bands": f"Bands: {s.bands_summary}",
-            "muf": f"MUF: {fmt(s.muf, 'MHz')} / LUF: {fmt(s.luf, 'MHz')}",
+            # SPEC §9's "Bands" row is the HamQSL-sourced current-best-bands
+            # hint (paired with the "HamQSL" source label in the section
+            # header), not the locally-computed bands_summary narrative --
+            # that narrative duplicates what the band strip's colours already
+            # show, so it isn't surfaced here (one home per fact).
+            "bands": f"Bands: {s.hamqsl_band_hint or NONE_TEXT}",
+            "muf": f"MUF: {fmt(s.muf, 'MHz')}",
+            "luf": f"LUF: {fmt(s.luf, 'MHz')}",
             "path_muf": path_muf_txt,
-            "hamqsl": f"HamQSL: {s.hamqsl_band_hint or NONE_TEXT}",
             "sunrise": f"Sunrise UTC: {sr_txt}",
             "sunset": f"Sunset UTC: {ss_txt}",
             "alerts": "Alerts:\n" + ("\n".join(s.alerts[:3]) or "none"),

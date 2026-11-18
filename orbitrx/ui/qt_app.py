@@ -15,7 +15,7 @@ from PIL import Image
 from orbitrx import __version__
 from orbitrx.dx import verify_qrz_api
 from orbitrx.map_renderer import MapLayers, MapRenderer
-from orbitrx.propagation import HF_BANDS
+from orbitrx.propagation import HF_BANDS, kp_state
 from orbitrx.ui.async_utils import CatTestRunner
 from orbitrx.ui.band_panel import BandPanelWidget
 from orbitrx.ui.controller import OrbitRxController
@@ -24,14 +24,14 @@ from orbitrx.ui.map_widget import PropagationMapWidget, QT_AVAILABLE, _pil_to_qi
 from orbitrx.spots.settings import clamp_poll_seconds
 from orbitrx.ui.formatting import (
     widen_to_min_span,
-    humanize_iso_dates, fmt,
+    humanize_iso_dates, fmt, format_value,
     format_hour_offset, format_no_spots_message, format_replay_offset,
     history_plot_date_format, insert_gap_breaks, pad_datetime_range, EXPECTED_POLL_S,
 )
 from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
 from orbitrx.ui.theme import (
-    BG_ELEVATED, BORDER, CARD_STYLE, CARD_TEXT, ERR, FONT_BODY, MUTED, MUTED_SECONDARY, NO_DATA, OK,
-    RADIUS_M, SPACE_1, SPACE_2, SPACE_3, apply_theme,
+    BG_ELEVATED, BORDER, CARD_STYLE, CARD_TEXT, ERR, FAIR, FONT_BODY, GOOD, MUTED, MUTED_SECONDARY,
+    NO_DATA, OK, POOR, RADIUS_M, SPACE_1, SPACE_2, SPACE_3, apply_theme,
 )
 from orbitrx.ui.toast import ToastManager
 from orbitrx.ui.window_fit import fit_to_screen
@@ -404,6 +404,90 @@ class _MapControlStrip(QWidget):
         self._apply_layout(self.width() >= self._SINGLE_ROW_MIN_WIDTH)
 
 
+# P4-7 (SPEC §9 item 3): Kp over the window drawn as bars never exceeds this,
+# so a single stray high reading can't flatten every other bar to a sliver.
+_SPARKLINE_MAX_KP = 9.0
+_SPARKLINE_REF_KP = 4.0
+
+
+class _KpSparklineChart(QWidget):
+    """Bars-only drawing surface for _KpSparkline, kept a separate QWidget
+    so the fixed chart height (SPEC's 36px) never fights the header label's
+    own sizeHint in the same layout cell."""
+
+    _HEIGHT = 36
+    _BAR_GAP = 2
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._values: list[float] = []
+        self.setMinimumHeight(self._HEIGHT)
+        self.setMaximumHeight(self._HEIGHT)
+
+    def set_values(self, values: list[float]) -> None:
+        self._values = list(values)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        from PySide6.QtCore import QRectF
+        from PySide6.QtGui import QColor, QPainter, QPen
+
+        from orbitrx.ui.theme import BORDER_DEFAULT, FAIR, SPARK_BAR
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        w, h = self.width(), self.height()
+        n = len(self._values)
+
+        # Dashed Kp=4 reference line (SPEC §9: "A dashed reference line at
+        # Kp 4 in BORDER_DEFAULT").
+        ref_y = h - (_SPARKLINE_REF_KP / _SPARKLINE_MAX_KP) * h
+        pen = QPen(QColor(BORDER_DEFAULT))
+        pen.setStyle(Qt.PenStyle.DashLine)
+        pen.setWidth(1)
+        painter.setPen(pen)
+        painter.drawLine(0, int(ref_y), w, int(ref_y))
+
+        if not n:
+            return
+        painter.setPen(Qt.PenStyle.NoPen)
+        bar_w = max(1.0, (w - self._BAR_GAP * (n - 1)) / n)
+        for i, kp in enumerate(self._values):
+            clamped = max(0.0, min(float(kp), _SPARKLINE_MAX_KP))
+            bar_h = max(1.0, (clamped / _SPARKLINE_MAX_KP) * h)
+            x = i * (bar_w + self._BAR_GAP)
+            color = FAIR if kp >= _SPARKLINE_REF_KP else SPARK_BAR
+            painter.setBrush(QColor(color))
+            painter.drawRect(QRectF(x, h - bar_h, bar_w, bar_h))
+
+
+class _KpSparkline(QWidget):
+    """Kp 24h sparkline (P4-7, SPEC §9 item 3). Built only from real
+    DataStore.query_propagation rows (see QtOrbitRxApplication._refresh_kp_sparkline);
+    hidden entirely -- zero height, not an empty chart -- with fewer than 2
+    rows in the last 24h, per SPEC's "If there is no history, hide the
+    sparkline entirely" rule."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(SPACE_1)
+        header = QLabel("Kp · last 24 h")
+        header.setObjectName("muted")
+        layout.addWidget(header)
+        self._chart = _KpSparklineChart(self)
+        layout.addWidget(self._chart)
+        self.setVisible(False)
+
+    def set_rows(self, kp_values: list[float]) -> None:
+        self._chart.set_values(kp_values)
+        self.setVisible(len(kp_values) >= 2)
+
+    def bar_count(self) -> int:
+        return len(self._chart._values)
+
+
 class _UiInvoker(QObject):
     """Runs callables on the Qt GUI thread (controller callbacks come from worker threads).
 
@@ -759,39 +843,56 @@ class QtOrbitRxApplication(QMainWindow):
         stats_outer = QVBoxLayout(stats_tab)
         stats_outer.setSpacing(SPACE_2)
 
-        # P4: three "key metrics" tiles (Kp / SFI / MUF) up top in big type, so
-        # the numbers that matter most for a go/no-go glance don't need the
-        # grouped cards below at all.
+        # P4-7/SPEC §9 item 1: "Space weather" title left, a real freshness
+        # stamp right (Updated/Refreshing…/Stale ·/Never updated -- computed
+        # in _space_weather_freshness_text from the controller's actual fetch
+        # state, never a sample value).
+        sw_header_row = QHBoxLayout()
+        sw_title_lbl = QLabel("Space weather")
+        sw_title_lbl.setObjectName("sectionTitle")
+        sw_header_row.addWidget(sw_title_lbl)
+        sw_header_row.addStretch(1)
+        self._freshness_lbl = QLabel("Never updated")
+        self._freshness_lbl.setObjectName("freshness")
+        sw_header_row.addWidget(self._freshness_lbl)
+        stats_outer.addLayout(sw_header_row)
+
+        # P4-7/SPEC §9 item 2: three key tiles -- SFI, Kp, A-index. The old
+        # Kp/SFI/MUF trio is gone: MUF (and LUF) move to their own
+        # Propagation tiles below, so Kp appears exactly once on screen
+        # ("remove the duplicate Kp row/tile so each fact appears once").
+        # The Kp tile's caption adds the kp_state() word in a semantic
+        # colour; the value itself always stays primary (never coloured).
         self._kpi_labels: dict[str, QLabel] = {}
-        # The MUF tile's big number is just the MUF value -- the combined
-        # "MUF: <NONE_TEXT> / LUF: <NONE_TEXT>" string (fine as a small
-        # grouped-card row) overflowed the tile in big type, so LUF gets its
-        # own small caption here instead (set in _refresh_labels_and_map).
-        self._muf_luf_caption: QLabel | None = None
+        self._kp_caption_lbl: QLabel | None = None
         key_metrics_row = QHBoxLayout()
         key_metrics_row.setSpacing(SPACE_2)
-        for key, caption in (("kp", "Kp"), ("solar", "SFI"), ("muf", "MUF")):
+        for key, caption in (("sfi", "SFI"), ("kp", "Kp"), ("a_index", "A-index")):
             tile = QFrame()
             tile.setObjectName("keyMetricTile")
             tile_layout = QVBoxLayout(tile)
             tile_layout.setContentsMargins(SPACE_2, SPACE_1, SPACE_2, SPACE_1)
             tile_layout.setSpacing(0)
-            value_lbl = QLabel("--")
+            value_lbl = QLabel(NO_DATA)
             value_lbl.setObjectName("keyMetricValue")
             value_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             caption_lbl = QLabel(caption)
             caption_lbl.setObjectName("keyMetricCaption")
+            caption_lbl.setTextFormat(Qt.TextFormat.RichText)
             caption_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             tile_layout.addWidget(value_lbl)
             tile_layout.addWidget(caption_lbl)
-            if key == "muf":
-                self._muf_luf_caption = QLabel("")
-                self._muf_luf_caption.setObjectName("keyMetricSubCaption")
-                self._muf_luf_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                tile_layout.addWidget(self._muf_luf_caption)
             self._kpi_labels[key] = value_lbl
+            if key == "kp":
+                self._kp_caption_lbl = caption_lbl
             key_metrics_row.addWidget(tile, 1)
         stats_outer.addLayout(key_metrics_row)
+
+        # P4-7/SPEC §9 item 3: Kp 24h sparkline, built only from real
+        # propagation-table rows (see _refresh_kp_sparkline) on a worker
+        # thread -- hidden entirely (not an empty chart) with <2 rows.
+        self._kp_sparkline = _KpSparkline()
+        stats_outer.addWidget(self._kp_sparkline)
 
         # P4-6 (SPEC §10 "Whole section never loaded"/states-sheet.png): a
         # single muted line, shown only before the first successful weather
@@ -803,7 +904,7 @@ class QtOrbitRxApplication(QMainWindow):
         )
         self._weather_never_loaded_lbl.setWordWrap(True)
         self._weather_never_loaded_lbl.setObjectName("muted")
-        self._weather_never_loaded_lbl.linkActivated.connect(lambda _: self.ctrl.fetch_weather())
+        self._weather_never_loaded_lbl.linkActivated.connect(lambda _: self._trigger_weather_refresh())
         stats_outer.addWidget(self._weather_never_loaded_lbl)
 
         stats_scroll = QScrollArea()
@@ -816,41 +917,149 @@ class QtOrbitRxApplication(QMainWindow):
         stats_body_layout.setContentsMargins(0, 0, 0, 0)
         stats_body_layout.setSpacing(SPACE_2)
 
-        # M4/P4: grouped cards (SPACE WEATHER / PROPAGATION / PATH / OPS), each
-        # a rounded panel with a section heading and a fixed-width label
-        # column so every card's values line up at the same x.
-        space_keys = ["kp", "kp_forecast", "solar", "sunspot", "a_index", "solar_wind", "time"]
-        prop_keys = ["bands", "muf", "hamqsl"]
-        location_keys = ["path_muf", "sunrise", "sunset", "location"]
-        late_keys = ["cluster", "solar_forecast", "contest", "dx"]
         pretty = {
-            "kp": "Kp", "kp_forecast": "Kp forecast", "solar": "Solar flux",
-            "sunspot": "Sunspot", "a_index": "A-index", "solar_wind": "Solar wind",
-            "time": "UTC", "bands": "Bands", "muf": "MUF", "hamqsl": "HamQSL",
-            "path_muf": "Path MUF", "sunrise": "Sunrise", "sunset": "Sunset",
-            "location": "You", "cluster": "Cluster", "solar_forecast": "Forecast",
-            "contest": "Contest", "dx": "DX",
+            "kp_forecast": "Kp forecast", "sunspot": "Sunspot", "solar_wind": "Solar wind",
+            "bz": "Bz", "bands": "Bands", "path_muf": "Path MUF", "sunrise": "Sunrise",
+            "sunset": "Sunset", "location": "You", "time": "UTC", "cluster": "Cluster",
+            "solar_forecast": "Forecast", "contest": "Contest", "dx": "DX",
         }
-        for key in space_keys + prop_keys + location_keys + late_keys:
+
+        self._stat_name_labels: dict[str, QLabel] = {}
+
+        def _build_detail_row(key: str, label_text: str) -> QFrame:
+            """P4-7/SPEC §9 item 4: label left (tertiary), mono value right
+            (primary), 1px bottom divider, no card box -- replaces the old
+            boxed grid-card row for every key that moves here."""
+            row = QFrame()
+            row.setObjectName("detailRow")
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(SPACE_2)
+            name = QLabel(label_text)
+            name.setObjectName("rowLabel")
+            name.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+            value = QLabel(NO_DATA)
+            value.setObjectName("rowValue")
+            value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            row_layout.addWidget(name)
+            row_layout.addStretch(1)
+            row_layout.addWidget(value)
+            self._stat_name_labels[key] = name
+            self._labels[key] = value
+            return row
+
+        def _hline_divider() -> QFrame:
+            line = QFrame()
+            line.setStyleSheet(f"background: {BORDER}; border: none; min-height: 1px; max-height: 1px;")
+            return line
+
+        # Detail rows: Kp forecast, Sunspot, Solar wind, Bz -- the old
+        # combined "Wind ... Bz" cell is now two rows (SPEC §9 item 4).
+        for key in ("kp_forecast", "sunspot", "solar_wind", "bz"):
+            stats_body_layout.addWidget(_build_detail_row(key, pretty[key]))
+
+        stats_body_layout.addWidget(_hline_divider())
+
+        # Propagation: header with the "HamQSL" source label on the right,
+        # MUF/LUF Metric-M tiles, then a Bands row (SPEC §9 item 5).
+        prop_header_row = QHBoxLayout()
+        prop_title_lbl = QLabel("Propagation")
+        prop_title_lbl.setObjectName("sectionTitle")
+        prop_header_row.addWidget(prop_title_lbl)
+        prop_header_row.addStretch(1)
+        prop_source_lbl = QLabel("HamQSL")
+        prop_source_lbl.setObjectName("rowLabel")
+        prop_header_row.addWidget(prop_source_lbl)
+        stats_body_layout.addLayout(prop_header_row)
+
+        prop_tiles_row = QHBoxLayout()
+        prop_tiles_row.setSpacing(SPACE_2)
+        for key, caption in (("muf", "MUF"), ("luf", "LUF")):
+            tile = QFrame()
+            tile.setObjectName("keyMetricTile")
+            tile_layout = QVBoxLayout(tile)
+            tile_layout.setContentsMargins(SPACE_2, SPACE_1, SPACE_2, SPACE_1)
+            tile_layout.setSpacing(0)
+            value_lbl = QLabel(NO_DATA)
+            value_lbl.setObjectName("keyMetricValue")
+            value_lbl.setProperty("size", "m")
+            value_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            caption_lbl = QLabel(caption)
+            caption_lbl.setObjectName("keyMetricCaption")
+            caption_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            tile_layout.addWidget(value_lbl)
+            tile_layout.addWidget(caption_lbl)
+            value_lbl.style().unpolish(value_lbl)
+            value_lbl.style().polish(value_lbl)
+            self._labels[key] = value_lbl
+            prop_tiles_row.addWidget(tile, 1)
+        stats_body_layout.addLayout(prop_tiles_row)
+
+        stats_body_layout.addWidget(_build_detail_row("bands", pretty["bands"]))
+
+        stats_body_layout.addWidget(_hline_divider())
+
+        # Path: collapsible row, collapsed by default. While Location is not
+        # set, the header's right side is a "Set location to enable" link to
+        # Location settings (SPEC §9 item 8).
+        path_header_row = QHBoxLayout()
+        path_header_row.setSpacing(SPACE_1)
+        self._path_toggle_btn = QToolButton()
+        self._path_toggle_btn.setObjectName("pathToggle")
+        self._path_toggle_btn.setCheckable(True)
+        self._path_toggle_btn.setChecked(False)
+        self._path_toggle_btn.setArrowType(Qt.ArrowType.RightArrow)
+        self._path_toggle_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self._path_toggle_btn.setText("Path")
+        self._path_toggle_btn.setAutoRaise(True)
+        self._path_toggle_btn.toggled.connect(self._on_path_toggled)
+        path_header_row.addWidget(self._path_toggle_btn)
+        path_header_row.addStretch(1)
+        self._path_hint_lbl = QLabel('<a href="#">Set location to enable</a>')
+        self._path_hint_lbl.setObjectName("muted")
+        self._path_hint_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._path_hint_lbl.linkActivated.connect(lambda _: self._settings(initial_page="Station"))
+        path_header_row.addWidget(self._path_hint_lbl)
+        stats_body_layout.addLayout(path_header_row)
+
+        self._path_body = QWidget()
+        path_body_layout = QVBoxLayout(self._path_body)
+        path_body_layout.setContentsMargins(0, SPACE_1, 0, 0)
+        path_body_layout.setSpacing(0)
+        for key in ("path_muf", "sunrise", "sunset", "location"):
+            path_body_layout.addWidget(_build_detail_row(key, pretty[key]))
+        self._location_hint_lbl = QLabel(
+            'Set your location to unlock path MUF and sun times. <a href="#">Location</a>'
+        )
+        self._location_hint_lbl.setWordWrap(True)
+        self._location_hint_lbl.setObjectName("muted")
+        self._location_hint_lbl.setStyleSheet(
+            f"background: {BG_ELEVATED}; border: 1px solid {BORDER}; "
+            f"border-radius: {RADIUS_M}px; padding: {SPACE_3}px;"
+        )
+        self._location_hint_lbl.linkActivated.connect(lambda _: self.ctrl.refresh_location())
+        self._location_hint_lbl.setVisible(False)
+        path_body_layout.addWidget(self._location_hint_lbl)
+        self._path_body.setVisible(False)  # collapsed by default
+        stats_body_layout.addWidget(self._path_body)
+
+        # OPS stays a grouped card: not part of SPEC §9's panel structure and
+        # not touched this round, but next-contest/DX-preview/27-day-forecast
+        # and the underlying NOAA feed timestamp aren't shown anywhere else,
+        # so dropping the card would lose real information, not just chrome.
+        late_keys = ["time", "cluster", "solar_forecast", "contest", "dx"]
+        for key in late_keys:
             lbl = QLabel("--")
             lbl.setWordWrap(True)
             lbl.setStyleSheet("padding: 2px; font-weight: 600; ")
             lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
             self._labels[key] = lbl
-            if key == "solar":
-                lbl.setToolTip("Change vs previous reading")
-
-        self._stat_name_labels: dict[str, QLabel] = {}
 
         def _build_card(title: str, keys: list[str]) -> QFrame:
             card = QFrame()
             card.setObjectName("statsCard")
             grid = QGridLayout(card)
             grid.setContentsMargins(SPACE_3, SPACE_2, SPACE_3, SPACE_2)
-            # Owner fix: captions were right-aligned and crowded the values
-            # (lined up hard against them with only SPACE_2 between). Left
-            # alignment plus a roomier SPACE_3 gutter reads as a normal
-            # label/value row instead of a cramped, ledger-style column.
             grid.setHorizontalSpacing(SPACE_3)
             grid.setVerticalSpacing(SPACE_1)
             grid.setColumnStretch(1, 1)
@@ -866,24 +1075,6 @@ class QtOrbitRxApplication(QMainWindow):
                 grid.addWidget(name, row, 0)
                 grid.addWidget(self._labels[key], row, 1)
             return card
-
-        stats_body_layout.addWidget(_build_card("SPACE WEATHER", space_keys))
-        stats_body_layout.addWidget(_build_card("PROPAGATION", prop_keys))
-
-        path_card = _build_card("PATH", location_keys)
-        self._location_hint_lbl = QLabel(
-            'Set your location to unlock path MUF and sun times. <a href="#">Location</a>'
-        )
-        self._location_hint_lbl.setWordWrap(True)
-        self._location_hint_lbl.setObjectName("muted")
-        self._location_hint_lbl.setStyleSheet(
-            f"background: {BG_ELEVATED}; border: 1px solid {BORDER}; "
-            f"border-radius: {RADIUS_M}px; padding: {SPACE_3}px;"
-        )
-        self._location_hint_lbl.linkActivated.connect(lambda _: self.ctrl.refresh_location())
-        self._location_hint_lbl.setVisible(False)
-        path_card.layout().addWidget(self._location_hint_lbl, path_card.layout().rowCount(), 0, 1, 2)
-        stats_body_layout.addWidget(path_card)
 
         stats_body_layout.addWidget(_build_card("OPS", late_keys))
         stats_body_layout.addStretch(1)
@@ -1058,7 +1249,7 @@ class QtOrbitRxApplication(QMainWindow):
             extra_standard_key=QKeySequence.StandardKey.Refresh,
         )
         make("Location", "Refresh Location", self.ctrl.refresh_location)
-        make("Weather", "Refresh Weather", self.ctrl.fetch_weather)
+        make("Weather", "Refresh Weather", self._trigger_weather_refresh)
         make("Rig", "Rig Wizard…", self._rig_wizard)
         make("About", "About", self._about)
         make("Check for Updates", "Check for Updates", self._check_updates)
@@ -1392,9 +1583,9 @@ class QtOrbitRxApplication(QMainWindow):
         labels = self.ctrl.weather_labels()
         # M4: row caption lives in the form label; strip duplicated "Key: " prefixes.
         strip_map = {
-            "kp": "Kp: ", "kp_forecast": "Kp Forecast: ", "solar": "Solar Flux: ",
-            "sunspot": "Sunspot: ", "a_index": "A-index: ", "solar_wind": "Wind: ",
-            "time": "NOAA data: ", "bands": "Bands: ", "muf": "MUF: ",
+            "kp_forecast": "Kp Forecast: ", "solar": "Solar Flux: ",
+            "sunspot": "Sunspot: ", "solar_wind": "Solar wind: ", "bz": "Bz: ",
+            "time": "NOAA data: ", "bands": "Bands: ", "muf": "MUF: ", "luf": "LUF: ",
             "path_muf": "Path MUF: ", "sunrise": "Sunrise: ", "sunset": "Sunset: ",
             "location": "You: ", "cluster": "Cluster: ",
         }
@@ -1404,24 +1595,8 @@ class QtOrbitRxApplication(QMainWindow):
                 if prefix and v.startswith(prefix):
                     v = v[len(prefix):]
                 self._labels[k].setText(v)
-                # P4: the key-metrics tiles (Kp/SFI/MUF) mirror the same
-                # stripped value, just rendered large above the grouped
-                # cards -- but each tile is only ~65-90px wide once squeezed
-                # into a 3-up row inside the default ~300px side pane at
-                # 1280x800, so unlike the grouped card's room-to-spare row,
-                # the tile only ever gets the bare number: no unit suffix,
-                # no trend arrow/word. The full text (unit, trend, LUF) stays
-                # in window._labels[k] (the grouped stats card) unchanged.
-                if k == "muf" and self._muf_luf_caption is not None:
-                    muf_part, sep, luf_part = v.partition(" / LUF: ")
-                    self._kpi_labels[k].setText(muf_part.removesuffix(" MHz"))
-                    self._muf_luf_caption.setText(
-                        f"LUF: {luf_part.removesuffix(' MHz')}" if sep else ""
-                    )
-                elif k == "solar" and k in self._kpi_labels:
-                    self._kpi_labels[k].setText(v.split(" ", 1)[0])
-                elif k in self._kpi_labels:
-                    self._kpi_labels[k].setText(v)
+        self._refresh_key_tiles()
+        self._freshness_lbl.setText(self._space_weather_freshness_text())
         self._update_location_hint_visibility()
         self._weather_never_loaded_lbl.setVisible(self.ctrl.state.last_weather_update is None)
         self.alerts_list.clear()
@@ -1440,6 +1615,101 @@ class QtOrbitRxApplication(QMainWindow):
             f"Location: {LOCATION_SOURCE_LABELS.get(self.ctrl.state.location_source, 'not set')}"
         )
         self._schedule_map_rebuild()
+        self._refresh_kp_sparkline()
+
+    def _refresh_key_tiles(self) -> None:
+        """SPEC §9 item 2: SFI/Kp/A-index tiles, gated as a whole on "has the
+        first successful fetch happened yet" (not field-by-field None checks)
+        so the never-loaded state shows NO_DATA on every tile at once, the
+        same way states-sheet.png's "Never updated" panel does."""
+        s = self.ctrl.state
+        loaded = s.last_weather_update is not None
+        self._kpi_labels["sfi"].setText(format_value(s.flux, fmt="{:.1f}") if loaded else NO_DATA)
+        # SPEC §9's tile has no room for the trend arrow/word the old grouped
+        # "SPACE WEATHER" row showed next to flux -- rather than dropping that
+        # real information outright, it survives as the tile's tooltip.
+        self._kpi_labels["sfi"].setToolTip(f"Trend: {s.flux_trend}" if loaded and s.flux_trend else "")
+        self._kpi_labels["kp"].setText(format_value(s.kp_index, fmt="{:.1f}") if loaded else NO_DATA)
+        self._kpi_labels["a_index"].setText(format_value(s.a_index, fmt="{:g}") if loaded else NO_DATA)
+        if self._kp_caption_lbl is None:
+            return
+        if not loaded:
+            self._kp_caption_lbl.setText("Kp")
+            return
+        word, token = kp_state(s.kp_index)
+        color = {"GOOD": GOOD, "FAIR": FAIR, "POOR": POOR}[token]
+        self._kp_caption_lbl.setText(f'Kp &middot; <span style="color:{color}">{word}</span>')
+
+    def _space_weather_freshness_text(self) -> str:
+        """SPEC §9 item 1 / §10: a real freshness stamp driven entirely by
+        the controller's actual fetch state, never a sample timestamp."""
+        s = self.ctrl.state
+        if s.weather_fetch_in_progress:
+            return "Refreshing…"
+        if s.last_weather_update is None and s.last_weather_success_update is None:
+            return "Never updated"
+        if not s.weather_last_fetch_ok and s.last_weather_success_update is not None:
+            return f"Stale · {s.last_weather_success_update.strftime('%H:%M')}"
+        if s.last_weather_update is not None:
+            return f"Updated {s.last_weather_update.strftime('%H:%M')}"
+        return "Never updated"
+
+    def _trigger_weather_refresh(self) -> None:
+        """Every UI entry point that kicks off a weather fetch goes through
+        here instead of calling ctrl.fetch_weather() directly, so the header
+        freshness stamp flips to "Refreshing…" immediately -- fetch_weather()
+        sets state.weather_fetch_in_progress synchronously before handing the
+        actual network call to its worker thread, so this read-back is safe
+        and never blocks."""
+        self.ctrl.fetch_weather()
+        self._freshness_lbl.setText(self._space_weather_freshness_text())
+
+    def _on_path_toggled(self, checked: bool) -> None:
+        self._path_body.setVisible(checked)
+        self._path_toggle_btn.setArrowType(Qt.ArrowType.DownArrow if checked else Qt.ArrowType.RightArrow)
+
+    def _refresh_kp_sparkline(self) -> None:
+        """P4-7: the last-24h Kp sparkline is built only from real sqlite
+        rows (DataStore.query_propagation), queried on a worker thread --
+        never on the UI thread (P1 pattern, same shape as _refresh_plot_tab).
+        parse_history_query only splits "date:date" ranges (not full ISO
+        timestamps on both sides), so this queries a padded calendar-day
+        window and filters to the exact last 24h on the worker thread before
+        handing rows back."""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        start = now - datetime.timedelta(hours=24)
+        query = (
+            f"{(start.date() - datetime.timedelta(days=1)).isoformat()}:"
+            f"{(now.date() + datetime.timedelta(days=1)).isoformat()}"
+        )
+        on_done = self._ui.wrap(self._on_kp_sparkline_ready)
+
+        def worker() -> None:
+            try:
+                rows = self.ctrl.store.query_propagation(query)
+            except ValueError:
+                rows = []
+            values = []
+            for row in rows:
+                kp = row.get("kp")
+                ts = row.get("ts")
+                if kp is None or ts is None:
+                    continue
+                try:
+                    when = datetime.datetime.fromisoformat(ts)
+                except ValueError:
+                    continue
+                if start <= when <= now:
+                    values.append(float(kp))
+            on_done(values)
+
+        self._sparkline_query_thread = threading.Thread(
+            target=worker, daemon=True, name="kp-sparkline-query"
+        )
+        self._sparkline_query_thread.start()
+
+    def _on_kp_sparkline_ready(self, values: list[float]) -> None:
+        self._kp_sparkline.set_rows(values)
 
     def _schedule_map_rebuild(self, vectors_only: bool = False) -> None:
         # P1: weather refreshes and DX spot arrivals share this debounce (same
@@ -1564,6 +1834,7 @@ class QtOrbitRxApplication(QMainWindow):
             if key in self._stat_name_labels:
                 self._stat_name_labels[key].setVisible(has_location)
         self._location_hint_lbl.setVisible(not has_location)
+        self._path_hint_lbl.setVisible(not has_location)
 
     def _spot_beep(self, spot: dict) -> None:
         self.ctrl.spot_beep(spot)
@@ -1591,7 +1862,7 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _startup(self) -> None:
         self.ctrl.refresh_location()
-        self.ctrl.fetch_weather()
+        self._trigger_weather_refresh()
         self._refresh_labels_and_map()
         elapsed_ms = (time.perf_counter() - self._t_init_start) * 1000
         self.ctrl.log.info("perf: cold_start_to_startup_complete_ms=%.1f", elapsed_ms)
@@ -1599,7 +1870,7 @@ class QtOrbitRxApplication(QMainWindow):
     def _auto_refresh(self) -> None:
         self.ctrl.state.prune_dx_spots()
         self.ctrl.refresh_location()
-        self.ctrl.fetch_weather()
+        self._trigger_weather_refresh()
 
     def _check_updates(self) -> None:
         # check_github_release does a blocking network call (10s timeout) --

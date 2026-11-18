@@ -127,6 +127,10 @@ MAP_GRATICULE_EQUATOR = "#1A2230"
 MAP_NIGHT = "rgba(4,7,13,0.62)"
 SPOT = "#B48CFF"
 
+# P4-7 (SPEC §9 item 3): Kp 24h sparkline bar colour below the Kp>=4
+# threshold (bars at/above it use FAIR instead, see propagation.kp_state).
+SPARK_BAR = "#3A465A"
+
 # Font stacks (P4-1(d)): system fallback chains only, no bundled font files
 # (bundling a font would pull in SIL-OFL NOTICE/packaging obligations, which
 # is off-limits per the hard rules). See p4-findings.md (d) for the evidence.
@@ -310,8 +314,25 @@ QFrame#keyMetricTile {{
     background: {BG_ELEVATED}; border: 1px solid {BORDER}; border-radius: {RADIUS_M}px;
 }}
 QLabel#keyMetricValue {{ color: {TEXT}; font-size: {FONT_TITLE}px; font-weight: 700; }}
+/* P4-7/SPEC §9 item 6: MUF/LUF tiles reuse the same keyMetricTile frame at a
+   smaller ("Metric M") value size -- kept inside the app's 4-value type
+   scale (test_qss_only_uses_type_scale_font_sizes) rather than SPEC's
+   literal 18px, so FONT_SECTION (15px) stands in for Metric M. */
+QLabel#keyMetricValue[size="m"] {{ font-size: {FONT_SECTION}px; }}
 QLabel#keyMetricCaption {{ color: {MUTED}; font-size: {FONT_CAPTION}px; font-weight: 600; }}
-QLabel#keyMetricSubCaption {{ color: {MUTED}; font-size: {FONT_CAPTION}px; font-weight: 400; }}
+/* P4-7 (SPEC §9): "Space weather"/"Propagation" section titles -- sentence
+   case 13/600 primary, replacing the all-caps sectionLabel style used by
+   the one remaining grid-card header (OPS). */
+QLabel#sectionTitle {{ color: {TEXT}; font-size: {FONT_BODY}px; font-weight: 600; background: transparent; }}
+QLabel#freshness {{ font-family: {FONT_MONO}; font-size: {FONT_CAPTION}px; color: {TEXT_TERTIARY}; background: transparent; }}
+/* P4-7: detail rows (Kp forecast/Sunspot/Solar wind/Bz, Bands, Path) --
+   label left in tertiary, mono value right in primary, a 1px bottom divider,
+   no card box (SPEC §9 item 4). */
+QFrame#detailRow {{ border: none; border-bottom: 1px solid {BORDER_SUBTLE}; min-height: 28px; background: transparent; }}
+QLabel#rowLabel {{ color: {TEXT_TERTIARY}; font-size: {FONT_CAPTION}px; background: transparent; }}
+QLabel#rowValue {{ font-family: {FONT_MONO}; font-size: {FONT_BODY}px; color: {TEXT_PRIMARY}; background: transparent; }}
+QToolButton#pathToggle {{ color: {TEXT_SECONDARY}; border: none; background: transparent; padding: 2px 0; }}
+QToolButton#pathToggle:hover {{ color: {TEXT_PRIMARY}; }}
 QStatusBar {{ background: {BG}; color: {TEXT_MUTED}; font-size: 11px; border-top: 1px solid {BORDER}; }}
 QStatusBar QLabel {{ color: {TEXT_MUTED}; font-size: 11px; padding: 0 8px; }}
 QDialogButtonBox {{ dialogbuttonbox-buttons-have-icons: 0; }}

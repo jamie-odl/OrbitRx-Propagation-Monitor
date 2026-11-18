@@ -47,6 +47,14 @@ class AppState:
     last_weather_cache: dict[str, Any] | None = None
     click_local_time: str = ""
     last_weather_update: datetime.datetime | None = None
+    # P4-7/SPEC §9 header freshness stamp: the timestamp of the last *live*
+    # (non-cache-fallback) fetch, and whether the most recent fetch attempt
+    # was one -- distinct from last_weather_update, which also updates on a
+    # cache-fallback "offline" apply (see controller._apply_weather). Lets
+    # the header show "Stale · <last OK time>" instead of implying a fetch
+    # that didn't actually happen just refreshed the data.
+    last_weather_success_update: datetime.datetime | None = None
+    weather_last_fetch_ok: bool = True
     last_dx_update: datetime.datetime | None = None
     dx_coord_source: dict[str, str] = field(default_factory=dict)
     hamqsl_band_hint: str = ""
