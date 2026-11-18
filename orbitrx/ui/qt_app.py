@@ -29,7 +29,10 @@ from orbitrx.ui.formatting import (
     history_plot_date_format, insert_gap_breaks, pad_datetime_range, EXPECTED_POLL_S,
 )
 from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
-from orbitrx.ui.theme import CARD_STYLE, CARD_TEXT, ERR, FONT_BODY, MUTED, MUTED_SECONDARY, OK, apply_theme
+from orbitrx.ui.theme import (
+    BG_ELEVATED, BORDER, CARD_STYLE, CARD_TEXT, ERR, FONT_BODY, MUTED, MUTED_SECONDARY, OK,
+    RADIUS_M, SPACE_1, SPACE_2, SPACE_3, apply_theme,
+)
 from orbitrx.ui.toast import ToastManager
 from orbitrx.ui.window_fit import fit_to_screen
 from orbitrx.update_checker import check_github_release
@@ -235,6 +238,18 @@ class _ReflowGrid(QWidget):
         if cols != self._cols:
             self._relayout(cols)
 
+    def natural_width(self) -> int:
+        """Width needed to show every item in a single row. A sibling that
+        wants to reserve this much room (e.g. _MapControlStrip, which embeds
+        this grid in a QHBoxLayout alongside another widget) must not rely on
+        this grid's own sizeHint() instead: that reflects whatever column
+        count a previous, narrower width last settled it into, and a stretch-0
+        QHBoxLayout slot sized off a stale, narrow sizeHint hands this grid
+        too little width to ever recover -- a self-reinforcing single-column
+        layout even once real room is available."""
+        n = len(self._widgets) or 1
+        return n * self._min_item_width + (n - 1) * self._grid.spacing()
+
     def _relayout(self, cols: int) -> None:
         self._cols = cols
         while self._grid.count():
@@ -253,6 +268,15 @@ class _ElidedLabel(QLabel):
         self.setToolTip(text)
         self._reelide()
 
+    def minimumSizeHint(self):
+        """Width 0 (not the full/current text's width) so a layout under
+        pressure (e.g. a narrow side panel) shrinks this label first instead
+        of leaving it at its last-elided width and overflowing a sibling
+        widget with a fixed, un-shrinkable sizeHint past the container edge."""
+        from PySide6.QtCore import QSize
+
+        return QSize(0, super().minimumSizeHint().height())
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._reelide()
@@ -261,6 +285,80 @@ class _ElidedLabel(QLabel):
         text = getattr(self, "_full_text", "")
         fm = self.fontMetrics()
         super().setText(fm.elidedText(text, Qt.TextElideMode.ElideRight, max(1, self.width())))
+
+
+class _MapControlStrip(QWidget):
+    """Layer-toggle chips and the time/replay sliders share one slim strip
+    under the map (P4). When the map pane is wide enough -- the 1280x800
+    default, where the map is the dominant pane -- they sit in a single
+    horizontal row; on a narrower pane (compact mode, a small window) they
+    fall back to two stacked rows so nothing clips, the same guarantee
+    _ReflowGrid already gives the chips on their own.
+
+    The single-row/stacked decision uses a fixed width threshold rather than
+    the chips widget's live sizeHint(): the chips are themselves a reflowing
+    grid (_ReflowGrid) whose sizeHint depends on its *current* column count,
+    which in turn depends on the width it was last given by this strip's own
+    layout -- measuring it live creates a feedback loop that can latch onto a
+    narrow-and-tall layout (one chip per row) instead of settling flat.
+    """
+
+    # Comfortably fits 7 layer chips + two compact sliders in one row; below
+    # this (compact mode, a narrow window) they stack instead.
+    _SINGLE_ROW_MIN_WIDTH = 820
+
+    def __init__(self, chips: QWidget, sliders: QWidget, parent=None) -> None:
+        super().__init__(parent)
+        self._chips = chips
+        self._sliders = sliders
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self._stack = QStackedWidget()
+        outer.addWidget(self._stack)
+
+        self._row_page = QWidget()
+        self._row_layout = QHBoxLayout(self._row_page)
+        self._row_layout.setContentsMargins(0, SPACE_1, 0, 0)
+        self._row_layout.setSpacing(SPACE_3)
+
+        self._col_page = QWidget()
+        self._col_layout = QVBoxLayout(self._col_page)
+        self._col_layout.setContentsMargins(0, 0, 0, 0)
+        self._col_layout.setSpacing(SPACE_1)
+
+        self._stack.addWidget(self._row_page)
+        self._stack.addWidget(self._col_page)
+        self._single_row: bool | None = None
+        self._apply_layout(False)
+
+    def _apply_layout(self, single_row: bool) -> None:
+        if self._single_row == single_row:
+            return
+        self._single_row = single_row
+        if single_row:
+            self._col_layout.removeWidget(self._chips)
+            self._col_layout.removeWidget(self._sliders)
+            # Pin the chips' width to their one-row natural width instead of
+            # leaving the HBoxLayout to size this stretch-0 slot off the
+            # chips' own (possibly stale/narrow) sizeHint -- see
+            # _ReflowGrid.natural_width.
+            natural_width = getattr(self._chips, "natural_width", lambda: 0)()
+            self._chips.setMinimumWidth(natural_width)
+            self._row_layout.addWidget(self._chips)
+            self._row_layout.addWidget(self._sliders, 1)
+            self._stack.setCurrentWidget(self._row_page)
+        else:
+            self._row_layout.removeWidget(self._chips)
+            self._row_layout.removeWidget(self._sliders)
+            self._chips.setMinimumWidth(0)
+            self._col_layout.addWidget(self._chips)
+            self._col_layout.addWidget(self._sliders)
+            self._stack.setCurrentWidget(self._col_page)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._apply_layout(self.width() >= self._SINGLE_ROW_MIN_WIDTH)
 
 
 class _UiInvoker(QObject):
@@ -299,10 +397,15 @@ class QtOrbitRxApplication(QMainWindow):
         if app is not None:
             apply_theme(app)
         self.setWindowTitle(f"OrbitRx Propagation Monitor {__version__}")
-        self.renderer = MapRenderer(width=900, height=720)
+        # 2:1 matches the equirectangular basemap's own aspect; as long as the
+        # map pane itself is narrower than 2:1 (true for every realistic window
+        # shape used here), fitInView(KeepAspectRatio) always letterboxes only
+        # top/bottom -- never the side gutters a mismatched aspect produced.
+        self.renderer = MapRenderer(width=1200, height=600)
         self._labels: dict[str, QLabel] = {}
         self._layer_checks: dict[str, QToolButton] = {}
         self._map_container: QWidget | None = None
+        self._side_panel_visible = True
         self._tray: QSystemTrayIcon | None = None
         self._layers_save_timer: QTimer | None = None
         self._slider_refresh_timer = QTimer(self)
@@ -391,17 +494,34 @@ class QtOrbitRxApplication(QMainWindow):
 
         map_pane = QWidget()
         map_layout = QVBoxLayout(map_pane)
-        # P1: a bold header ("Map") plus a muted secondary hint line (file name/dims,
-        # or an error) that elides on the right with the full text always available
-        # as a tooltip.
-        map_layout.setContentsMargins(16, 16, 16, 8)
-        map_layout.setSpacing(8)
+        # P4: one slim header row -- title, Cluster combo, the side-panel
+        # collapse toggle and the help chip -- replaces the old three stacked
+        # rows (title / greyline subtitle / cluster) so the map starts right
+        # under the toolbar. The old greyline subtitle now lives in the
+        # status bar (_status_subtitle_lbl) instead of inline here.
+        map_layout.setContentsMargins(SPACE_3, 0, SPACE_3, 0)
+        map_layout.setSpacing(SPACE_1)
         header_row = QHBoxLayout()
+        header_row.setSpacing(SPACE_2)
         self.banner = QLabel("Loading map...")
         self.banner.setObjectName("panelTitle")
         self.banner.setWordWrap(False)
         header_row.addWidget(self.banner)
         header_row.addStretch(1)
+        header_row.addWidget(QLabel("Cluster:"))
+        self.cluster_combo = QComboBox()
+        self.cluster_combo.setMaximumWidth(260)
+        self._populate_cluster_combo()
+        self.cluster_combo.currentIndexChanged.connect(self._cluster_node_changed)
+        header_row.addWidget(self.cluster_combo)
+        self._side_panel_toggle_btn = QToolButton()
+        self._side_panel_toggle_btn.setObjectName("sidePanelToggle")
+        self._side_panel_toggle_btn.setCheckable(True)
+        self._side_panel_toggle_btn.setChecked(True)
+        self._side_panel_toggle_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        self._side_panel_toggle_btn.setToolTip("Show/hide the side panel (Ctrl+B)")
+        self._side_panel_toggle_btn.toggled.connect(self._set_side_panel_visible)
+        header_row.addWidget(self._side_panel_toggle_btn)
         self._map_help = QToolButton()
         self._map_help.setText("?")
         self._map_help.setObjectName("helpChip")
@@ -411,25 +531,11 @@ class QtOrbitRxApplication(QMainWindow):
         self._map_help.setAutoRaise(True)
         header_row.addWidget(self._map_help)
         map_layout.addLayout(header_row)
-        # M1: meta is the live greyline timestamp only - never the asset filename.
-        self.banner_hint = _ElidedLabel()
-        self.banner_hint.setObjectName("bannerHint")
-        map_layout.addWidget(self.banner_hint)
-
-        cluster_row = QHBoxLayout()
-        cluster_row.addWidget(QLabel("Cluster:"))
-        self.cluster_combo = QComboBox()
-        self.cluster_combo.setMaximumWidth(420)
-        self._populate_cluster_combo()
-        self.cluster_combo.currentIndexChanged.connect(self._cluster_node_changed)
-        cluster_row.addWidget(self.cluster_combo)
-        cluster_row.addStretch(1)
-        map_layout.addLayout(cluster_row)
 
         self.map_widget = self._create_map_widget()
         self.map_widget.spot_clicked.connect(self._tune_from_map)
         if hasattr(self.map_widget, "greyline_meta_changed"):
-            self.map_widget.greyline_meta_changed.connect(self.banner_hint.setFullText)
+            self.map_widget.greyline_meta_changed.connect(self._status_subtitle_lbl.setFullText)
         self.map_widget.map_clicked.connect(self._on_map_click)
         map_layout.addWidget(self.map_widget, stretch=1)
 
@@ -453,44 +559,55 @@ class QtOrbitRxApplication(QMainWindow):
         for chip in self._layer_checks.values():
             chip.toggled.connect(lambda _=False: self._layers_changed())
         self._layer_grid = _ReflowGrid(layer_widgets, min_item_width=72, max_cols=8)
-        self._layer_grid.setMinimumHeight(36)
+        self._layer_grid.setMinimumHeight(26)
         self._layer_grid.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         # V11 must-fix 3: chips live under the map pane (not inside it) so 150%
         # compact never paints them over Antarctica / greyline.
 
-        # M1: the sliders live in a fixed strip below the map (added to
-        # map_tab_layout, not map_layout), so they never scroll out of view even
-        # when the window is too short to show everything above them at once.
-        slider_strip = QWidget()
-        slider_strip_layout = QVBoxLayout(slider_strip)
-        slider_strip_layout.setContentsMargins(0, 4, 0, 0)
+        # P4: the two sliders share one compact row (label/slider/value each);
+        # combined with the chips above via _MapControlStrip, this is the "one
+        # slim control strip" a map-dominant layout calls for, instead of the
+        # three previously-stacked rows.
+        sliders_row = QWidget()
+        sliders_row_layout = QHBoxLayout(sliders_row)
+        sliders_row_layout.setContentsMargins(0, 0, 0, 0)
+        sliders_row_layout.setSpacing(SPACE_3)
 
-        slider_row = QHBoxLayout()
-        slider_row.addWidget(QLabel("Time offset (hours):"))
+        offset_box = QHBoxLayout()
+        offset_box.setSpacing(SPACE_1)
+        offset_lbl = QLabel("Offset:")
+        offset_lbl.setToolTip("Time offset (hours)")
+        offset_box.addWidget(offset_lbl)
         self.time_slider = QSlider(Qt.Orientation.Horizontal)
         self.time_slider.setRange(0, 48)
         self.time_slider.setValue(0)
+        self.time_slider.setToolTip("Time offset (hours)")
         self.time_slider.valueChanged.connect(self._slider_moved)
-        slider_row.addWidget(self.time_slider)
+        offset_box.addWidget(self.time_slider, 1)
         self.lbl_slider = QLabel(format_hour_offset(0))
-        self.lbl_slider.setMinimumWidth(56)
+        self.lbl_slider.setMinimumWidth(48)
         self.lbl_slider.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        slider_row.addWidget(self.lbl_slider)
-        slider_strip_layout.addLayout(slider_row)
+        offset_box.addWidget(self.lbl_slider)
+        sliders_row_layout.addLayout(offset_box, 1)
 
-        replay_row = QHBoxLayout()
-        replay_row.addWidget(QLabel("Spot replay (hours ago):"))
+        replay_box = QHBoxLayout()
+        replay_box.setSpacing(SPACE_1)
+        replay_lbl = QLabel("Replay:")
+        replay_lbl.setToolTip("Spot replay (hours ago)")
+        replay_box.addWidget(replay_lbl)
         self.replay_slider = QSlider(Qt.Orientation.Horizontal)
         self.replay_slider.setRange(0, 48)  # whole-hour steps, up to 48 hours ago
         self.replay_slider.setValue(0)
         self.replay_slider.setToolTip("0 = live. Drag left to right to replay cached PSKReporter spots.")
         self.replay_slider.valueChanged.connect(self._replay_moved)
-        replay_row.addWidget(self.replay_slider)
+        replay_box.addWidget(self.replay_slider, 1)
         self.lbl_replay = QLabel("Live")
-        self.lbl_replay.setMinimumWidth(56)
+        self.lbl_replay.setMinimumWidth(48)
         self.lbl_replay.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        replay_row.addWidget(self.lbl_replay)
-        slider_strip_layout.addLayout(replay_row)
+        replay_box.addWidget(self.lbl_replay)
+        sliders_row_layout.addLayout(replay_box, 1)
+
+        self._map_controls = _MapControlStrip(self._layer_grid, sliders_row)
 
         # M1: no scroll area around the map pane. The map stretches and shrinks so
         # the layer toggles and sliders stay visible without scrolling.
@@ -500,9 +617,9 @@ class QtOrbitRxApplication(QMainWindow):
         map_tab = QWidget()
         map_tab_layout = QVBoxLayout(map_tab)
         map_tab_layout.setContentsMargins(0, 0, 0, 0)
+        map_tab_layout.setSpacing(SPACE_1)
         map_tab_layout.addWidget(map_pane, stretch=1)
-        map_tab_layout.addWidget(self._layer_grid)
-        map_tab_layout.addWidget(slider_strip)
+        map_tab_layout.addWidget(self._map_controls)
         self._map_tab = map_tab
 
         right_scroll = QScrollArea()
@@ -514,16 +631,28 @@ class QtOrbitRxApplication(QMainWindow):
         self._right_scroll = right_scroll
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(SPACE_2, SPACE_2, SPACE_2, SPACE_2)
+        right_layout.setSpacing(SPACE_2)
 
         right_panel.setMinimumWidth(0)
-        header_row = QHBoxLayout()
-        self.last_updated_lbl = QLabel("Last updated: never")
+        # P4: stacked (not side-by-side) -- the narrower ~300px side panel
+        # doesn't reliably fit both labels on one row at their natural width
+        # (e.g. "Last updated: never" + "Cluster: disconnected"), and unlike
+        # a plain QLabel's sizeHint, a QHBoxLayout won't shrink either below
+        # its own minimum, so a one-row layout can overflow the panel's edge.
+        # Each gets the full row to itself instead.
+        header_row = QVBoxLayout()
+        header_row.setSpacing(0)
+        self.last_updated_lbl = _ElidedLabel()
         self.last_updated_lbl.setObjectName("muted")
-        header_row.addWidget(self.last_updated_lbl, stretch=1)
+        self.last_updated_lbl.setFullText("Last updated: never")
+        header_row.addWidget(self.last_updated_lbl)
         # N2: live cluster indicator, always visible at the top of the panel.
+        # Plain QLabel (not _ElidedLabel): this can carry rich-text HTML (a
+        # coloured dot span) once connected, and eliding would mangle markup;
+        # its own full-width row is ample for the longest status text anyway.
         self.cluster_live_lbl = QLabel("Cluster: connecting")
         self.cluster_live_lbl.setObjectName("muted")
-        self.cluster_live_lbl.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         header_row.addWidget(self.cluster_live_lbl)
         right_layout.addLayout(header_row)
 
@@ -533,19 +662,45 @@ class QtOrbitRxApplication(QMainWindow):
         self.tabs = QTabWidget()
         stats_tab = QWidget()
         stats_outer = QVBoxLayout(stats_tab)
+        stats_outer.setSpacing(SPACE_2)
+
+        # P4: three "key metrics" tiles (Kp / SFI / MUF) up top in big type, so
+        # the numbers that matter most for a go/no-go glance don't need the
+        # grouped cards below at all.
+        self._kpi_labels: dict[str, QLabel] = {}
+        key_metrics_row = QHBoxLayout()
+        key_metrics_row.setSpacing(SPACE_2)
+        for key, caption in (("kp", "Kp"), ("solar", "SFI"), ("muf", "MUF")):
+            tile = QFrame()
+            tile.setObjectName("keyMetricTile")
+            tile_layout = QVBoxLayout(tile)
+            tile_layout.setContentsMargins(SPACE_2, SPACE_1, SPACE_2, SPACE_1)
+            tile_layout.setSpacing(0)
+            value_lbl = QLabel("--")
+            value_lbl.setObjectName("keyMetricValue")
+            value_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            caption_lbl = QLabel(caption)
+            caption_lbl.setObjectName("keyMetricCaption")
+            caption_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            tile_layout.addWidget(value_lbl)
+            tile_layout.addWidget(caption_lbl)
+            self._kpi_labels[key] = value_lbl
+            key_metrics_row.addWidget(tile, 1)
+        stats_outer.addLayout(key_metrics_row)
 
         stats_scroll = QScrollArea()
         stats_scroll.setWidgetResizable(True)
         stats_scroll.setFrameShape(QFrame.Shape.NoFrame)
         stats_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._stats_scroll = stats_scroll
-        stats_form_widget = QWidget()
-        stats_form = QFormLayout(stats_form_widget)
-        stats_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        stats_form.setHorizontalSpacing(12)
-        stats_form.setVerticalSpacing(8)
-        stats_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        # M4: labelled definition-list groups (SPACE WEATHER / PROPAGATION / PATH / OPS).
+        stats_body = QWidget()
+        stats_body_layout = QVBoxLayout(stats_body)
+        stats_body_layout.setContentsMargins(0, 0, 0, 0)
+        stats_body_layout.setSpacing(SPACE_2)
+
+        # M4/P4: grouped cards (SPACE WEATHER / PROPAGATION / PATH / OPS), each
+        # a rounded panel with a section heading and a fixed-width label
+        # column so every card's values line up at the same x.
         space_keys = ["kp", "kp_forecast", "solar", "sunspot", "a_index", "solar_wind", "time"]
         prop_keys = ["bands", "muf", "hamqsl"]
         location_keys = ["path_muf", "sunrise", "sunset", "location"]
@@ -567,38 +722,51 @@ class QtOrbitRxApplication(QMainWindow):
             if key == "solar":
                 lbl.setToolTip("Change vs previous reading")
 
-        def _section(title: str) -> None:
+        self._stat_name_labels: dict[str, QLabel] = {}
+
+        def _build_card(title: str, keys: list[str]) -> QFrame:
+            card = QFrame()
+            card.setObjectName("statsCard")
+            grid = QGridLayout(card)
+            grid.setContentsMargins(SPACE_3, SPACE_2, SPACE_3, SPACE_2)
+            grid.setHorizontalSpacing(SPACE_2)
+            grid.setVerticalSpacing(SPACE_1)
+            grid.setColumnStretch(1, 1)
             hdr = QLabel(title)
             hdr.setObjectName("sectionLabel")
-            stats_form.addRow(hdr)
-
-        def _add_keys(keys: list[str]) -> None:
-            for key in keys:
+            grid.addWidget(hdr, 0, 0, 1, 2)
+            for row, key in enumerate(keys, start=1):
                 name = QLabel(pretty.get(key, key))
                 name.setObjectName("muted")
-                name.setMinimumWidth(110)
-                stats_form.addRow(name, self._labels[key])
+                name.setMinimumWidth(96)
+                name.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                self._stat_name_labels[key] = name
+                grid.addWidget(name, row, 0)
+                grid.addWidget(self._labels[key], row, 1)
+            return card
 
-        _section("SPACE WEATHER")
-        _add_keys(space_keys)
-        _section("PROPAGATION")
-        _add_keys(prop_keys)
-        _section("PATH")
+        stats_body_layout.addWidget(_build_card("SPACE WEATHER", space_keys))
+        stats_body_layout.addWidget(_build_card("PROPAGATION", prop_keys))
+
+        path_card = _build_card("PATH", location_keys)
         self._location_hint_lbl = QLabel(
             'Set your location to unlock path MUF and sun times. <a href="#">Location</a>'
         )
         self._location_hint_lbl.setWordWrap(True)
         self._location_hint_lbl.setObjectName("muted")
         self._location_hint_lbl.setStyleSheet(
-            "background: #1A2438; border: 1px solid #243044; border-radius: 10px; padding: 12px;"
+            f"background: {BG_ELEVATED}; border: 1px solid {BORDER}; "
+            f"border-radius: {RADIUS_M}px; padding: {SPACE_3}px;"
         )
         self._location_hint_lbl.linkActivated.connect(lambda _: self.ctrl.refresh_location())
         self._location_hint_lbl.setVisible(False)
-        stats_form.addRow(self._location_hint_lbl)
-        _add_keys(location_keys)
-        _section("OPS")
-        _add_keys(late_keys)
-        stats_scroll.setWidget(stats_form_widget)
+        path_card.layout().addWidget(self._location_hint_lbl, path_card.layout().rowCount(), 0, 1, 2)
+        stats_body_layout.addWidget(path_card)
+
+        stats_body_layout.addWidget(_build_card("OPS", late_keys))
+        stats_body_layout.addStretch(1)
+
+        stats_scroll.setWidget(stats_body)
         stats_outer.addWidget(stats_scroll, stretch=1)
 
         stats_outer.addWidget(QLabel("Alerts"))
@@ -664,24 +832,27 @@ class QtOrbitRxApplication(QMainWindow):
         self._side_scroll = side_scroll
 
         side_pane = QWidget()
-        side_pane.setMinimumWidth(260)
         side_pane_layout = QVBoxLayout(side_pane)
         side_pane_layout.setContentsMargins(0, 0, 0, 0)
         side_pane_layout.addWidget(side_scroll)
         self._side_pane = side_pane
 
-        # M1: side-by-side by default (map:side = 3:1); below COMPACT_WIDTH_BELOW
-        # logical px, _update_compact_mode() swaps to the Map/Conditions tabs
-        # instead (see resizeEvent).
+        # P4: narrowed to a ~300px rail (280-320px) by default, down from the
+        # old 320-420px range, so the map stays the dominant pane. It can be
+        # hidden entirely -- via the header's collapse button, the View menu's
+        # "Show side panel" action (Ctrl+B, see _set_side_panel_visible), or
+        # by dragging the splitter handle all the way shut (collapsible).
+        # Below COMPACT_WIDTH_BELOW logical px, _update_compact_mode() swaps
+        # to the Map/Conditions tabs instead (see resizeEvent).
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
         self._splitter.addWidget(self._map_tab)
-        side_pane.setMinimumWidth(280)
-        side_pane.setMaximumWidth(360)
+        side_pane.setMinimumWidth(0)
+        side_pane.setMaximumWidth(340)
         self._splitter.addWidget(side_pane)
         self._splitter.setStretchFactor(0, 3)
         self._splitter.setStretchFactor(1, 1)
-        self._splitter.setChildrenCollapsible(False)
-        self._splitter.setSizes([900, 320])
+        self._splitter.setChildrenCollapsible(True)
+        self._splitter.setSizes([980, 300])
 
         self._compact_tabs = QTabWidget()
         self._compact_tabs.setObjectName("compactTabs")
@@ -727,6 +898,16 @@ class QtOrbitRxApplication(QMainWindow):
         make("Map", "Map", lambda: self._focus_panel("map"), "Ctrl+1")
         make("Bands", "Bands", lambda: self._focus_panel("bands"), "Ctrl+2")
         make("Log", "Log", lambda: self._focus_panel("log"), "Ctrl+3")
+
+        # P4: collapsible side panel -- checkable, shared with the header's
+        # collapse button via _set_side_panel_visible.
+        toggle_side_panel = QAction("Show side panel", self)
+        toggle_side_panel.setCheckable(True)
+        toggle_side_panel.setChecked(True)
+        toggle_side_panel.setShortcut(QKeySequence("Ctrl+B"))
+        toggle_side_panel.toggled.connect(self._set_side_panel_visible)
+        self._actions["ShowSidePanel"] = toggle_side_panel
+
         # Explicit "Ctrl+," so this works on Windows/Linux too -- the
         # Preferences standard key only resolves to a real sequence on macOS.
         make(
@@ -776,6 +957,8 @@ class QtOrbitRxApplication(QMainWindow):
         menu_view.addAction(self._actions["Map"])
         menu_view.addAction(self._actions["Bands"])
         menu_view.addAction(self._actions["Log"])
+        menu_view.addSeparator()
+        menu_view.addAction(self._actions["ShowSidePanel"])
         menu_view.addSeparator()
         menu_view.addAction(self._actions["Refresh"])
         menu_view.addAction(self._actions["Location"])
@@ -827,6 +1010,13 @@ class QtOrbitRxApplication(QMainWindow):
             bar.addPermanentWidget(lbl)
             return lbl
 
+        # P4: the map pane's old "Greyline @ ..." subtitle row moves here --
+        # one less chrome row stacked above the map -- in the status bar's
+        # stretchy left region, ahead of the fixed-width permanent widgets.
+        self._status_subtitle_lbl = _ElidedLabel()
+        self._status_subtitle_lbl.setObjectName("statusGreyline")
+        bar.addWidget(self._status_subtitle_lbl, 1)
+
         self._status_rig_lbl = make("statusRig", f'<span style="color:{MUTED}">●</span> Rig: not tested')
         self._status_cluster_lbl = make("statusCluster", "Cluster: disconnected")
         self._status_refresh_lbl = make("statusRefresh", "Refresh: --:--:--")
@@ -838,6 +1028,27 @@ class QtOrbitRxApplication(QMainWindow):
         map -- the only places the app actually talks to the rig."""
         color = OK if ok else ERR
         self._status_rig_lbl.setText(f'<span style="color:{color}">●</span> Rig: {detail}')
+
+    def _set_side_panel_visible(self, visible: bool) -> None:
+        """Shared handler for the header's collapse button and the View
+        menu's "Show side panel" action/Ctrl+B (P4): keeps both controls in
+        sync and only actually hides the pane in the wide/splitter layout --
+        in compact mode the side pane is already its own "Conditions" tab.
+        Defensively tolerant of running before the widgets it syncs exist yet
+        (QAction.setChecked during _build_actions can fire this once, before
+        the header button or splitter are built)."""
+        self._side_panel_visible = visible
+        side_pane = getattr(self, "_side_pane", None)
+        if side_pane is not None and not getattr(self, "_compact", False):
+            side_pane.setVisible(visible)
+        for widget in (
+            getattr(self, "_side_panel_toggle_btn", None),
+            getattr(self, "_actions", {}).get("ShowSidePanel"),
+        ):
+            if widget is not None and widget.isChecked() != visible:
+                widget.blockSignals(True)
+                widget.setChecked(visible)
+                widget.blockSignals(False)
 
     def _focus_panel(self, which: str) -> None:
         """Focus/raise Map, Bands or Log, in both wide (splitter) and compact
@@ -917,7 +1128,7 @@ class QtOrbitRxApplication(QMainWindow):
         from orbitrx.paths import ensure_map_image
 
         self.banner.setText("Map")
-        self.banner_hint.setFullText("loading...")
+        self._status_subtitle_lbl.setFullText("loading...")
         self._map_label = "Map · loading"
         self.renderer.set_base_map(None)
         self.map_widget.set_base_map(self.renderer.base_rgba_image())
@@ -952,7 +1163,7 @@ class QtOrbitRxApplication(QMainWindow):
         # M1: never print the asset filename in the UI.
         self._map_label = "Map · offline basemap"
         self.banner.setText("Map")
-        self.banner_hint.setFullText("")
+        self._status_subtitle_lbl.setFullText("")
 
     def _on_map_load_failed(self, exc: Exception) -> None:
         self.renderer.set_base_map(None)
@@ -960,7 +1171,7 @@ class QtOrbitRxApplication(QMainWindow):
             self.map_widget.set_base_map(self.renderer.base_rgba_image())
         self._map_label = f"Map FAILED: {exc}"
         self.banner.setText(self._map_label)
-        self.banner_hint.setFullText("")
+        self._status_subtitle_lbl.setFullText("")
         self.banner.setProperty("state", "error")
         self.banner.style().polish(self.banner)
         self._toasts.show_toast(f"Map failed to load: {exc}", kind="error")
@@ -1041,6 +1252,10 @@ class QtOrbitRxApplication(QMainWindow):
                 if prefix and v.startswith(prefix):
                     v = v[len(prefix):]
                 self._labels[k].setText(v)
+                # P4: the key-metrics tiles (Kp/SFI/MUF) mirror the same
+                # stripped value, just rendered large above the grouped cards.
+                if k in self._kpi_labels:
+                    self._kpi_labels[k].setText(v)
         self._update_location_hint_visibility()
         self.alerts_list.clear()
         for alert in self.ctrl.state.alerts[:5] or ["No active alerts"]:
@@ -1049,7 +1264,7 @@ class QtOrbitRxApplication(QMainWindow):
             self.alerts_list.addItem(item)
         self._render_cluster_label()
         self.band_panel.update_grid(self.ctrl.state.band_grid)
-        self.last_updated_lbl.setText(self.ctrl.last_updated_text())
+        self.last_updated_lbl.setFullText(self.ctrl.last_updated_text())
         # P2B: "whenever data refresh completes" -- on_weather and on_dx are
         # both wired to this same method, so this covers both triggers.
         self._status_refresh_lbl.setText(
@@ -1178,6 +1393,10 @@ class QtOrbitRxApplication(QMainWindow):
         for key in ("path_muf", "sunrise", "sunset", "location"):
             if key in self._labels:
                 self._labels[key].setVisible(has_location)
+            # Grid rows (unlike QFormLayout's addRow) don't auto-hide their
+            # caption label when the value is hidden, so toggle both.
+            if key in self._stat_name_labels:
+                self._stat_name_labels[key].setVisible(has_location)
         self._location_hint_lbl.setVisible(not has_location)
 
     def _spot_beep(self, spot: dict) -> None:
@@ -1772,8 +1991,9 @@ class QtOrbitRxApplication(QMainWindow):
         ratio = 0.42 if self._compact else 0.48
         target = max(160, int(central.height() * ratio))
         if self._compact:
-            # Leave room for layer chips (min 36) + slider strip (~72) under the map.
-            reserve = 36 + 72 + 24
+            # Leave room for the (stacked, in compact mode) chip + slider
+            # control strip under the map.
+            reserve = 26 + 60 + 24
             target = min(target, max(120, central.height() - reserve))
         self.map_widget.setMinimumHeight(target)
         if hasattr(self.map_widget, "setSizePolicy"):
@@ -1798,10 +2018,17 @@ class QtOrbitRxApplication(QMainWindow):
         central_layout = self.centralWidget().layout()
         central_layout.removeWidget(self._splitter)
         self._splitter.hide()
+        # P4: the side pane is reachable via its own "Conditions" tab here,
+        # regardless of whether it was collapsed in the wide layout -- the
+        # collapse toggle is disabled below, since hiding it would just hide
+        # an entire tab's contents.
+        self._side_pane.setVisible(True)
         self._compact_tabs.addTab(self._map_tab, "Map")
         self._compact_tabs.addTab(self._side_pane, "Conditions")
         central_layout.addWidget(self._compact_tabs)
         self._compact_tabs.show()
+        self._side_panel_toggle_btn.setEnabled(False)
+        self._actions["ShowSidePanel"].setEnabled(False)
 
     def _exit_compact_mode(self) -> None:
         self._compact = False
@@ -1816,6 +2043,9 @@ class QtOrbitRxApplication(QMainWindow):
         self._splitter.setStretchFactor(1, 1)
         central_layout.addWidget(self._splitter)
         self._splitter.show()
+        self._side_pane.setVisible(self._side_panel_visible)
+        self._side_panel_toggle_btn.setEnabled(True)
+        self._actions["ShowSidePanel"].setEnabled(True)
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)

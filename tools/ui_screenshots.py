@@ -113,6 +113,16 @@ def capture_size(
         win.resize(width, height)
         win.show()
         harness.pump(app, 0.3)
+        # window_fit's one-shot post-show refit (_RefitOnShow) re-measures the
+        # window's frame margins now that it's actually visible; the offscreen
+        # platform can report a few px of (meaningless, since nothing is ever
+        # drawn around it) frame once realized, shrinking the window below the
+        # exact size just requested. That refit only ever fires once per Show
+        # event, already consumed above, so reasserting the exact size here is
+        # never re-clamped by it, and main_<size>.png comes out exactly
+        # width x height.
+        win.resize(width, height)
+        harness.pump(app, 0.05)
 
         main_path = out_dir / f"main_{label}{suffix}.png"
         win.grab().save(str(main_path))

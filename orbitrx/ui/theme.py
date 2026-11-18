@@ -49,6 +49,17 @@ FONT_BODY = 13
 FONT_SECTION = 15
 FONT_TITLE = 20
 
+# 8px spacing scale + radius tokens (UI overhaul P4): every margin/spacing/
+# radius in the main window, band cards and stats panel should come from
+# here rather than a one-off literal, so the whole app reads as one grid.
+SPACE_1 = 4
+SPACE_2 = 8
+SPACE_3 = 16
+SPACE_4 = 24
+RADIUS_S = 6
+RADIUS_M = 10
+RADIUS_L = 14
+
 # Aliases used across the app
 PANEL = SURFACE
 
@@ -73,7 +84,7 @@ QWidget {{ background: {BG}; color: {TEXT}; font-size: {FONT_BODY}px; }}
 QDialog, QMainWindow {{ background: {BG}; }}
 QToolBar {{
     background: {BG}; border: none; border-bottom: 1px solid {BORDER};
-    spacing: 4px; padding: 4px 8px; min-height: 40px;
+    spacing: 4px; padding: 2px 8px; min-height: 32px;
 }}
 QToolBar QToolButton {{
     color: {MUTED}; font-size: 13; font-weight: 500; padding: 6px 10px;
@@ -102,7 +113,7 @@ QGroupBox::title {{
     font-size: {FONT_CAPTION}px; font-weight: 600;
 }}
 QLineEdit, QComboBox, QAbstractSpinBox {{ background: {BG_ELEVATED}; border: 1px solid {CONTROL_BORDER};
-    border-radius: 8px; padding: 4px 8px; min-height: 24px;
+    border-radius: 8px; padding: 4px 8px; min-height: 20px;
 }}
 QLineEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {{
     border-color: {ACCENT};
@@ -132,7 +143,7 @@ QPushButton#primaryButton:hover, QPushButton[primary="true"]:hover {{
 }}
 QTabWidget::pane {{ border: none; background: {BG}; top: -1px; }}
 QTabBar::tab {{
-    background: {BG}; color: {MUTED}; padding: 8px 14px; margin-right: 2px;
+    background: {BG}; color: {MUTED}; padding: 5px 14px; margin-right: 2px;
     border: none; min-height: 20px;
 }}
 QTabBar::tab:selected {{
@@ -189,12 +200,27 @@ QToolButton#switchMapButton:hover, QToolButton#helpChip:hover {{
 }}
 QToolButton#layerChip {{
     color: {MUTED}; border: 1px solid {BORDER}; border-radius: 14px;
-    padding: 4px 10px; background: transparent; font-size: 13px;
+    padding: 2px 10px; background: transparent; font-size: 13px;
 }}
 QToolButton#layerChip:checked {{
     color: {TEXT}; background: {ACCENT_SOFT}; border-color: {ACCENT};
 }}
 QToolButton#layerChip:disabled {{ opacity: 0.45; }}
+QToolButton#sidePanelToggle {{
+    color: {MUTED}; border: 1px solid {BORDER}; border-radius: {RADIUS_M}px;
+    padding: 4px 10px; background: transparent; font-size: 13px;
+}}
+QToolButton#sidePanelToggle:checked {{
+    color: {TEXT}; background: {ACCENT_SOFT}; border-color: {ACCENT};
+}}
+QFrame#statsCard {{
+    background: {BG_ELEVATED}; border: 1px solid {BORDER}; border-radius: {RADIUS_M}px;
+}}
+QFrame#keyMetricTile {{
+    background: {BG_ELEVATED}; border: 1px solid {BORDER}; border-radius: {RADIUS_M}px;
+}}
+QLabel#keyMetricValue {{ color: {TEXT}; font-size: {FONT_TITLE}px; font-weight: 700; }}
+QLabel#keyMetricCaption {{ color: {MUTED}; font-size: {FONT_CAPTION}px; font-weight: 600; }}
 QStatusBar {{ background: {BG}; color: {TEXT_MUTED}; font-size: 11px; border-top: 1px solid {BORDER}; }}
 QStatusBar QLabel {{ color: {TEXT_MUTED}; font-size: 11px; padding: 0 8px; }}
 QDialogButtonBox {{ dialogbuttonbox-buttons-have-icons: 0; }}
