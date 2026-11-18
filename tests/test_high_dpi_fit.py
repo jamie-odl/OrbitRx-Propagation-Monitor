@@ -26,7 +26,6 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
 
-ROOT = Path(__file__).resolve().parents[1]
 PROBE = Path(__file__).resolve().parent / "_high_dpi_probe.py"
 PROBE_TIMEOUT_S = 30
 
@@ -53,11 +52,18 @@ def _dpi_report(tmp_path, width: int, height: int, dpr: float = DPR) -> dict:
     )
     out_path = tmp_path / "report.json"
     env = dict(os.environ)
-    env["QT_QPA_PLATFORM"] = f"offscreen:configfile={cfg_path}"
+    # configfile=<name> is relative, not cfg_path itself: an absolute Windows
+    # path's drive-letter colon would split the platform plugin's
+    # ":"-separated argument list (same reason conftest.py avoids configfile
+    # on win32 for its own static config). Running the probe with cwd=tmp_path
+    # makes the relative name resolve to cfg_path on every platform; the probe
+    # only chdir's elsewhere *after* its QApplication is constructed, since
+    # that's when Qt's offscreen plugin reads this file.
+    env["QT_QPA_PLATFORM"] = f"offscreen:configfile={cfg_path.name}"
     env["ORBITRX_OFFLINE_FIXTURE"] = "1"
     result = subprocess.run(
-        [sys.executable, str(PROBE), str(out_path)],
-        cwd=ROOT, env=env, capture_output=True, text=True, timeout=PROBE_TIMEOUT_S,
+        [sys.executable, "-X", "faulthandler", str(PROBE), str(out_path)],
+        cwd=tmp_path, env=env, capture_output=True, text=True, timeout=PROBE_TIMEOUT_S,
     )
     assert result.returncode == 0, (
         f"probe failed (exit {result.returncode})\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}"

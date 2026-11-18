@@ -12,6 +12,17 @@ and cannot be changed afterwards -- exactly the ordering
 orbitrx.ui.dpi.set_high_dpi_rounding_policy() exists to protect. Not matched
 by pytest's test_*.py collection pattern, so this file is not collected as a
 test module itself.
+
+The caller's QT_QPA_PLATFORM=offscreen:configfile=... value is a path
+relative to this process's starting cwd (the caller sets that as our
+subprocess cwd), not an absolute one -- an absolute Windows path's drive
+letter colon would otherwise split the platform plugin's ":"-separated
+argument list, same reason tests/conftest.py avoids configfile on win32 for
+its own (always-absolute-safe-on-posix) config. Qt's offscreen plugin
+resolves that relative path, and synthesizes its screen(s) from it, during
+QApplication/QGuiApplication construction below -- so the chdir() into this
+probe's own private work dir (needed only so orbitrx's own config.json load
+resolves) must happen *after* that construction, not before.
 """
 
 from __future__ import annotations
@@ -32,10 +43,6 @@ def main() -> int:
     import _ui_offline_harness as harness
 
     harness.offline_env()
-    work = harness.make_work_dir()
-    os.chdir(work)
-    harness.stub_controller_network(stub_weather=True)
-    harness.suppress_modal_dialogs()
 
     from orbitrx.ui.dpi import set_high_dpi_rounding_policy
     set_high_dpi_rounding_policy()
@@ -44,6 +51,12 @@ def main() -> int:
     from PySide6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication(sys.argv[:1])
+
+    work = harness.make_work_dir()
+    os.chdir(work)
+    harness.stub_controller_network(stub_weather=True)
+    harness.suppress_modal_dialogs()
+
     from orbitrx.ui.theme import apply_theme
     apply_theme(app)
 
