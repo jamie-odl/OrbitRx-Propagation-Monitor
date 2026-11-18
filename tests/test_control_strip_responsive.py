@@ -340,3 +340,48 @@ def test_control_strip_widgets_not_clipped_at_either_size(window, width, height)
     for control in controls:
         assert control.width() > 0
         assert _not_clipped_horizontally(control, window)
+
+
+# --- _ReflowGrid column-count transitions (Round 9) -------------------------
+
+
+def test_reflow_grid_widgets_never_squeezed_below_minimum_after_column_change():
+    """Regression test for a windows-latest-only CI failure (CI 44412075470):
+    a layer-toggle chip ("Greyline") rendered a few px narrower than its own
+    minimumSizeHint() after the control strip wrapped onto extra rows under a
+    bulkier font. Root cause, reproducible deterministically on any platform
+    without depending on real font metrics: QGridLayout.setColumnMinimumWidth()
+    sticks to a column *index* for the layout's lifetime, so _ReflowGrid
+    resizing from more columns to fewer (e.g. 5 -> 3, wrapping onto extra
+    rows) left the no-longer-used trailing column indices still reserving
+    their old minimum widths. Growing back to more columns later then had to
+    fit every real column *and* those stale phantom ones into the same
+    space, squeezing every widget below its own minimumSizeHint() -- not just
+    a few px, but by half or more. This drives a plain _ReflowGrid directly
+    through exactly that narrow-then-wide transition; no QFont trickery
+    needed since the bug is in the layout bookkeeping, not glyph metrics."""
+    from PySide6.QtWidgets import QToolButton
+
+    from orbitrx.ui.qt_app import _ReflowGrid
+
+    buttons = [QToolButton() for _ in range(5)]
+    for btn, text in zip(buttons, ["Greyline", "Night", "DX", "Aurora", "Grid"]):
+        btn.setText(text)
+        btn.setCheckable(True)
+
+    grid = _ReflowGrid(buttons, min_item_width=0, max_cols=len(buttons), spacing=0)
+    grid.show()
+    grid.resize(1000, 40)
+    QTest.qWait(10)
+    assert grid._cols == len(buttons)
+
+    grid.resize(10, 400)
+    QTest.qWait(10)
+    assert grid._cols < len(buttons)
+
+    grid.resize(1000, 40)
+    QTest.qWait(10)
+    assert grid._cols == len(buttons)
+    for btn in buttons:
+        assert btn.width() >= btn.minimumSizeHint().width(), (btn.text(), btn.geometry())
+    grid.deleteLater()

@@ -317,9 +317,29 @@ class _ReflowGrid(QWidget):
         self._cols = cols
         while self._grid.count():
             self._grid.takeAt(0)
+        col_mins = [0] * cols
         for i, w in enumerate(self._widgets):
             row, col = divmod(i, cols)
             self._grid.addWidget(w, row, col)
+            col_mins[col] = max(col_mins[col], w.sizeHint().width(), w.minimumSizeHint().width())
+        # Round 9: pin each column's real minimum explicitly -- QGridLayout's
+        # own surplus-distribution (used when this grid is handed more than
+        # its bare minimumSizeHint, e.g. via set_prefer_full_row()'s single-
+        # row request) doesn't always divide that surplus evenly across
+        # columns of differing content widths; on windows-latest CI this let
+        # a column holding a wider button (e.g. "Greyline") render a few px
+        # *below* that button's own minimumSizeHint even though the grid as a
+        # whole had enough room. setColumnMinimumWidth() is a hard floor Qt
+        # always honours per column, independent of that distribution.
+        # Columns are reset up to self._max_cols (not just the current `cols`)
+        # because QGridLayout remembers a minimum width set on a column index
+        # even after a later _relayout() stops placing any widget there (e.g.
+        # going from 5 columns down to 1 on a narrower resize) -- without
+        # resetting those now-unused columns back to 0, their stale minimums
+        # keep reserving phantom width the grid no longer has any content
+        # for, squeezing the real column(s) well below their own minimum.
+        for col in range(self._max_cols):
+            self._grid.setColumnMinimumWidth(col, col_mins[col] if col < cols else 0)
         if self._on_relayout is not None:
             self._on_relayout()
 
@@ -840,6 +860,18 @@ class QtOrbitRxApplication(QMainWindow):
         header_row.addWidget(QLabel("Cluster:"))
         self.cluster_combo = QComboBox()
         self.cluster_combo.setMaximumWidth(260)
+        # Round 9: without this, QComboBox's default AdjustToContentsOnFirstShow
+        # sizes (and floors) this combo off its *widest real item* -- a
+        # cluster hostname:port string with no length limit -- which can grow
+        # this header row's minimum width well past the map-column budget
+        # under a bulkier font. A fixed contents-length budget keeps the
+        # floor bounded; the combo still elides its own displayed text when
+        # narrower than it, and every item's full host string is still
+        # reachable in the dropdown.
+        self.cluster_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        self.cluster_combo.setMinimumContentsLength(10)
         self._populate_cluster_combo()
         self.cluster_combo.currentIndexChanged.connect(self._cluster_node_changed)
         header_row.addWidget(self.cluster_combo)
