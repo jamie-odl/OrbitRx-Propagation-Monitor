@@ -400,8 +400,8 @@ def test_control_strip_stacks_when_the_pane_is_narrow(window):
         assert right <= window.width()
 
 
-@pytest.fixture
-def wide_font_window(tmp_path, monkeypatch, large_avail):
+@pytest.fixture(params=[175, 200], ids=["stretch175", "stretch200"])
+def wide_font_window(tmp_path, monkeypatch, large_avail, request):
     """Regression harness for a windows-latest-only CI failure: Segoe UI's
     bulkier chip/button padding made the 7 layer chips + 2 sliders control
     strip need ~1222px for a single row at a 1280px window -- wider than the
@@ -411,7 +411,10 @@ def wide_font_window(tmp_path, monkeypatch, large_avail):
     given CI image, so this reproduces that same bulkier-glyph effect
     deterministically on any platform (including this offscreen/Linux test
     run). The font is restored after the test so it can't bleed into others
-    sharing this session's QApplication instance."""
+    sharing this session's QApplication instance. Parametrized at both 175
+    (the measured windows-latest Segoe UI stretch) and 200 (extra margin
+    beyond what's been observed on CI, so a regression that only eats into
+    the margin trips this before it reaches the real failure threshold)."""
     monkeypatch.chdir(tmp_path)
     from PySide6.QtGui import QFont
     from PySide6.QtWidgets import QApplication
@@ -427,7 +430,7 @@ def wide_font_window(tmp_path, monkeypatch, large_avail):
     app = QApplication.instance() or QApplication([])
     original_font = QFont(app.font())
     wide_font = QFont(app.font())
-    wide_font.setStretch(175)
+    wide_font.setStretch(request.param)
     app.setFont(wide_font)
     try:
         from orbitrx.ui.qt_app import QtOrbitRxApplication

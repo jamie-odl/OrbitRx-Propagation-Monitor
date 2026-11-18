@@ -269,19 +269,19 @@ class _ReflowGrid(QWidget):
         return super().sizeHint()
 
     def minimumSizeHint(self):
-        """Width/height for about half the items in one row -- independent of
-        self._cols (the column count actually being rendered right now, which
-        set_prefer_full_row() above can push as high as every item in one
-        row). Reporting that live, possibly-maximal _cols arrangement as this
-        grid's *minimum* would force an ancestor layout (here: the map column
-        vs. the side panel) to always reserve this grid's full single-row
-        width even when a squeeze (e.g. unusually wide Windows fonts) leaves
-        less room than that -- this floor is low enough that the grid can
-        still wrap onto extra rows instead."""
+        """Width/height for as few columns as this grid is allowed (self._min_cols,
+        floored at 2) -- independent of self._cols (the column count actually
+        being rendered right now, which set_prefer_full_row() above can push as
+        high as every item in one row). Reporting that live, possibly-maximal
+        _cols arrangement as this grid's *minimum* would force an ancestor
+        layout (here: the map column vs. the side panel) to always reserve
+        this grid's full single-row width even when a squeeze (e.g. unusually
+        wide Windows fonts) leaves less room than that -- this floor is low
+        enough that the grid can still wrap onto many more rows instead."""
         from PySide6.QtCore import QSize
 
         n = len(self._widgets) or 1
-        cols = max(1, -(-n // 2))
+        cols = max(1, min(n, max(self._min_cols, 2)))
         rows = -(-n // cols)
         spacing = self._grid.spacing()
         row_height = max([w.sizeHint().height() for w in self._widgets], default=0)
