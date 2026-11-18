@@ -7,15 +7,18 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from orbitrx.paths import user_data_path
 from orbitrx.utils import parse_history_query
 
-DB_PATH = Path("orbitrx.db")
-CACHE_PATH = Path("weather_cache.json")
+# Plain names, resolved under paths.user_data_dir() (cwd for source runs,
+# %APPDATA%\\OrbitRx for frozen builds) each time they are used.
+DB_NAME = "orbitrx.db"
+CACHE_NAME = "weather_cache.json"
 
 
 class DataStore:
-    def __init__(self, db_path: Path = DB_PATH, log_max_mb: int = 10) -> None:
-        self.db_path = db_path
+    def __init__(self, db_path: Path | None = None, log_max_mb: int = 10) -> None:
+        self.db_path = db_path if db_path is not None else user_data_path(DB_NAME)
         self.log_max_mb = log_max_mb
         self._init_db()
 
@@ -59,7 +62,7 @@ class DataStore:
             )
             conn.commit()
         # Legacy CSV compatibility
-        csv_path = Path("propagation_log.csv")
+        csv_path = user_data_path("propagation_log.csv")
         write_header = not csv_path.exists()
         with open(csv_path, "a", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
@@ -79,7 +82,7 @@ class DataStore:
                 (ts, spotter, target, freq_mhz),
             )
             conn.commit()
-        csv_path = Path("dx_spots_log.csv")
+        csv_path = user_data_path("dx_spots_log.csv")
         write_header = not csv_path.exists()
         with open(csv_path, "a", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
@@ -106,20 +109,21 @@ class DataStore:
         return [float(r[0]) for r in reversed(rows)]
 
     def export_json_snapshot(self, data: dict[str, Any]) -> Path:
-        path = Path("export.json")
+        path = user_data_path("export.json")
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         return path
 
     def save_weather_cache(self, data: dict[str, Any]) -> None:
-        with open(CACHE_PATH, "w", encoding="utf-8") as f:
+        with open(user_data_path(CACHE_NAME), "w", encoding="utf-8") as f:
             json.dump({"saved_at": datetime.datetime.now(datetime.timezone.utc).isoformat(), "data": data}, f)
 
     def load_weather_cache(self) -> dict[str, Any] | None:
-        if not CACHE_PATH.exists():
+        cache_path = user_data_path(CACHE_NAME)
+        if not cache_path.exists():
             return None
         try:
-            with open(CACHE_PATH, encoding="utf-8") as f:
+            with open(cache_path, encoding="utf-8") as f:
                 payload = json.load(f)
             return payload.get("data")
         except (json.JSONDecodeError, OSError):

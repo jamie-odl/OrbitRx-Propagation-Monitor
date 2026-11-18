@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import datetime
 import sys
-from pathlib import Path
 from typing import Callable
 
 from orbitrx.config import AppConfig
+from orbitrx.paths import user_data_path
 from orbitrx.utils import normalize_freq_mhz
 
 try:
@@ -15,7 +15,7 @@ except ImportError:
     serial = None
     CAT_AVAILABLE = False
 
-CAT_LOG = Path("cat_log.txt")
+CAT_LOG_NAME = "cat_log.txt"  # under paths.user_data_dir()
 
 
 def _kenwood_cmd(freq_hz: int) -> bytes:
@@ -82,7 +82,7 @@ class CatController:
         return ports
 
     def _log(self, msg: str) -> None:
-        with open(CAT_LOG, "a", encoding="utf-8") as f:
+        with open(user_data_path(CAT_LOG_NAME), "a", encoding="utf-8") as f:
             f.write(f"{datetime.datetime.now(datetime.timezone.utc).isoformat()} {msg}\n")
 
     def connect(self) -> bool:

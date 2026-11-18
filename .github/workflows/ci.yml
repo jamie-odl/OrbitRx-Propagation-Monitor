@@ -43,6 +43,36 @@ jobs:
         with:
           name: pytest-${{ matrix.os }}
           path: pytest-${{ matrix.os }}.xml
+      # The local-build script is never executed by CI (it is for Jamie's own
+      # PC), but a parse error in it should still fail CI, not surface only
+      # when someone next tries to run it. PSScriptAnalyzer runs only if it is
+      # already present on the runner image; this step never installs modules
+      # from the network.
+      - name: Parse-check tools/build_release_local.ps1 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $scripts = @("tools\build_release_local.ps1", "tools\build_release_local.helpers.ps1")
+          foreach ($script in $scripts) {
+            $parseErrors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($script, [ref]$null, [ref]$parseErrors) | Out-Null
+            if ($parseErrors.Count -gt 0) {
+              $parseErrors | ForEach-Object { Write-Host $_.ToString() }
+              throw "$script has $($parseErrors.Count) parse error(s)"
+            }
+          }
+          Write-Host "PS1-PARSE-CHECK: PASS"
+          if (Get-Module -ListAvailable -Name PSScriptAnalyzer) {
+            Import-Module PSScriptAnalyzer
+            $findings = @(foreach ($s in $scripts) { Invoke-ScriptAnalyzer -Path $s -Severity Error })
+            if ($findings) {
+              $findings | Format-Table -AutoSize | Out-String | Write-Host
+              throw "PSScriptAnalyzer found $($findings.Count) Error-severity issue(s)"
+            }
+            Write-Host "PSSCRIPTANALYZER: PASS"
+          } else {
+            Write-Host "PSScriptAnalyzer module is not installed on this runner; skipping (this step does not install modules from the network)."
+          }
 
   windows-screenshot:
     name: Rig wizard screenshot (Windows)
@@ -90,7 +120,16 @@ jobs:
         with:
           python-version: "3.12.10"
           cache: pip
-      - run: pip install -r requirements.txt
+      # R2: install the build dependencies only from the committed,
+      # fully hash-pinned lock file (no transitive resolution against the
+      # live index at build time). --no-deps is safe only because the lock
+      # already lists every transitive dependency; pip check then confirms
+      # that closure is complete and consistent.
+      - name: Install Windows build dependencies from the hash-pinned lock
+        run: |
+          python -m pip install --require-hashes --no-deps -r packaging\requirements-windows-build.lock.txt
+          python -m pip check
+          python -m pip freeze
       - name: Stamp commit SHA into About metadata (N4)
         shell: bash
         run: |
@@ -295,6 +334,26 @@ jobs:
             throw "Simulated rig port leaked into the release exe's port list"
           }
           Write-Host "SIMULATED-GATE: PASS (no 'Simulated' entry in the release exe port list)"
+      # 5.2.0 L7 crash (15 Nov 2026): PermissionError on 'config.json' when the exe
+      # was started from a folder it cannot write. Settings now live in %APPDATA%\OrbitRx.
+      - name: Launch the release exe from an unwritable folder (C:\Windows\System32)
+        shell: pwsh
+        run: |
+          $exe = (Resolve-Path dist\OrbitRxMonitor\OrbitRxMonitor.exe).Path
+          Remove-Item Env:ORBITRX_CAPTURE_DIR, Env:ORBITRX_TEST_SIMULATED_RIG, Env:QT_SCALE_FACTOR -ErrorAction SilentlyContinue
+          $cfg = Join-Path $env:APPDATA 'OrbitRx\config.json'
+          Remove-Item $cfg -Force -ErrorAction SilentlyContinue
+          $proc = Start-Process -FilePath $exe -WorkingDirectory (Join-Path $env:windir 'System32') -PassThru
+          $null = $proc.Handle
+          $exited = $proc.WaitForExit(15000)
+          $proc.Refresh()
+          $title = if ($exited) { '' } else { $proc.MainWindowTitle }
+          if (-not $exited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          Write-Host "exited=$exited exit=$(if ($exited) { $proc.ExitCode } else { 'n/a (still running, stopped)' }) title='$title' config=$(Test-Path $cfg)"
+          if ($exited -and $proc.ExitCode -ne 0) { throw "OrbitRxMonitor.exe exited $($proc.ExitCode) when launched from System32" }
+          if ($title -match 'Unhandled exception|Traceback|Error') { throw "OrbitRxMonitor.exe showed an error window when launched from System32: $title" }
+          if (-not (Test-Path $cfg)) { throw "OrbitRxMonitor.exe did not write $cfg when launched from System32" }
+          Write-Host "UNWRITABLE-CWD-LAUNCH: PASS (started from System32, settings written to %APPDATA%\OrbitRx)"
       - name: Check Settings and main window fit the screen at 150%
         shell: pwsh
         run: |
