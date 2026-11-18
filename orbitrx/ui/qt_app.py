@@ -30,8 +30,12 @@ from orbitrx.ui.formatting import (
 )
 from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
 from orbitrx.ui.theme import (
-    BG_ELEVATED, BORDER, CARD_STYLE, CARD_TEXT, ERR, FAIR, FONT_BODY, GOOD, MUTED, MUTED_SECONDARY,
-    NO_DATA, OK, POOR, RADIUS_M, SPACE_1, SPACE_2, SPACE_3, apply_theme,
+    BAND_CHIP_HEIGHT_COMPACT, BG_ELEVATED, BORDER, CARD_STYLE, CARD_TEXT, CONTROL_HEIGHT,
+    CONTROL_HEIGHT_COMPACT, ERR, FAIR, FONT_BODY, FONT_MONO, GOOD, GUTTER_COMPACT, GUTTER_WIDE,
+    MAP_HEADER_HEIGHT, MAP_HEADER_HEIGHT_COMPACT, MENU_BAR_HEIGHT, MENU_BAR_HEIGHT_COMPACT, MUTED,
+    MUTED_SECONDARY, NO_DATA, OK, POOR, RADIUS_M, SLIDER_VALUE_MIN_WIDTH, SLIDER_WIDTH,
+    SLIDER_WIDTH_COMPACT, SPACE_1, SPACE_2, SPACE_3, STATUS_BAR_HEIGHT, STATUS_BAR_HEIGHT_COMPACT,
+    TEXT_SECONDARY, TEXT_TERTIARY, UNKNOWN, apply_theme,
 )
 from orbitrx.ui.toast import ToastManager
 from orbitrx.ui.window_fit import fit_to_screen
@@ -50,7 +54,7 @@ from PySide6.QtWidgets import (
     QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QScrollArea, QSlider,
     QSpinBox, QSplitter, QStackedWidget, QTabWidget, QToolButton, QVBoxLayout, QWidget, QFileDialog,
-    QSystemTrayIcon, QMenu,
+    QSystemTrayIcon, QMenu, QWidgetAction,
 )
 
 PLOT_QT = False
@@ -196,12 +200,20 @@ class _ReflowGrid(QWidget):
 
     def __init__(
         self, widgets: list[QWidget], min_item_width: int, parent=None,
-        min_cols: int = 1, max_cols: int | None = None,
+        min_cols: int = 1, max_cols: int | None = None, spacing: int = 6,
+        on_relayout=None,
     ) -> None:
         super().__init__(parent)
         self._widgets = widgets
         self._min_cols = max(1, min_cols)
         self._max_cols = max_cols or (len(widgets) or 1)
+        # Round 6: an optional callback fired after every _relayout() (both
+        # the initial one and any resize-triggered one), so a caller that
+        # needs to react to the *current* row/column arrangement -- e.g.
+        # _JoinedToggleGroup re-deriving which button is first/last in its
+        # row for the QSS pos="first|mid|last" joined look -- doesn't have
+        # to duplicate _columns_for_width's own wrapping math.
+        self._on_relayout = on_relayout
         # W1: size columns off each widget's real sizeHint, not a fixed guess -
         # native styles (e.g. Windows' chip padding) render noticeably wider
         # than Linux's, and a fixed width let a too-wide column overflow the
@@ -210,7 +222,7 @@ class _ReflowGrid(QWidget):
             [max(1, min_item_width)] + [w.sizeHint().width() for w in widgets]
         )
         self._grid = QGridLayout(self)
-        self._grid.setSpacing(6)
+        self._grid.setSpacing(spacing)
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._cols = 0
         self._prefer_full_row = False
@@ -269,19 +281,25 @@ class _ReflowGrid(QWidget):
         return super().sizeHint()
 
     def minimumSizeHint(self):
-        """Width/height for as few columns as this grid is allowed (self._min_cols,
-        floored at 2) -- independent of self._cols (the column count actually
-        being rendered right now, which set_prefer_full_row() above can push as
-        high as every item in one row). Reporting that live, possibly-maximal
-        _cols arrangement as this grid's *minimum* would force an ancestor
-        layout (here: the map column vs. the side panel) to always reserve
-        this grid's full single-row width even when a squeeze (e.g. unusually
-        wide Windows fonts) leaves less room than that -- this floor is low
-        enough that the grid can still wrap onto many more rows instead."""
+        """Width/height for as few columns as this grid is allowed
+        (self._min_cols) -- independent of self._cols (the column count
+        actually being rendered right now, which set_prefer_full_row() above
+        can push as high as every item in one row). Reporting that live,
+        possibly-maximal _cols arrangement as this grid's *minimum* would
+        force an ancestor layout (here: the map column vs. the side panel)
+        to always reserve this grid's full single-row width even when a
+        squeeze (e.g. unusually wide Windows fonts) leaves less room than
+        that -- this floor is low enough that the grid can still wrap onto
+        many more rows instead. Round 6: honours self._min_cols exactly
+        (previously floored at 2 regardless of a caller's own min_cols=1) --
+        _JoinedToggleGroup's Layers/Spots groups need that true 1-column
+        floor, since two of these grids now sit side by side instead of one
+        flat 7-chip row, and a floor of 2 columns *each* summed to a bigger
+        total minimum than the old single grid's floor ever did."""
         from PySide6.QtCore import QSize
 
         n = len(self._widgets) or 1
-        cols = max(1, min(n, max(self._min_cols, 2)))
+        cols = max(1, min(n, self._min_cols))
         rows = -(-n // cols)
         spacing = self._grid.spacing()
         row_height = max([w.sizeHint().height() for w in self._widgets], default=0)
@@ -296,6 +314,86 @@ class _ReflowGrid(QWidget):
         for i, w in enumerate(self._widgets):
             row, col = divmod(i, cols)
             self._grid.addWidget(w, row, col)
+        if self._on_relayout is not None:
+            self._on_relayout()
+
+
+class _JoinedToggleGroup(QWidget):
+    """A shared-outline, zero-gap row of checkable QToolButtons (SPEC §11:
+    the "Layers" and "Spots" control-strip groups), each styled through the
+    #toggle objectName plus a pos="first|mid|last|only" property so only the
+    outer ends get rounded corners.
+
+    Wraps a `_ReflowGrid` with spacing=0 rather than a plain QHBoxLayout so
+    the group keeps the same wide-font-safe fallback (wrap onto another row
+    instead of clipping past the window edge) the old flat chip row already
+    had -- see tests/test_map_dominant_layout.py's wide_font_window fixture.
+    """
+
+    def __init__(self, buttons: list[QToolButton], parent=None) -> None:
+        super().__init__(parent)
+        self._buttons = buttons
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        # _ReflowGrid's own __init__ runs its first _relayout() (and so its
+        # on_relayout callback) before this constructor call returns -- i.e.
+        # before `self._grid` below would exist -- so the grid is built
+        # without the callback first, then wired up and applied once by hand
+        # to cover that initial layout too.
+        self._grid = _ReflowGrid(buttons, min_item_width=0, max_cols=len(buttons), spacing=0)
+        self._grid._on_relayout = self._apply_positions
+        layout.addWidget(self._grid)
+        self._apply_positions()
+
+    def _apply_positions(self) -> None:
+        cols = max(1, self._grid._cols)
+        n = len(self._buttons)
+        for i, btn in enumerate(self._buttons):
+            row, col = divmod(i, cols)
+            row_len = min(cols, n - row * cols)
+            if row_len <= 1:
+                pos = "only"
+            elif col == 0:
+                pos = "first"
+            elif col == row_len - 1:
+                pos = "last"
+            else:
+                pos = "mid"
+            if btn.property("pos") != pos:
+                btn.setProperty("pos", pos)
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+
+    def set_prefer_full_row(self, enabled: bool) -> None:
+        self._grid.set_prefer_full_row(enabled)
+
+
+class _ChipsRow(QWidget):
+    """Holds the control strip's "Layers slot" + "Spots slot" side by side
+    and forwards set_prefer_full_row() to both of their _JoinedToggleGroups.
+
+    Without this, _MapControlStrip._apply_layout()'s `self._chips.
+    set_prefer_full_row(single_row)` call (hasattr-guarded) would silently
+    no-op against a plain QWidget, and each inner _ReflowGrid could latch
+    onto whatever narrow width it was first given during layout settling --
+    the exact self-reinforcing-narrow-column problem set_prefer_full_row()
+    exists to prevent, just one level deeper than the original single flat
+    chip row it was written for (see _ReflowGrid.set_prefer_full_row's own
+    docstring)."""
+
+    def __init__(self, slots: list[QWidget], parent=None) -> None:
+        super().__init__(parent)
+        self._groups = [s.findChild(_JoinedToggleGroup) for s in slots]
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(SPACE_3)
+        for slot in slots:
+            layout.addWidget(slot)
+
+    def set_prefer_full_row(self, enabled: bool) -> None:
+        for group in self._groups:
+            if group is not None:
+                group.set_prefer_full_row(enabled)
 
 
 class _ElidedLabel(QLabel):
@@ -521,6 +619,21 @@ class QtOrbitRxApplication(QMainWindow):
     _SIDE_PANEL_COLLAPSE_GLYPH = ">>"
     _SIDE_PANEL_EXPAND_GLYPH = "<<"
 
+    # Round 6 (SPEC §11): the control strip's two joined toggle groups.
+    # Spots stays inline at every width ("At 683 ... Spots stay inline");
+    # Layers is the one that collapses into #layersMenuButton.
+    _LAYER_GROUP_ITEMS = [
+        ("greyline", "Greyline"), ("night", "Night"), ("dx_arcs", "DX"),
+        ("aurora", "Aurora"), ("grid", "Grid"),
+    ]
+    _SPOTS_GROUP_ITEMS = [("spot_arcs", "Live"), ("spot_heatmap", "Heat")]
+
+    # Round 6 (SPEC §11 "Below 600 px width, the time sliders move into a
+    # 'Time ▾' popover"), same ±16px hysteresis idiom as
+    # COMPACT_WIDTH_BELOW/ABOVE above.
+    _TIME_POPOVER_BELOW = 600
+    _TIME_POPOVER_ABOVE = 616
+
     def __init__(self) -> None:
         self._t_init_start = time.perf_counter()
         super().__init__()
@@ -689,6 +802,7 @@ class QtOrbitRxApplication(QMainWindow):
         # (_status_subtitle_lbl) instead of inline here.
         map_layout.setContentsMargins(SPACE_3, 0, SPACE_3, 0)
         map_layout.setSpacing(SPACE_1)
+        self._map_layout = map_layout
         header_row = QHBoxLayout()
         header_row.setSpacing(SPACE_2)
         header_row.addWidget(self._build_view_switch())
@@ -725,7 +839,12 @@ class QtOrbitRxApplication(QMainWindow):
         )
         self._map_help.setAutoRaise(True)
         header_row.addWidget(self._map_help)
-        map_layout.addLayout(header_row)
+        # Round 6 (SPEC §5/§13 "the map header 36/32"): wrapped in its own
+        # QWidget (rather than added as a bare QHBoxLayout) so
+        # _update_compact_chrome can cap its height directly.
+        self._map_header_row = QWidget()
+        self._map_header_row.setLayout(header_row)
+        map_layout.addWidget(self._map_header_row)
 
         self.map_widget = self._create_map_widget()
         self.map_widget.spot_clicked.connect(self._tune_from_map)
@@ -743,75 +862,147 @@ class QtOrbitRxApplication(QMainWindow):
         map_frame_layout.addWidget(self.map_widget)
         map_layout.addWidget(self._map_frame, stretch=1)
 
-        # M3: layer chips (checkable pills) in one wrapping row. Live/Heat apply
-        # to the native map's own live-spots layer (set_live_spots), same as
-        # every other chip here.
-        layer_widgets = []
-        for key, label in [("greyline", "Greyline"), ("night", "Night"), ("dx_arcs", "DX"),
-                           ("aurora", "Aurora"), ("grid", "Grid"),
-                           ("spot_arcs", "Live"), ("spot_heatmap", "Heat")]:
+        # Round 6 (SPEC §11): "Layers" (Greyline/Night/DX/Aurora/Grid) and
+        # "Spots" (Live/Heat) are now two separate joined toggle groups, each
+        # with its own label, instead of one flat 7-chip row -- Live/Heat
+        # still apply to the native map's own live-spots layer
+        # (set_live_spots), same as every other toggle here. _layer_checks
+        # keeps all 7 keys regardless of grouping, since _layers_changed/
+        # _refresh_live_spots and several tests read it as one flat dict.
+        for key, label in self._LAYER_GROUP_ITEMS + self._SPOTS_GROUP_ITEMS:
             chip = QToolButton()
             chip.setText(label)
             chip.setCheckable(True)
-            chip.setObjectName("layerChip")
+            chip.setObjectName("toggle")
             chip.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
             chip.blockSignals(True)
             chip.setChecked(self.ctrl.cfg.get("map_layers", {}).get(key, key != "grid"))
             chip.blockSignals(False)
             self._layer_checks[key] = chip
-            layer_widgets.append(chip)
         for chip in self._layer_checks.values():
             chip.toggled.connect(lambda _=False: self._layers_changed())
-        self._layer_grid = _ReflowGrid(layer_widgets, min_item_width=72, max_cols=8)
-        self._layer_grid.setMinimumHeight(26)
-        self._layer_grid.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+        layers_label = QLabel("Layers")
+        layers_label.setObjectName("groupLabel")
+        self._layers_group = _JoinedToggleGroup(
+            [self._layer_checks[k] for k, _ in self._LAYER_GROUP_ITEMS]
+        )
+        self._layers_menu_btn = self._build_layers_menu_button()
+        self._layers_slot = QWidget()
+        layers_slot_layout = QHBoxLayout(self._layers_slot)
+        layers_slot_layout.setContentsMargins(0, 0, 0, 0)
+        layers_slot_layout.setSpacing(SPACE_1)
+        layers_slot_layout.addWidget(layers_label)
+        layers_slot_layout.addWidget(self._layers_group)
+        layers_slot_layout.addWidget(self._layers_menu_btn)
+        self._layers_label = layers_label
+
+        spots_label = QLabel("Spots")
+        spots_label.setObjectName("groupLabel")
+        self._spots_group = _JoinedToggleGroup(
+            [self._layer_checks[k] for k, _ in self._SPOTS_GROUP_ITEMS]
+        )
+        spots_slot = QWidget()
+        spots_slot_layout = QHBoxLayout(spots_slot)
+        spots_slot_layout.setContentsMargins(0, 0, 0, 0)
+        spots_slot_layout.setSpacing(SPACE_1)
+        spots_slot_layout.addWidget(spots_label)
+        spots_slot_layout.addWidget(self._spots_group)
+
+        chips_row = _ChipsRow([self._layers_slot, spots_slot])
+        chips_row.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self._chips_row = chips_row
+        self._layers_compact = None  # sentinel: force _apply_layers_compact's first call through
+        self._apply_layers_compact(False)
         # V11 must-fix 3: chips live under the map pane (not inside it) so 150%
         # compact never paints them over Antarctica / greyline.
 
-        # P4: the two sliders share one compact row (label/slider/value each);
-        # combined with the chips above via _MapControlStrip, this is the "one
-        # slim control strip" a map-dominant layout calls for, instead of the
-        # three previously-stacked rows.
+        # P4/Round 6: the two time sliders share one compact row (label/
+        # slider/mono value each, SPEC §11 item 4); combined with the chips
+        # above via _MapControlStrip, this is the "one slim control strip" a
+        # map-dominant layout calls for, instead of the three previously-
+        # stacked rows. _time_box is reparented into a "Time ▾" popover below
+        # 600px width (_apply_time_popover) rather than living in a second
+        # fixed location, so there is still exactly one pair of slider widgets.
         sliders_row = QWidget()
         sliders_row_layout = QHBoxLayout(sliders_row)
         sliders_row_layout.setContentsMargins(0, 0, 0, 0)
-        sliders_row_layout.setSpacing(SPACE_3)
+        sliders_row_layout.setSpacing(0)
+        # SPEC §11: "a stretch" separates the Layers/Spots groups from the
+        # time sliders, which sit at the strip's far right -- _MapControlStrip
+        # already gives this row a stretch=1 slot of its own, so this second,
+        # inner stretch right-aligns _time_box/_time_popover_btn within it
+        # rather than leaving the gap on the wrong side.
+        sliders_row_layout.addStretch(1)
+        self._sliders_row_layout = sliders_row_layout
+
+        self._time_box = QWidget()
+        time_box_layout = QHBoxLayout(self._time_box)
+        time_box_layout.setContentsMargins(0, 0, 0, 0)
+        time_box_layout.setSpacing(SPACE_3)
 
         offset_box = QHBoxLayout()
         offset_box.setSpacing(SPACE_1)
-        offset_lbl = QLabel("Offset:")
+        offset_lbl = QLabel("Offset")
+        offset_lbl.setObjectName("groupLabel")
         offset_lbl.setToolTip("Time offset (hours)")
         offset_box.addWidget(offset_lbl)
         self.time_slider = QSlider(Qt.Orientation.Horizontal)
         self.time_slider.setRange(0, 48)
         self.time_slider.setValue(0)
         self.time_slider.setToolTip("Time offset (hours)")
+        self.time_slider.setFixedWidth(SLIDER_WIDTH)
         self.time_slider.valueChanged.connect(self._slider_moved)
-        offset_box.addWidget(self.time_slider, 1)
+        offset_box.addWidget(self.time_slider)
         self.lbl_slider = QLabel(format_hour_offset(0))
-        self.lbl_slider.setMinimumWidth(48)
+        self.lbl_slider.setObjectName("sliderValue")
+        self.lbl_slider.setMinimumWidth(SLIDER_VALUE_MIN_WIDTH)
         self.lbl_slider.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         offset_box.addWidget(self.lbl_slider)
-        sliders_row_layout.addLayout(offset_box, 1)
+        time_box_layout.addLayout(offset_box)
 
         replay_box = QHBoxLayout()
         replay_box.setSpacing(SPACE_1)
-        replay_lbl = QLabel("Replay:")
+        replay_lbl = QLabel("Replay")
+        replay_lbl.setObjectName("groupLabel")
         replay_lbl.setToolTip("Spot replay (hours ago)")
         replay_box.addWidget(replay_lbl)
         self.replay_slider = QSlider(Qt.Orientation.Horizontal)
         self.replay_slider.setRange(0, 48)  # whole-hour steps, up to 48 hours ago
         self.replay_slider.setValue(0)
         self.replay_slider.setToolTip("0 = live. Drag left to right to replay cached PSKReporter spots.")
+        self.replay_slider.setFixedWidth(SLIDER_WIDTH)
         self.replay_slider.valueChanged.connect(self._replay_moved)
-        replay_box.addWidget(self.replay_slider, 1)
+        replay_box.addWidget(self.replay_slider)
         self.lbl_replay = QLabel("Live")
-        self.lbl_replay.setMinimumWidth(48)
+        self.lbl_replay.setObjectName("sliderValue")
+        self.lbl_replay.setMinimumWidth(SLIDER_VALUE_MIN_WIDTH)
         self.lbl_replay.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         replay_box.addWidget(self.lbl_replay)
-        sliders_row_layout.addLayout(replay_box, 1)
+        time_box_layout.addLayout(replay_box)
 
-        self._map_controls = _MapControlStrip(self._layer_grid, sliders_row)
+        self._time_popover_btn = QToolButton(sliders_row)
+        self._time_popover_btn.setObjectName("timePopoverButton")
+        self._time_popover_btn.setText("Time ▾")
+        self._time_popover_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        time_menu = QMenu(self._time_popover_btn)
+        # No setDefaultWidget(self._time_box) yet: QWidgetAction hides a
+        # widget it's given as soon as it's handed one (the menu itself
+        # isn't open), and that explicit hide survives a later
+        # sliders_row_layout.addWidget() reparent -- _apply_time_popover(True)
+        # associates _time_box with this action (and shows it again) only
+        # once the popover is actually entered.
+        time_menu.addAction(QWidgetAction(time_menu))
+        self._time_popover_btn.setMenu(time_menu)
+        self._time_popover = False
+        # Not yet added to sliders_row_layout below -- an un-laid-out child
+        # widget is still visible by default once its parent is shown, so
+        # without this it would float, visible, at (0,0) until the first
+        # _apply_time_popover(True) call ever adds it to a layout.
+        self._time_popover_btn.setVisible(False)
+        sliders_row_layout.addWidget(self._time_box)
+
+        self._map_controls = _MapControlStrip(chips_row, sliders_row)
 
         # M1: no scroll area around the map pane. The map stretches and shrinks so
         # the layer toggles and sliders stay visible without scrolling.
@@ -1318,6 +1509,19 @@ class QtOrbitRxApplication(QMainWindow):
         layout.setContentsMargins(0, 0, SPACE_2, 0)
         layout.setSpacing(SPACE_2)
 
+        # Round 6 (SPEC §9 "At 683, the menu-bar corner shows SFI 142 Kp 3.0
+        # A 12"): real values (never a sample), hidden above the 820px
+        # side-panel-hidden breakpoint since the panel's own tiles already
+        # show the same facts there -- additive alongside the existing
+        # cluster/clock widgets below, not a relocation (same reasoning as
+        # the P4-3 cluster-corner decision logged in an earlier round).
+        self._corner_summary_lbl = QLabel("")
+        self._corner_summary_lbl.setObjectName("statusCornerSummary")
+        self._corner_summary_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._corner_summary_lbl.setVisible(False)
+        self._corner_summary_visible = False
+        layout.addWidget(self._corner_summary_lbl)
+
         self._corner_cluster_lbl = QLabel("Cluster: disconnected")
         self._corner_cluster_lbl.setObjectName("statusCornerCluster")
         self._corner_cluster_lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -1383,16 +1587,24 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _set_side_panel_visible(self, visible: bool) -> None:
         """Shared handler for the header's collapse button and the View
-        menu's "Show side panel" action/Ctrl+B (P4): keeps both controls in
-        sync and only actually hides the pane in the wide/splitter layout --
-        in compact mode the side pane is already its own "Conditions" tab.
+        menu's "Show side panel" action/Ctrl+B (P4; Round 6/SPEC §13 "W<820:
+        side panel hidden ... Ctrl+B opens it"): in the wide/splitter layout
+        this hides/shows the pane directly; in compact mode (where the side
+        pane is one of _compact_tabs' two pages rather than a splitter
+        child) it instead switches the visible tab, so Ctrl+B / the header
+        button still do something useful instead of being disabled outright.
         Defensively tolerant of running before the widgets it syncs exist yet
         (QAction.setChecked during _build_actions can fire this once, before
         the header button or splitter are built)."""
         self._side_panel_visible = visible
         side_pane = getattr(self, "_side_pane", None)
-        if side_pane is not None and not getattr(self, "_compact", False):
-            side_pane.setVisible(visible)
+        if side_pane is not None:
+            if getattr(self, "_compact", False):
+                compact_tabs = getattr(self, "_compact_tabs", None)
+                if compact_tabs is not None and compact_tabs.indexOf(side_pane) != -1:
+                    compact_tabs.setCurrentWidget(side_pane if visible else self._map_tab)
+            else:
+                side_pane.setVisible(visible)
         toggle_btn = getattr(self, "_side_panel_toggle_btn", None)
         if toggle_btn is not None:
             toggle_btn.setText(
@@ -1649,6 +1861,117 @@ class QtOrbitRxApplication(QMainWindow):
         word, token = kp_state(s.kp_index)
         color = {"GOOD": GOOD, "FAIR": FAIR, "POOR": POOR}[token]
         self._kp_caption_lbl.setText(f'Kp &middot; <span style="color:{color}">{word}</span>')
+        self._update_control_strip_corner_summary()
+
+    # Round 6 (SPEC §9 "At 683"/§13 "W<820"): corner space-weather summary.
+    _CORNER_SUMMARY_BELOW = 820
+    _CORNER_SUMMARY_ABOVE = 836
+
+    def _corner_summary_text(self) -> str:
+        """Real SFI/Kp/A-index values -- NO_DATA before the first fetch,
+        same gate _refresh_key_tiles uses, never a sample like the mockup's
+        'SFI 142 Kp 3.0 A 12'."""
+        s = self.ctrl.state
+        loaded = s.last_weather_update is not None
+        sfi = format_value(s.flux, fmt="{:.1f}") if loaded else NO_DATA
+        kp = format_value(s.kp_index, fmt="{:.1f}") if loaded else NO_DATA
+        a_index = format_value(s.a_index, fmt="{:g}") if loaded else NO_DATA
+
+        def pair(label: str, value: str) -> str:
+            return (
+                f'<span style="color:{TEXT_TERTIARY}">{label}</span> '
+                f'<span style="font-family:\'{FONT_MONO}\'; color:{TEXT_SECONDARY}">{value}</span>'
+            )
+
+        return "&nbsp;&nbsp;".join([pair("SFI", sfi), pair("Kp", kp), pair("A", a_index)])
+
+    def _apply_corner_summary_visible(self, visible: bool) -> None:
+        if self._corner_summary_visible == visible:
+            return
+        self._corner_summary_visible = visible
+        self._corner_summary_lbl.setVisible(visible)
+
+    def _update_control_strip_corner_summary(self) -> None:
+        lbl = getattr(self, "_corner_summary_lbl", None)
+        if lbl is None:
+            return
+        lbl.setText(self._corner_summary_text())
+        width = self.width()
+        if width < self._CORNER_SUMMARY_BELOW:
+            self._apply_corner_summary_visible(True)
+        elif width > self._CORNER_SUMMARY_ABOVE:
+            self._apply_corner_summary_visible(False)
+
+    # Round 6 (SPEC §8/§13 "Compact variant (683, or a window height under
+    # 560)"): band-chip compact threshold, same ±16px hysteresis idiom.
+    _BAND_CHIP_COMPACT_HEIGHT_BELOW = 560
+    _BAND_CHIP_COMPACT_HEIGHT_ABOVE = 576
+
+    # Round 6 (SPEC §13 "H < 560: ... Menu bar 28, status bar 22, map header
+    # 32, controls 28", plus "Window gutters: 16px at 1280, 8px at 683"):
+    # same ±16px hysteresis idiom as every other breakpoint in this file.
+    _COMPACT_CHROME_HEIGHT_BELOW = 560
+    _COMPACT_CHROME_HEIGHT_ABOVE = 576
+
+    def _update_compact_chrome(self) -> None:
+        """Shrinks the chrome rows above/around the map -- not the map
+        itself -- so more of a short window's client height goes to the map
+        frame (Round 5 measured the 683x485 map share short of SPEC's 55%
+        target because this app's compact chrome ate more height than
+        SPEC's own budget table assumed; this directly answers that gap).
+        Only ever touches heights/margins, never widget *identity* -- every
+        control stays the same QToolButton/QSlider/QComboBox it always was,
+        just shorter."""
+        compact = getattr(self, "_compact_chrome", False)
+        height = self.height()
+        if height < self._COMPACT_CHROME_HEIGHT_BELOW:
+            compact = True
+        elif height > self._COMPACT_CHROME_HEIGHT_ABOVE:
+            compact = False
+        if compact == getattr(self, "_compact_chrome", None):
+            return
+        self._compact_chrome = compact
+
+        self.menuBar().setFixedHeight(MENU_BAR_HEIGHT_COMPACT if compact else MENU_BAR_HEIGHT)
+        self.statusBar().setFixedHeight(STATUS_BAR_HEIGHT_COMPACT if compact else STATUS_BAR_HEIGHT)
+        # The header row's own wrapper is forced to its target height
+        # directly -- its children (segButton/combo/help chip) already fit
+        # comfortably inside 32px, so there's no need to also shrink their
+        # own min-height/padding the way the control-strip toggles below do.
+        self._map_header_row.setFixedHeight(
+            MAP_HEADER_HEIGHT_COMPACT if compact else MAP_HEADER_HEIGHT
+        )
+        gutter = GUTTER_COMPACT if compact else GUTTER_WIDE
+        self._map_layout.setContentsMargins(gutter, 0, gutter, 0)
+
+        # The control strip has no single wrapper to force-shrink (clipping
+        # content instead of actually reclaiming height) -- each toggle's
+        # own `compact` property drives a smaller QSS min-height/padding,
+        # which genuinely shrinks sizeHint() so the row/col layout holding
+        # them actually reserves less space, not just leaves dead space
+        # around a visually-smaller (but still geometrically unchanged)
+        # button.
+        strip_controls = [*self._layer_checks.values(), self._layers_menu_btn, self._time_popover_btn]
+        for widget in strip_controls:
+            if widget.property("compact") == compact:
+                continue
+            widget.setProperty("compact", compact)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+            widget.updateGeometry()
+
+    def _update_band_panel_compact(self) -> None:
+        panel = getattr(self, "band_panel", None)
+        if panel is None:
+            return
+        height = self.height()
+        band_compact = getattr(self, "_band_chip_height_compact", False)
+        if height < self._BAND_CHIP_COMPACT_HEIGHT_BELOW:
+            band_compact = True
+        elif height > self._BAND_CHIP_COMPACT_HEIGHT_ABOVE:
+            band_compact = False
+        self._band_chip_height_compact = band_compact
+        panel.set_compact(self._compact or band_compact)
 
     def _space_weather_freshness_text(self) -> str:
         """SPEC §9 item 1 / §10: a real freshness stamp driven entirely by
@@ -1754,6 +2077,89 @@ class QtOrbitRxApplication(QMainWindow):
         self.ctrl.cfg.data["map_layers"] = ml
         self._refresh_map()
         self._schedule_layers_save()
+        self._update_layers_menu_badge()
+
+    def _build_layers_menu_button(self) -> QToolButton:
+        """SPEC §11 "At 683": Layers collapses to a QToolButton#layersMenuButton
+        with InstantPopup, a checkable QMenu, and a count badge. The menu's
+        QActions are proxies, not a second source of truth -- toggling one
+        just flips the real _layer_checks[key] QToolButton (already wired to
+        _layers_changed), and _sync_layers_menu() (on the menu's aboutToShow)
+        pulls the actions back into sync with the real buttons so the badge
+        and checkmarks can never drift from the state that actually drives
+        the map."""
+        btn = QToolButton()
+        btn.setObjectName("layersMenuButton")
+        btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(btn)
+        self._layers_menu_actions: dict[str, QAction] = {}
+        for key, label in self._LAYER_GROUP_ITEMS:
+            action = QAction(label, menu)
+            action.setCheckable(True)
+            action.toggled.connect(lambda checked, k=key: self._layer_checks[k].setChecked(checked))
+            menu.addAction(action)
+            self._layers_menu_actions[key] = action
+        menu.aboutToShow.connect(self._sync_layers_menu)
+        btn.setMenu(menu)
+        self._layers_menu_btn_ref = btn
+        self._sync_layers_menu()  # QAction defaults to unchecked; match the real buttons from the start
+        self._update_layers_menu_badge()
+        return btn
+
+    def _sync_layers_menu(self) -> None:
+        for key, action in self._layers_menu_actions.items():
+            checked = self._layer_checks[key].isChecked()
+            if action.isChecked() != checked:
+                action.blockSignals(True)
+                action.setChecked(checked)
+                action.blockSignals(False)
+
+    def _update_layers_menu_badge(self) -> None:
+        btn = getattr(self, "_layers_menu_btn_ref", None)
+        if btn is None:
+            return
+        count = sum(1 for k, _ in self._LAYER_GROUP_ITEMS if self._layer_checks[k].isChecked())
+        btn.setText(f"Layers {count} ▾")
+
+    def _apply_layers_compact(self, compact: bool) -> None:
+        """SPEC §11 "At 683": the Layers label+group swap for the
+        #layersMenuButton; Spots (built separately in _build_ui) is never
+        touched here -- it "stay[s] inline" at every width."""
+        if getattr(self, "_layers_compact", None) == compact:
+            return
+        self._layers_compact = compact
+        self._layers_label.setVisible(not compact)
+        self._layers_group.setVisible(not compact)
+        self._layers_menu_btn.setVisible(compact)
+        if compact:
+            self._update_layers_menu_badge()
+
+    def _apply_sliders_compact(self, compact: bool) -> None:
+        """SPEC §11 "At 683" "the sliders shrink to 84px"."""
+        width = SLIDER_WIDTH_COMPACT if compact else SLIDER_WIDTH
+        self.time_slider.setFixedWidth(width)
+        self.replay_slider.setFixedWidth(width)
+
+    def _apply_time_popover(self, popover: bool) -> None:
+        """SPEC §11 "Below 600 px width, the time sliders move into a 'Time
+        ▾' popover" -- reparents the single real _time_box (both sliders)
+        between the inline sliders row and the popover menu's QWidgetAction,
+        the same reparent-don't-duplicate pattern _MapControlStrip already
+        uses for chips/sliders between its row/stacked pages."""
+        if getattr(self, "_time_popover", None) == popover:
+            return
+        self._time_popover = popover
+        if popover:
+            self._sliders_row_layout.removeWidget(self._time_box)
+            self._time_popover_btn.menu().actions()[0].setDefaultWidget(self._time_box)
+            self._sliders_row_layout.addWidget(self._time_popover_btn)
+            self._time_popover_btn.setVisible(True)
+        else:
+            self._sliders_row_layout.removeWidget(self._time_popover_btn)
+            self._time_popover_btn.setParent(None)
+            self._time_popover_btn.setVisible(False)
+            self._sliders_row_layout.addWidget(self._time_box)
+        self._time_box.setVisible(True)
 
     def _schedule_layers_save(self) -> None:
         if self._layers_save_timer is None:
@@ -2471,6 +2877,21 @@ class QtOrbitRxApplication(QMainWindow):
         elif self._compact and width > COMPACT_WIDTH_ABOVE:
             self._exit_compact_mode()
         self._apply_map_min_height()
+        # Round 6 (SPEC §11/§13): the control strip's own responsive rules
+        # reuse this same compact flag/hysteresis rather than inventing a
+        # separate "683px" breakpoint -- COMPACT_WIDTH_BELOW (900) already
+        # fires well before SPEC's 683 reference width, so every "at 683"
+        # control-strip rule in this round is simply "while self._compact".
+        if hasattr(self, "_layers_group"):
+            self._apply_layers_compact(self._compact)
+            self._apply_sliders_compact(self._compact)
+            if width > self._TIME_POPOVER_ABOVE:
+                self._apply_time_popover(False)
+            elif width < self._TIME_POPOVER_BELOW:
+                self._apply_time_popover(True)
+        self._update_control_strip_corner_summary()
+        self._update_band_panel_compact()
+        self._update_compact_chrome()
 
     def _on_splitter_moved_by_user(self, pos: int, index: int) -> None:
         """QSplitter.setSizes() never emits splitterMoved (only an actual
@@ -2507,17 +2928,25 @@ class QtOrbitRxApplication(QMainWindow):
         central_layout = self.centralWidget().layout()
         central_layout.removeWidget(self._splitter)
         self._splitter.hide()
-        # P4: the side pane is reachable via its own "Conditions" tab here,
-        # regardless of whether it was collapsed in the wide layout -- the
-        # collapse toggle is disabled below, since hiding it would just hide
-        # an entire tab's contents.
+        # Round 6 (SPEC §13 "W<820: side panel hidden (drawer via Ctrl+B)"):
+        # the side pane is reachable via its own "Conditions" tab, and
+        # Ctrl+B/the header toggle button switch to it instead of being
+        # disabled outright (see _set_side_panel_visible) -- not a true
+        # floating overlay drawer (the tab bar stays visible either way),
+        # but the same real outcome: one keypress reveals the panel's
+        # content over what was otherwise a map-only view.
         self._side_pane.setVisible(True)
         self._compact_tabs.addTab(self._map_tab, "Map")
         self._compact_tabs.addTab(self._side_pane, "Conditions")
         central_layout.addWidget(self._compact_tabs)
         self._compact_tabs.show()
-        self._side_panel_toggle_btn.setEnabled(False)
-        self._actions["ShowSidePanel"].setEnabled(False)
+        # Map first, always -- SPEC principle #1 ("the map is the product")
+        # and §13's drawer default ("closed"). _side_panel_visible is the
+        # *wide*-layout collapse flag and is not reused as a "remember which
+        # compact tab was open" flag, so a fresh entry into compact mode
+        # never jumps straight to Conditions just because the side panel
+        # happened to be visible in the wide layout.
+        self._compact_tabs.setCurrentWidget(self._map_tab)
 
     def _exit_compact_mode(self) -> None:
         self._compact = False
@@ -2538,9 +2967,24 @@ class QtOrbitRxApplication(QMainWindow):
         # though its new parent is shown.
         self._map_tab.show()
         self._side_pane.setVisible(self._side_panel_visible)
-        self._side_panel_toggle_btn.setEnabled(True)
-        self._actions["ShowSidePanel"].setEnabled(True)
         self._apply_default_splitter_sizes()
+
+    def keyPressEvent(self, event) -> None:
+        """Round 6 (SPEC §13 "Ctrl+B opens it ... closed with Esc"): Esc
+        closes the side panel only while it's the thing actually showing in
+        compact mode (the Conditions tab) -- never in the wide layout, where
+        Esc has no other meaning here and shouldn't fight a user's own
+        expectations for the key."""
+        if (
+            event.key() == Qt.Key.Key_Escape
+            and getattr(self, "_compact", False)
+            and getattr(self, "_compact_tabs", None) is not None
+            and self._compact_tabs.currentWidget() is self._side_pane
+        ):
+            self._actions["ShowSidePanel"].setChecked(False)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)

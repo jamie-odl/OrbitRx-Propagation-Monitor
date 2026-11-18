@@ -145,6 +145,28 @@ MAP_LEGEND_STYLE = (
 # threshold (bars at/above it use FAIR instead, see propagation.kp_state).
 SPARK_BAR = "#3A465A"
 
+# Round 6 (SPEC §11): control-strip minimum heights/widths -- plain ints, not
+# QSS, since min-width on a value label is a widget call
+# (setMinimumWidth), not a stylesheet property.
+CONTROL_HEIGHT = 28  # 1280: control strip row height
+CONTROL_HEIGHT_COMPACT = 24  # 683/H<560
+SLIDER_VALUE_MIN_WIDTH = 34
+SLIDER_WIDTH = 120
+SLIDER_WIDTH_COMPACT = 84
+
+# Round 6 (SPEC §13 H<560 chrome budget): literal pixel heights applied to
+# the menu bar / status bar / map header / control strip when the window's
+# client height drops below 560 -- see QtOrbitRxApplication._update_compact_chrome.
+MENU_BAR_HEIGHT = 32
+MENU_BAR_HEIGHT_COMPACT = 28
+STATUS_BAR_HEIGHT = 24
+STATUS_BAR_HEIGHT_COMPACT = 22
+MAP_HEADER_HEIGHT = 36
+MAP_HEADER_HEIGHT_COMPACT = 32
+BAND_CHIP_HEIGHT_COMPACT = 30
+GUTTER_WIDE = S4  # 16
+GUTTER_COMPACT = S2  # 8
+
 # Font stacks (P4-1(d)): system fallback chains only, no bundled font files
 # (bundling a font would pull in SIL-OFL NOTICE/packaging obligations, which
 # is off-limits per the hard rules). See p4-findings.md (d) for the evidence.
@@ -276,14 +298,69 @@ QToolButton#switchMapButton, QToolButton#helpChip {{
 QToolButton#switchMapButton:hover, QToolButton#helpChip:hover {{
     color: {TEXT}; border-color: {ACCENT};
 }}
-QToolButton#layerChip {{
-    color: {MUTED}; border: 1px solid {BORDER}; border-radius: 14px;
-    padding: 2px 10px; background: transparent; font-size: 13px;
+/* Round 6 (SPEC §11): "Layers" (Greyline/Night/DX/Aurora/Grid) and "Spots"
+   (Live/Heat) joined toggle groups -- a shared outline, 0 spacing, radius 6
+   on the outer ends only via the pos="first|mid|last" property, replacing
+   the old pill-shaped #layerChip (whose :disabled opacity rule was a no-op,
+   SPEC §1 defect #9 -- QSS opacity doesn't apply to widgets). */
+QLabel#groupLabel {{ color: {TEXT_TERTIARY}; font-size: {FONT_CAPTION}px; background: transparent; }}
+QToolButton#toggle {{
+    color: {TEXT_TERTIARY}; background: {BG_CANVAS}; border: 1px solid {BORDER_DEFAULT};
+    border-left: none; border-radius: 0; padding: 0 {S3}px; min-height: 26px; font-size: {FONT_CAPTION}px;
 }}
-QToolButton#layerChip:checked {{
-    color: {TEXT}; background: {ACCENT_SOFT}; border-color: {ACCENT};
+QToolButton#toggle[pos="first"] {{
+    border-left: 1px solid {BORDER_DEFAULT}; border-top-left-radius: {RADIUS_S}px; border-bottom-left-radius: {RADIUS_S}px;
 }}
-QToolButton#layerChip:disabled {{ opacity: 0.45; }}
+QToolButton#toggle[pos="last"] {{ border-top-right-radius: {RADIUS_S}px; border-bottom-right-radius: {RADIUS_S}px; }}
+QToolButton#toggle[pos="only"] {{
+    border-left: 1px solid {BORDER_DEFAULT}; border-radius: {RADIUS_S}px;
+}}
+QToolButton#toggle:hover {{ background: {BG_HOVER}; color: {TEXT_SECONDARY}; }}
+QToolButton#toggle:checked {{ background: {ACCENT_SOFT}; color: {TEXT_PRIMARY}; }}
+QToolButton#toggle:focus {{ border-color: {ACCENT}; }}
+QToolButton#toggle:disabled {{ color: {TEXT_DISABLED}; }}
+/* Round 6 (SPEC §13 "H<560: ... controls 28"): a `compact` dynamic property
+   (unpolish/polish, same pattern as band cards' `state`) genuinely shrinks
+   these controls' own sizeHint via a smaller min-height/padding -- a plain
+   setFixedHeight() call on the widget alone does *not* shrink the ancestor
+   layout's reserved row height, since Qt layouts size off sizeHint(), not
+   the widget's currently-assigned geometry. */
+QToolButton#toggle[compact="true"] {{ padding: 0 {S2}px; min-height: {CONTROL_HEIGHT_COMPACT}px; }}
+QToolButton#layersMenuButton[compact="true"], QToolButton#timePopoverButton[compact="true"] {{
+    padding: 0 {S2}px; min-height: {CONTROL_HEIGHT_COMPACT}px;
+}}
+/* Round 6 (SPEC §11 "At 683"): Layers collapses into this single menu
+   button + checkable QMenu when the window is in compact mode, and the
+   time sliders collapse into an equivalent "Time ▾" popover below 600px --
+   same control shape as #toggle so the strip still reads as one family. */
+QToolButton#layersMenuButton, QToolButton#timePopoverButton {{
+    color: {TEXT_SECONDARY}; background: {BG_RAISED}; border: 1px solid {BORDER_DEFAULT};
+    border-radius: {RADIUS_S}px; padding: 0 {S3}px; min-height: 26px; font-size: {FONT_CAPTION}px;
+}}
+QToolButton#layersMenuButton:hover, QToolButton#timePopoverButton:hover {{ background: {BG_HOVER}; color: {TEXT_PRIMARY}; }}
+QToolButton#layersMenuButton::menu-indicator, QToolButton#timePopoverButton::menu-indicator {{ width: 0; }}
+/* Round 6 (SPEC §11): slider value labels, Mono, min-width set in code
+   (SLIDER_VALUE_MIN_WIDTH) so "+0 h"/"Live" never jump the slider beside them. */
+QLabel#sliderValue {{ font-family: {FONT_MONO}; font-size: {FONT_CAPTION}px; color: {TEXT_PRIMARY}; background: transparent; }}
+QSlider::groove:horizontal {{ height: 2px; background: {BORDER_DEFAULT}; border-radius: 1px; }}
+QSlider::handle:horizontal {{
+    background: {TEXT_PRIMARY}; border: 2px solid {BG_CANVAS}; width: 12px; height: 12px;
+    margin: -6px 0; border-radius: 8px;
+}}
+QSlider::handle:horizontal:focus {{ border-color: {ACCENT}; }}
+/* Round 6 (SPEC §9 "At 683"): menu-bar corner space-weather summary
+   (SFI/Kp/A), shown only when the window is narrow enough to hide the side
+   panel -- labels tertiary, values Mono secondary, per §12 callout 1. Its
+   text is built from per-span inline colour/font-family (see
+   QtOrbitRxApplication._corner_summary_text), since a single QLabel can't
+   carry two different "label"/"value" objectNames at once; this rule only
+   sets the font-size common to both spans. */
+QLabel#statusCornerSummary {{ font-size: {FONT_CAPTION}px; background: transparent; }}
+/* Round 6 (SPEC §8 "Compact variant"): ~30px band chips at 683/H<560 --
+   name, a state dot (hollow when unknown) and the state word; the
+   frequency moves to the chip's tooltip instead of a second text row. */
+QLabel#bandChipDot {{ font-size: {FONT_CAPTION}px; background: transparent; }}
+QLabel#bandChipWord {{ font-size: {FONT_CAPTION}px; font-weight: 600; background: transparent; }}
 QToolButton#sidePanelToggle {{
     color: {MUTED}; border: 1px solid {BORDER}; border-radius: {RADIUS_M}px;
     padding: 4px 10px; background: transparent; font-size: 13px;

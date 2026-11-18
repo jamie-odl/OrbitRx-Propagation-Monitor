@@ -329,7 +329,11 @@ def test_menu_action_and_header_button_stay_in_sync(window):
     assert window._side_pane.isVisible()
 
 
-def test_side_panel_toggle_disabled_in_compact_mode_and_restored_on_exit(window):
+def test_side_panel_toggle_stays_enabled_in_compact_mode_and_switches_tabs(window):
+    """Round 6 (SPEC §13 "W<820: side panel hidden ... Ctrl+B opens it"):
+    the toggle/action used to be disabled outright in compact mode; now they
+    stay reachable and instead flip _compact_tabs between its Map and
+    Conditions pages, so Ctrl+B still does something useful at every width."""
     window.resize(1280, 800)
     window._update_compact_mode()
     window._side_panel_toggle_btn.setChecked(False)  # collapse while wide
@@ -338,14 +342,17 @@ def test_side_panel_toggle_disabled_in_compact_mode_and_restored_on_exit(window)
     window.resize(600, 500)
     window._update_compact_mode()
     assert window._compact
-    assert not window._side_panel_toggle_btn.isEnabled()
-    assert not window._actions["ShowSidePanel"].isEnabled()
-    # Reachable via its own "Conditions" tab regardless of the wide-mode
-    # collapsed state (not visible until that tab is selected, like any
-    # QTabWidget page).
-    assert window._compact_tabs.indexOf(window._side_pane) != -1
-    window._compact_tabs.setCurrentWidget(window._side_pane)
+    assert window._side_panel_toggle_btn.isEnabled()
+    assert window._actions["ShowSidePanel"].isEnabled()
+    # Starts on the Map tab: the wide-mode collapsed state carried over.
+    assert window._compact_tabs.currentWidget() is window._map_tab
+
+    window._actions["ShowSidePanel"].setChecked(True)
+    assert window._compact_tabs.currentWidget() is window._side_pane
     assert window._side_pane.isVisible()
+
+    window._actions["ShowSidePanel"].setChecked(False)
+    assert window._compact_tabs.currentWidget() is window._map_tab
 
     window.resize(1280, 800)
     window._update_compact_mode()
@@ -354,6 +361,42 @@ def test_side_panel_toggle_disabled_in_compact_mode_and_restored_on_exit(window)
     assert window._actions["ShowSidePanel"].isEnabled()
     # The collapsed state from before compact mode is restored.
     assert not window._side_pane.isVisible()
+
+
+def test_ctrl_b_shows_and_esc_closes_the_side_panel_in_compact_mode(window):
+    """Round 6 (SPEC §13/§15 "683: ... Ctrl+B opens the drawer, and Esc
+    closes it"): not a floating overlay (the tab bar itself stays visible),
+    but the same real outcome -- one keypress reveals the panel content,
+    Esc puts the map back."""
+    _resize_and_settle(window, 683, 485)
+    assert window._compact
+    # The side panel defaults to visible (never collapsed in this test),
+    # so compact mode starts on the Conditions tab -- switch to Map first so
+    # Ctrl+B has something to show.
+    window._actions["ShowSidePanel"].setChecked(False)
+    assert window._compact_tabs.currentWidget() is window._map_tab
+
+    QTest.keyClick(window, Qt.Key.Key_B, Qt.KeyboardModifier.ControlModifier)
+    assert window._compact_tabs.currentWidget() is window._side_pane
+    assert window._actions["ShowSidePanel"].isChecked() is True
+
+    QTest.keyClick(window, Qt.Key.Key_Escape)
+    assert window._compact_tabs.currentWidget() is window._map_tab
+    assert window._actions["ShowSidePanel"].isChecked() is False
+
+    # Esc is a no-op while the Map tab (not the side panel) is showing.
+    QTest.keyClick(window, Qt.Key.Key_Escape)
+    assert window._compact_tabs.currentWidget() is window._map_tab
+
+
+def test_esc_does_not_close_the_side_panel_in_wide_layout(window):
+    """Esc only means "close the compact drawer" (SPEC §13); in the wide
+    splitter layout the side pane has no such keyboard affordance."""
+    _resize_and_settle(window, 1280, 800)
+    assert not window._compact
+    assert window._side_pane.isVisible()
+    QTest.keyClick(window, Qt.Key.Key_Escape)
+    assert window._side_pane.isVisible()
 
 
 def test_splitter_is_collapsible(window):

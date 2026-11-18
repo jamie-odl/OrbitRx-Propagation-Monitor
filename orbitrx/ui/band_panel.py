@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFontMetrics
-from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QStackedLayout, QVBoxLayout, QWidget,
+)
 
 from orbitrx.propagation import HF_BANDS, suggested_dial_freq
-from orbitrx.ui.theme import NO_DATA
+from orbitrx.ui.theme import BAND_CHIP_HEIGHT_COMPACT, FAIR, GOOD, NO_DATA, POOR, UNKNOWN
 
 # M4: tile minimum width; reflow steps down rather than squeezing unreadably.
 TILE_MIN_WIDTH = 110
@@ -33,6 +35,13 @@ _STATE_BADGE_TEXT = {
     "unknown": NO_DATA,
 }
 
+# SPEC §8 "Compact variant": the state word in title case (never "UNKNOWN"),
+# and a filled dot in the state's semantic colour -- hollow (grey outline
+# glyph) when unknown, since colour is never the only cue.
+_STATE_WORD_TEXT = {"good": "Good", "fair": "Fair", "poor": "Poor", "unknown": NO_DATA}
+_STATE_DOT_COLOR = {"good": GOOD, "fair": FAIR, "poor": POOR, "unknown": UNKNOWN}
+_STATE_DOT_GLYPH = {"good": "●", "fair": "●", "poor": "●", "unknown": "○"}
+
 
 def _condition_to_state(condition: str) -> str:
     return _CONDITION_TO_STATE.get(condition.upper(), "unknown")
@@ -54,8 +63,13 @@ class BandPanelWidget(QWidget):
         self._name_labels: dict[str, QLabel] = {}
         self._freq_labels: dict[str, QLabel] = {}
         self._badge_labels: dict[str, QLabel] = {}
+        self._compact_name_labels: dict[str, QLabel] = {}
+        self._dot_labels: dict[str, QLabel] = {}
+        self._word_labels: dict[str, QLabel] = {}
+        self._pages: dict[str, QStackedLayout] = {}
         self._raw: dict[str, str] = {band: f"{suggested_dial_freq(band)} MHz" for band in self._bands}
         self._cols = 0
+        self._compact = False
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setSpacing(8)
@@ -89,16 +103,46 @@ class BandPanelWidget(QWidget):
         top_row.addStretch(1)
         top_row.addWidget(badge_lbl)
 
-        layout = QVBoxLayout(card)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(4)
-        layout.addLayout(top_row)
-        layout.addWidget(freq_lbl)
+        full_page = QWidget()
+        full_layout = QVBoxLayout(full_page)
+        full_layout.setContentsMargins(12, 10, 12, 10)
+        full_layout.setSpacing(4)
+        full_layout.addLayout(top_row)
+        full_layout.addWidget(freq_lbl)
+
+        # SPEC §8 "Compact variant (683, or a window height under 560)":
+        # ~104x30, one row -- name, a state dot, the state word -- with the
+        # frequency moved to the chip's tooltip instead of a second text row.
+        compact_name_lbl = QLabel(band)
+        compact_name_lbl.setObjectName("bandName")
+        dot_lbl = QLabel()
+        dot_lbl.setObjectName("bandChipDot")
+        word_lbl = QLabel()
+        word_lbl.setObjectName("bandChipWord")
+
+        compact_page = QWidget()
+        compact_layout = QHBoxLayout(compact_page)
+        compact_layout.setContentsMargins(10, 0, 10, 0)
+        compact_layout.setSpacing(6)
+        compact_layout.addWidget(compact_name_lbl)
+        compact_layout.addStretch(1)
+        compact_layout.addWidget(dot_lbl)
+        compact_layout.addWidget(word_lbl)
+
+        pages = QStackedLayout(card)
+        pages.setContentsMargins(0, 0, 0, 0)
+        pages.addWidget(full_page)
+        pages.addWidget(compact_page)
+        pages.setCurrentIndex(0)
 
         self._cards[band] = card
         self._name_labels[band] = name_lbl
         self._freq_labels[band] = freq_lbl
         self._badge_labels[band] = badge_lbl
+        self._compact_name_labels[band] = compact_name_lbl
+        self._dot_labels[band] = dot_lbl
+        self._word_labels[band] = word_lbl
+        self._pages[band] = pages
 
     def _columns_for_width(self, width: int) -> int:
         return max(1, min(3, width // 120))
@@ -127,12 +171,41 @@ class BandPanelWidget(QWidget):
         for w in (card, badge):
             w.style().unpolish(w)
             w.style().polish(w)
+        dot = self._dot_labels[band]
+        word = self._word_labels[band]
+        dot.setText(_STATE_DOT_GLYPH[state])
+        dot.setStyleSheet(f"color: {_STATE_DOT_COLOR[state]};")
+        word.setText(_STATE_WORD_TEXT[state])
+        word.setStyleSheet(f"color: {_STATE_DOT_COLOR[state]};")
+
+    def set_compact(self, compact: bool) -> None:
+        """SPEC §8 "Compact variant (683, or a window height under 560)" --
+        swaps every card's QStackedLayout page and fixes the card height to
+        BAND_CHIP_HEIGHT_COMPACT (~30px); the frequency moves to the card's
+        tooltip instead of a second text row."""
+        if self._compact == compact:
+            return
+        self._compact = compact
+        for band, card in self._cards.items():
+            self._pages[band].setCurrentIndex(1 if compact else 0)
+            if compact:
+                card.setFixedHeight(BAND_CHIP_HEIGHT_COMPACT)
+                card.setToolTip(self._raw[band])
+            else:
+                card.setMinimumHeight(0)
+                card.setMaximumHeight(16777215)
+                card.setToolTip("")
+        self._reflow_text()
+
+    def is_compact(self) -> bool:
+        return self._compact
 
     def _reflow_text(self) -> None:
         cols = max(1, self._cols)
         tile_w = max(TILE_MIN_WIDTH, self.width() // cols)
         name_avail = max(1, tile_w - 24 - 48)  # card padding minus badge+gap estimate
         freq_avail = max(1, tile_w - 24)       # card padding only, full-width row
+        compact_name_avail = max(1, tile_w - 20 - 48)  # compact padding minus dot+word estimate
         for band in self._bands:
             name_lbl = self._name_labels[band]
             freq_lbl = self._freq_labels[band]
@@ -140,10 +213,17 @@ class BandPanelWidget(QWidget):
             name_lbl.setText(name_fm.elidedText(band, Qt.TextElideMode.ElideRight, name_avail))
             freq_fm = QFontMetrics(freq_lbl.font())
             freq_lbl.setText(freq_fm.elidedText(self._raw[band], Qt.TextElideMode.ElideRight, freq_avail))
+            compact_name_lbl = self._compact_name_labels[band]
+            compact_fm = QFontMetrics(compact_name_lbl.font())
+            compact_name_lbl.setText(
+                compact_fm.elidedText(band, Qt.TextElideMode.ElideRight, compact_name_avail)
+            )
 
     def update_grid(self, band_grid: dict[str, str]) -> None:
-        for band in self._cards:
+        for band, card in self._cards.items():
             condition = band_grid.get(band, "UNKNOWN")
             self._apply_state(band, _condition_to_state(condition))
             self._raw[band] = f"{suggested_dial_freq(band)} MHz"
+            if self._compact:
+                card.setToolTip(self._raw[band])
         self._reflow_text()
