@@ -39,13 +39,14 @@ from PySide6.QtTest import QTest
 LARGE_AVAIL = QRect(0, 0, 1920, 1200)
 
 
-def _wait_until(predicate, timeout_s: float = 2.0, step_ms: int = 20) -> None:
+def _wait_until(predicate, timeout_s: float = 2.0, step_ms: int = 20, diag=None) -> None:
     """Poll `predicate` while pumping the event loop instead of trusting a
     single resize() + one processEvents() to have fully settled a
     QSplitter/QTabWidget reflow -- a slow CI runner can need more than one
     event-loop turn after a resize or a reparent (_enter_compact_mode /
     _exit_compact_mode) before child widths actually update. Returns as soon
-    as `predicate` is true (often immediately); only sleeps if it isn't."""
+    as `predicate` is true (often immediately); only sleeps if it isn't.
+    `diag`, if given, is called to build a diagnostic message on timeout."""
     from PySide6.QtWidgets import QApplication
 
     app = QApplication.instance()
@@ -56,7 +57,57 @@ def _wait_until(predicate, timeout_s: float = 2.0, step_ms: int = 20) -> None:
         app.processEvents()
         QTest.qWait(step_ms)
         elapsed += step_ms / 1000.0
-    assert predicate(), "timed out waiting for layout to settle"
+    message = "timed out waiting for layout to settle"
+    if diag is not None:
+        message = f"{message}: {diag()}"
+    assert predicate(), message
+
+
+def _layout_diag(window) -> str:
+    """Dump every piece of state relevant to side-pane/splitter sizing, for
+    windows-latest-only CI failures that don't reproduce locally -- without
+    this, a timeout just says a predicate never became true and gives no clue
+    whether the window itself never reached the resized-to size, the splitter
+    never got real width, or the side pane is being clamped by its own min/max."""
+    splitter = getattr(window, "_splitter", None)
+    side_pane = getattr(window, "_side_pane", None)
+    screen = window.screen()
+    return (
+        f"window.size()={window.size()} geometry={window.geometry()} "
+        f"minimumSize={window.minimumSize()} maximumSize={window.maximumSize()} "
+        f"compact={getattr(window, '_compact', None)} "
+        f"splitter_user_resized={getattr(window, '_splitter_user_resized', None)} "
+        f"splitter.width()={splitter.width() if splitter is not None else None} "
+        f"splitter.sizes()={splitter.sizes() if splitter is not None else None} "
+        f"side_pane.isVisible()={side_pane.isVisible() if side_pane is not None else None} "
+        f"side_pane.width()={side_pane.width() if side_pane is not None else None} "
+        f"side_pane.minimumWidth()={side_pane.minimumWidth() if side_pane is not None else None} "
+        f"side_pane.maximumWidth()={side_pane.maximumWidth() if side_pane is not None else None} "
+        f"side_pane.sizeHint()={side_pane.sizeHint() if side_pane is not None else None} "
+        f"screen.availableGeometry()={screen.availableGeometry() if screen is not None else None}"
+    )
+
+
+def _resize_and_settle(window, width: int, height: int, timeout_s: float = 2.0) -> None:
+    """resize() a top-level window and wait for it to actually report that
+    size before touching layout state that depends on it. On some platforms
+    a top-level resize() doesn't apply synchronously -- self.width()/height()
+    can still read the pre-resize value for one or more event-loop turns --
+    so asserting on derived layout (splitter/side-pane widths) before the
+    resize itself has visibly landed chases a moving target. Isolating that
+    wait here also makes a genuine "the test harness never resized the
+    window" platform artifact fail with its own clear message instead of
+    masquerading as a layout bug."""
+    window.resize(width, height)
+    _wait_until(
+        lambda: window.width() == width and window.height() == height,
+        timeout_s=timeout_s,
+        diag=lambda: (
+            f"window never reported the resized-to size {width}x{height}: "
+            + _layout_diag(window)
+        ),
+    )
+    window._update_compact_mode()
 
 
 @pytest.fixture
@@ -106,10 +157,12 @@ def test_map_pane_is_at_least_65_percent_of_central_width_at_1280x800(window):
 
 
 def test_side_pane_default_width_is_roughly_280_to_320px(window):
-    window.resize(1280, 800)
-    window._update_compact_mode()
-    _wait_until(lambda: 260 <= window._side_pane.width() <= 340)
-    assert 260 <= window._side_pane.width() <= 340, window._side_pane.width()
+    _resize_and_settle(window, 1280, 800)
+    _wait_until(
+        lambda: 260 <= window._side_pane.width() <= 340,
+        diag=lambda: _layout_diag(window),
+    )
+    assert 260 <= window._side_pane.width() <= 340, _layout_diag(window)
 
 
 def test_regression_small_initial_width_then_resize_still_reaches_default_side_pane_width(window):
@@ -117,20 +170,23 @@ def test_regression_small_initial_width_then_resize_still_reaches_default_side_p
     is first called from __init__, before show() has established the window's
     real geometry -- on that platform self.width() can report a small
     provisional value there (observed: 254px), which clamps the computed
-    side-pane width down (width - 200) and used to latch *that* shrunken
-    value in as "the default is applied", via a sizes()[1] > 0 check that a
-    tiny width also satisfies. Every later resize then saw the latch already
-    set and skipped reapplying the real ~300px default, leaving the side
-    pane stuck at a few dozen pixels even at 1280x800. Simulates that exact
-    ordering directly rather than relying on the host platform's own
-    pre-show width quirks."""
+    side-pane width down (width - 200). A prior fix latched "the default is
+    applied" the first time sizes()[1] was merely > 0, which a tiny
+    provisional width also satisfied, so every later resize saw that latch
+    already set and skipped reapplying the real ~300px default, leaving the
+    side pane stuck at a few dozen pixels even at 1280x800.
+    _apply_default_splitter_sizes() now has no such latch: resizeEvent()
+    re-runs it on every resize until the user actually drags the splitter
+    handle (tracked via splitterMoved, see _splitter_user_resized), so a bad
+    provisional width self-heals on the very next resize instead of sticking.
+    Simulates that exact ordering directly rather than relying on the host
+    platform's own pre-show width quirks."""
     # Hold compact-mode switching off while shrinking the window, matching
     # __init__'s real ordering: _apply_default_splitter_sizes() runs at line
     # 880 (while the window can report a small provisional width) *before*
     # _update_compact_mode() is ever called at line 888, so the splitter
     # still has both children at that point instead of having been torn
     # down into compact tabs.
-    window._splitter_sizes_applied = False
     original_update_compact_mode = window._update_compact_mode
     window._update_compact_mode = lambda: None
     try:
@@ -138,14 +194,16 @@ def test_regression_small_initial_width_then_resize_still_reaches_default_side_p
         window._apply_default_splitter_sizes()
     finally:
         window._update_compact_mode = original_update_compact_mode
-    assert window._splitter_sizes_applied is False, (
-        "a provisional narrow width must not latch a shrunken side-pane size in as the default"
+    assert window._splitter_user_resized is False, (
+        "a provisional narrow width is not a user drag and must not freeze the default in place"
     )
 
-    window.resize(1280, 800)
-    window._update_compact_mode()
-    _wait_until(lambda: 260 <= window._side_pane.width() <= 340)
-    assert 260 <= window._side_pane.width() <= 340, window._side_pane.width()
+    _resize_and_settle(window, 1280, 800)
+    _wait_until(
+        lambda: 260 <= window._side_pane.width() <= 340,
+        diag=lambda: _layout_diag(window),
+    )
+    assert 260 <= window._side_pane.width() <= 340, _layout_diag(window)
 
 
 def test_windows_ci_regression_compact_startup_then_resize_to_wide(window):

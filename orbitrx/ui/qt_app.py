@@ -877,6 +877,8 @@ class QtOrbitRxApplication(QMainWindow):
         self._splitter.setStretchFactor(0, 3)
         self._splitter.setStretchFactor(1, 1)
         self._splitter.setChildrenCollapsible(True)
+        self._splitter_user_resized = False
+        self._splitter.splitterMoved.connect(self._on_splitter_moved_by_user)
         self._apply_default_splitter_sizes()
 
         self._compact_tabs = QTabWidget()
@@ -2024,7 +2026,7 @@ class QtOrbitRxApplication(QMainWindow):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._update_compact_mode()
-        if not self._compact and not getattr(self, "_splitter_sizes_applied", False):
+        if not self._compact and not getattr(self, "_splitter_user_resized", False):
             self._apply_default_splitter_sizes()
         self._toasts.reposition()
 
@@ -2059,29 +2061,35 @@ class QtOrbitRxApplication(QMainWindow):
             self._exit_compact_mode()
         self._apply_map_min_height()
 
+    def _on_splitter_moved_by_user(self, pos: int, index: int) -> None:
+        """QSplitter.setSizes() never emits splitterMoved (only an actual
+        handle drag does), so this only fires for a genuine user resize --
+        once it has, _apply_default_splitter_sizes() backs off permanently
+        instead of fighting the user's choice on the next resize event."""
+        self._splitter_user_resized = True
+
     def _apply_default_splitter_sizes(self) -> None:
         """Explicit ~300px side-pane default. QSplitter.setSizes() only takes
         effect once the splitter has real width to distribute; before the
         first show/resize (or right after _exit_compact_mode re-inserts a
-        child QSplitter forgot the size of) that width is 0 and the call is a
-        no-op, so this re-runs from showEvent/resizeEvent until it has stuck.
-
-        On some platforms (observed on windows-latest CI) the window can
-        report a small provisional width -- e.g. a pre-layout default --
-        before its real geometry is established. If that provisional width
-        clamps side_w down (width - 200 < 300) and we latched on sizes()[1]
-        > 0 alone, the shrunken size would stick forever since every later
-        resize sees _splitter_sizes_applied already True and skips re-
-        applying the default. Only latch once side_w reflects the actual
-        ~300px target, which always holds once the window has reached a
-        normal (non-compact) width; a genuine user drag below that is never
-        observed here because this only runs while not latched yet."""
-        width = self.width()
-        if width <= 0 or getattr(self, "_splitter", None) is None:
+        child QSplitter) that width can be 0 or a small provisional value --
+        e.g. a pre-layout default, or (observed on windows-latest CI) a
+        top-level window whose resize() hasn't fully propagated to self.width()
+        yet. Rather than latching "the default is applied" after any single
+        call (which can permanently stick a shrunken size computed from a
+        provisional width, since a later resizeEvent would then see the latch
+        already set and skip re-applying the real default), this has no
+        latch of its own: resizeEvent() re-runs it on every resize until the
+        user actually drags the handle (see _on_splitter_moved_by_user), so a
+        bad provisional width self-heals on the very next resize instead of
+        sticking forever."""
+        if getattr(self, "_splitter", None) is None:
+            return
+        width = self._splitter.width() or self.width()
+        if width <= 0:
             return
         side_w = min(300, max(0, width - 200))
         self._splitter.setSizes([max(0, width - side_w), side_w])
-        self._splitter_sizes_applied = side_w >= 280 and self._splitter.sizes()[1] >= 280
 
     def _enter_compact_mode(self) -> None:
         self._compact = True
