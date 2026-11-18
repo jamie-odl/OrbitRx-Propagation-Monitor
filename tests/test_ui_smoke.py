@@ -96,13 +96,20 @@ def _pump(app, seconds: float) -> None:
 
 @pytest.mark.parametrize("width,height", [(1280, 800), (683, 485)])
 def test_map_fills_viewport_with_no_letterbox(tmp_path, monkeypatch, width, height):
-    """Owner fix: dark empty bands above/below (or left/right of) the map are
-    not acceptable at any window size. map_widget._fit_scene_rect() always
-    fitInView(KeepAspectRatioByExpanding), so the basemap's mapped rect must
-    cover the whole viewport on every edge (cropping symmetrically off
-    whichever axis the pane's own aspect overshoots), and the fit must stay a
-    uniform zoom (m11 == m22) so overlay/marker items -- drawn in the same
-    scene coordinates as the basemap -- never drift out of alignment."""
+    """Owner decision (e) (P4-8): dark/black matte bands around the map are
+    never acceptable, but neither is cropping longitude to avoid them -- the
+    full -180..180 range must always stay on-screen (see
+    tests/test_map_full_longitude.py for that check in detail). So
+    map_widget._fit_scene_rect() no longer unconditionally cover-fits
+    (cropping whichever axis overshoots); it pads the fit rect with
+    MAP_OCEAN-coloured margin instead, whenever the viewport's own aspect
+    doesn't exactly match the basemap's 2:1. This test checks what's left of
+    the old "no letterbox" guarantee: the basemap is never cropped
+    horizontally (its full mapped width always lies inside the viewport, so
+    no longitude is ever scrolled out of view), any margin around it is
+    ocean-coloured rather than black/matte, and the fit stays a uniform zoom
+    (m11 == m22) so overlay/marker items -- drawn in the same scene
+    coordinates as the basemap -- never drift out of alignment."""
     monkeypatch.chdir(tmp_path)
     from PySide6.QtCore import QRect
     from PySide6.QtWidgets import QApplication
@@ -133,6 +140,9 @@ def test_map_fills_viewport_with_no_letterbox(tmp_path, monkeypatch, width, heig
     win.map_widget.join_rebuild_thread(timeout=5.0)
     app.processEvents()
 
+    from PySide6.QtGui import QColor
+    from orbitrx.ui.theme import MAP_OCEAN
+
     view = win.map_widget.view
     vp = view.viewport()
     rect = win.map_widget._base_item.sceneBoundingRect()
@@ -143,16 +153,20 @@ def test_map_fills_viewport_with_no_letterbox(tmp_path, monkeypatch, width, heig
     left, top, right, bottom = tl.x(), tl.y(), br.x(), br.y()
     m11, m22 = t.m11(), t.m22()
 
-    # fitInView's own scale/centering rounds to whole device pixels, so the
-    # axis that's supposed to match the viewport exactly can land 2-3px shy
-    # of it rather than exactly 0 -- a gap far too small to read as a dark
-    # bar, but real, so the coverage check allows it rather than demanding
-    # exact equality.
+    # fitInView's own scale/centering rounds to whole device pixels, so a
+    # boundary that's supposed to land exactly on an edge can be a couple of
+    # px off -- real, but far too small to read as a dark bar or a cropped
+    # sliver of longitude.
     TOLERANCE = 3
-    assert left <= TOLERANCE, (left, top, right, bottom, vp_w, vp_h)
-    assert top <= TOLERANCE, (left, top, right, bottom, vp_w, vp_h)
-    assert right >= vp_w - TOLERANCE, (left, top, right, bottom, vp_w, vp_h)
-    assert bottom >= vp_h - TOLERANCE, (left, top, right, bottom, vp_w, vp_h)
+    # Full longitude stays on-screen: the basemap's own mapped width never
+    # exceeds the viewport (it may sit inset from the edges, with ocean
+    # margin either side, but it's never cropped off past them).
+    assert left >= -TOLERANCE, (left, top, right, bottom, vp_w, vp_h)
+    assert right <= vp_w + TOLERANCE, (left, top, right, bottom, vp_w, vp_h)
+    # Any margin around the basemap (top/bottom padding, or left/right in the
+    # rare extreme-aspect case) is ocean-coloured, never the old black/matte
+    # fallback brush.
+    assert view.backgroundBrush().color() == QColor(MAP_OCEAN)
     assert m11 == pytest.approx(m22), (m11, m22)
 
     win.ctrl.stop()

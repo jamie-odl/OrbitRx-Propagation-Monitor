@@ -127,6 +127,20 @@ MAP_GRATICULE_EQUATOR = "#1A2230"
 MAP_NIGHT = "rgba(4,7,13,0.62)"
 SPOT = "#B48CFF"
 
+# P4-8 (SPEC §7/§10): in-map chrome parented to mapFrame -- bottom-left
+# legend/caption and the two centred status pills (no-spots, existing;
+# cluster-disconnected, new). Same translucent-pill shape as the pre-existing
+# EMPTY_OVERLAY_STYLE (kept separate rather than reused, since this one's
+# text colour is semantic FAIR, not neutral).
+MAP_CLUSTER_PILL_STYLE = (
+    f"color: {FAIR}; font-size: 13px; background: rgba(15,23,32,0.85); "
+    "border-radius: 14px; padding: 8px 14px;"
+)
+MAP_LEGEND_STYLE = (
+    f"color: {TEXT_SECONDARY}; font-size: {FONT_CAPTION}px; "
+    "background: rgba(10,13,18,0.78); border-radius: 6px; padding: 4px 10px;"
+)
+
 # P4-7 (SPEC §9 item 3): Kp 24h sparkline bar colour below the Kp>=4
 # threshold (bars at/above it use FAIR instead, see propagation.kp_state).
 SPARK_BAR = "#3A465A"
@@ -294,6 +308,11 @@ QToolButton#segButton:checked {{
 /* P4-3: QMenuBar.setCornerWidget -- cluster dot + UTC clock (SPEC §6.1/§6.2). */
 QWidget#statusCorner QLabel {{ color: {TEXT_TERTIARY}; font-size: {FONT_CAPTION}px; background: transparent; }}
 QLabel#statusCornerClock {{ font-family: {FONT_MONO}; }}
+/* P4-8: the frame wrapping PropagationMapWidget (SPEC §7) -- a MAP_OCEAN
+   background so the never-letterbox padding added by _fit_scene_rect() is
+   ocean-coloured rather than pure black even before the view's own
+   background brush paints over it. */
+QFrame#mapFrame {{ background: {MAP_OCEAN}; border: 1px solid {BORDER_SUBTLE}; border-radius: 8px; }}
 /* P4-5: band cards (SPEC §8) -- QFrame#bandCard + 3 child labels, themed
    entirely through the "state" dynamic property (good|fair|poor|unknown),
    never a per-card inline styleSheet. bandFreq uses FONT_CAPTION (11px) not

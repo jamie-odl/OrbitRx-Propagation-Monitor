@@ -112,21 +112,25 @@ def test_window_fit_clamping_still_works_at_150pct(tmp_path):
 
 @pytest.mark.parametrize("map_probe_size", ["1280x800", "683x485"])
 def test_map_fills_the_viewport_with_no_letterbox_at_150pct(tmp_path, map_probe_size):
-    """Owner fix: dark letterbox/gutter bars around the map are not acceptable
-    at any size, including under a real 150% device pixel ratio. The basemap's
-    mapped rect must cover the whole viewport (map_widget._fit_scene_rect()
-    always fitInView(KeepAspectRatioByExpanding)), and the fitted scale must
-    stay uniform (m11 == m22) so overlays/markers -- drawn in the same scene
-    coordinates as the basemap -- never drift out of alignment."""
+    """Owner decision (e) (P4-8), 150% DPI analogue of
+    tests/test_ui_smoke.py's equivalent check: the full -180..180 longitude
+    range must stay on-screen (the basemap's mapped width never exceeds the
+    viewport), and any margin around the basemap is ocean-coloured rather
+    than the old black/matte fallback brush -- not "zero excess", since
+    keeping the full longitude visible at 1280x800 necessarily means some
+    ocean padding above/below. The fit must still be a uniform zoom
+    (m11 == m22) so overlays/markers -- drawn in the same scene coordinates
+    as the basemap -- never drift out of alignment."""
+    from PySide6.QtGui import QColor
+    from orbitrx.ui.theme import MAP_OCEAN
+
     report = _dpi_report(tmp_path, *SPACIOUS_AVAIL, map_probe_size=map_probe_size)
 
     # Same rounding tolerance as tests/test_ui_smoke.py's equivalent check:
-    # fitInView's own scale/centering rounds to whole device pixels, so the
-    # axis meant to match the viewport exactly can land a couple of pixels
-    # shy of it -- far too small to read as a dark bar, but real.
+    # fitInView's own scale/centering rounds to whole device pixels, so a
+    # boundary meant to land exactly on an edge can be a couple of pixels off.
     TOLERANCE = 3
-    assert report["map_left"] <= TOLERANCE
-    assert report["map_top"] <= TOLERANCE
-    assert report["map_right"] >= report["map_vp_w"] - TOLERANCE
-    assert report["map_bottom"] >= report["map_vp_h"] - TOLERANCE
+    assert report["map_left"] >= -TOLERANCE
+    assert report["map_right"] <= report["map_vp_w"] + TOLERANCE
+    assert report["map_bg_color"] == QColor(MAP_OCEAN).name()
     assert report["map_m11"] == pytest.approx(report["map_m22"])

@@ -9,7 +9,10 @@ from PIL import Image
 
 from orbitrx.map_renderer import MapLayers, MapRenderer, MapScene
 from orbitrx.ui.formatting import format_hour_offset, format_map_hud_datetime
-from orbitrx.ui.theme import BG_MAP_MATTE, EMPTY_OVERLAY_STYLE, FONT_CAPTION, GREYLINE, MUTED, OK, WARN
+from orbitrx.ui.theme import (
+    EMPTY_OVERLAY_STYLE, FONT_CAPTION, GREYLINE, MAP_CLUSTER_PILL_STYLE, MAP_LEGEND_STYLE,
+    MAP_OCEAN, MUTED, OK, SPOT, WARN,
+)
 
 try:
     from PySide6.QtCore import Qt, QRectF, Signal
@@ -50,6 +53,20 @@ class _MapStateSnapshot:
 # window never swamps the view.
 MAX_LIVE_ARCS = 200
 MAX_LIVE_HEAT_CELLS = 40
+
+# P4-8 (SPEC §7 / owner decision (e)): longitude is never cropped, only
+# latitude, and only up to this many degrees off either pole (aurora stays
+# visible) -- see _padded_scene_rect(). The vertical centre bias used while
+# cropping, per SPEC §7's centre rule ("about 10N, because the populated,
+# HF-relevant latitudes sit north of the equator").
+MAX_POLE_CROP_DEG = 15.0
+MAP_CENTER_LAT_DEG = 10.0
+
+# Map-pane width below which the three-item in-map legend no longer fits
+# comfortably and is replaced by the single greyline-timestamp caption
+# (SPEC §7's 683-wide behaviour) -- same breakpoint _MapControlStrip already
+# collapses the layer-chip row at (qt_app.py's _SINGLE_ROW_MIN_WIDTH).
+LEGEND_COMPACT_WIDTH = 820
 
 
 def _pil_to_qimage(img: Image.Image) -> QImage:
@@ -120,10 +137,14 @@ class PropagationMapWidget(QWidget):
         self._pan_anchor = None
         self.view.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
-        # Fallback fill behind the scene before the first basemap pixmap is
-        # loaded/fitted; _fit_scene_rect() always crops to fill the viewport
-        # afterwards, so this brush is never actually visible once running.
-        self.view.setBackgroundBrush(QBrush(QColor(BG_MAP_MATTE)))
+        # Ocean-coloured fill behind the scene (SPEC §7: "a MAP_OCEAN
+        # background, so there is never pure black"). Before P4-8 this brush
+        # was only a pre-fit fallback, invisible once running; _fit_scene_rect()
+        # now deliberately leaves ocean-coloured margin visible around the
+        # basemap whenever the viewport's aspect ratio doesn't exactly match
+        # the basemap's own 2:1 (see _padded_scene_rect), so this colour is
+        # genuinely on-screen, not just a placeholder.
+        self.view.setBackgroundBrush(QBrush(QColor(MAP_OCEAN)))
         layout.addWidget(self.view, stretch=1)
 
         self.scene = QGraphicsScene()
@@ -156,21 +177,107 @@ class PropagationMapWidget(QWidget):
         self._empty_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._empty_overlay.hide()
 
+        # P4-8 (SPEC §10 / "Cluster disconnected"): a second centred pill,
+        # stacked above the no-spots pill when both are visible at once --
+        # driven only by the real DX-cluster connection state (qt_app.py's
+        # _render_cluster_label calls set_cluster_pill()), never a sample.
+        self._cluster_pill = QLabel("", self)
+        self._cluster_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._cluster_pill.setWordWrap(False)
+        self._cluster_pill.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._cluster_pill.setStyleSheet(MAP_CLUSTER_PILL_STYLE)
+        self._cluster_pill.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._cluster_pill.hide()
+
+        # P4-8 (SPEC §7): bottom-left in-map legend (Greyline/Night/DX spot),
+        # replaced by the greyline timestamp caption alone once the pane is
+        # narrower than LEGEND_COMPACT_WIDTH. Both are static/real -- the
+        # legend names colours, the caption's text comes from the same real
+        # `meta` string _apply_scene() already computes.
+        self._legend_lbl = QLabel("", self)
+        self._legend_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._legend_lbl.setWordWrap(False)
+        self._legend_lbl.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._legend_lbl.setStyleSheet(MAP_LEGEND_STYLE)
+        self._legend_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._legend_lbl.setText(
+            f'<span style="color:{GREYLINE}">●</span> Greyline &nbsp;&nbsp; '
+            f'<span style="color:{MUTED}">■</span> Night &nbsp;&nbsp; '
+            f'<span style="color:{SPOT}">●</span> DX spot'
+        )
+
+        self._legend_caption_lbl = QLabel("", self)
+        self._legend_caption_lbl.setWordWrap(False)
+        self._legend_caption_lbl.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self._legend_caption_lbl.setStyleSheet(MAP_LEGEND_STYLE)
+        self._legend_caption_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._legend_caption_lbl.hide()
+        self._greyline_meta_text = ""
+        self._reposition_legend()
+
     def set_empty_overlay(self, text: str) -> None:
         self._empty_overlay.setText(text)
-        self._reposition_empty_overlay()
         self._empty_overlay.setVisible(bool(text))
+        self._reposition_center_pills()
         if text:
             self._empty_overlay.raise_()
 
+    def set_cluster_pill(self, text: str) -> None:
+        self._cluster_pill.setText(text)
+        self._cluster_pill.setVisible(bool(text))
+        self._reposition_center_pills()
+        if text:
+            self._cluster_pill.raise_()
+
     def _reposition_empty_overlay(self) -> None:
-        """Size the pill to its text and centre it (S2: a centred pill, not a
-        label stretched across the whole map)."""
+        """Kept as the pre-existing public-ish entry point (resizeEvent,
+        set_empty_overlay) -- now repositions every in-map overlay, not just
+        the no-spots pill, since the cluster pill and legend share the same
+        geometry-on-resize concern."""
+        self._reposition_center_pills()
+        self._reposition_legend()
+
+    def _reposition_center_pills(self) -> None:
+        """Stacks the cluster pill above the no-spots pill when both are
+        visible at once (S2: a centred pill, not a label stretched across the
+        whole map), rather than overlapping them."""
+        gap = 8
         self._empty_overlay.adjustSize()
-        self._empty_overlay.move(
-            (self.width() - self._empty_overlay.width()) // 2,
-            (self.height() - self._empty_overlay.height()) // 2,
-        )
+        self._cluster_pill.adjustSize()
+        cluster_visible = self._cluster_pill.isVisible()
+        empty_visible = self._empty_overlay.isVisible()
+        total_h = 0
+        if cluster_visible:
+            total_h += self._cluster_pill.height()
+        if cluster_visible and empty_visible:
+            total_h += gap
+        if empty_visible:
+            total_h += self._empty_overlay.height()
+        y = (self.height() - total_h) // 2
+        if cluster_visible:
+            self._cluster_pill.move((self.width() - self._cluster_pill.width()) // 2, y)
+            y += self._cluster_pill.height() + gap
+        if empty_visible:
+            self._empty_overlay.move((self.width() - self._empty_overlay.width()) // 2, y)
+
+    def _reposition_legend(self) -> None:
+        """SPEC §7: bottom-left legend at full width, swapped for the
+        greyline timestamp caption alone once the pane gets too narrow for
+        all three legend entries (same breakpoint the control strip's layer
+        chips collapse to a menu at)."""
+        inset = 12
+        compact = self.width() < LEGEND_COMPACT_WIDTH
+        if compact:
+            self._legend_lbl.hide()
+            self._legend_caption_lbl.setText(self._greyline_meta_text)
+            self._legend_caption_lbl.setVisible(bool(self._greyline_meta_text))
+            self._legend_caption_lbl.adjustSize()
+            self._legend_caption_lbl.move(8, self.height() - self._legend_caption_lbl.height() - 8)
+        else:
+            self._legend_caption_lbl.hide()
+            self._legend_lbl.setVisible(True)
+            self._legend_lbl.adjustSize()
+            self._legend_lbl.move(inset, self.height() - self._legend_lbl.height() - inset)
 
     def set_layers(self, layers: MapLayers) -> None:
         if (
@@ -202,21 +309,92 @@ class PropagationMapWidget(QWidget):
         self._fit_scene_rect(QRectF(0, 0, w, h))
         self._view_fitted = True
 
+    def _padded_scene_rect(self, image_rect: QRectF, viewport_aspect: float) -> QRectF:
+        """P4-8 -- owner decision (e) overrides SPEC §7's longitude crop: the
+        full -180..180 range must stay on-screen at every window size, with
+        only latitude ever cropped, capped at MAX_POLE_CROP_DEG per pole.
+
+        Returns a rect in the same scene coordinates as image_rect, with
+        `viewport_aspect` as its own width/height ratio, built one of two
+        ways:
+        - If the viewport is proportionally taller than the 2:1 basemap (the
+          common 1280x800 case), the rect is *wider* than the image in scene
+          terms -- really it pads the image's height so the aspect matches,
+          adding ocean-coloured margin above/below (painted by the view's own
+          MAP_OCEAN background brush, since nothing is drawn there) rather
+          than ever touching width/longitude.
+        - If the viewport is proportionally wider than 2:1 (e.g. 683x485),
+          latitude crops instead, biased toward MAP_CENTER_LAT_DEG per SPEC
+          §7's centre rule, but never by more than MAX_POLE_CROP_DEG off
+          either pole; if even that budget-capped crop can't reach the
+          viewport's aspect (an extreme, rare window shape), the remainder is
+          made up by padding width with ocean margin instead of cropping
+          latitude further -- longitude is still never cropped.
+        """
+        img_w, img_h = image_rect.width(), image_rect.height()
+        if img_w <= 0 or img_h <= 0 or viewport_aspect <= 0:
+            return image_rect
+        img_aspect = img_w / img_h
+
+        deg_per_px_lat = 180.0 / img_h
+        max_crop_px = MAX_POLE_CROP_DEG / deg_per_px_lat
+        min_visible_h = max(1.0, img_h - 2 * max_crop_px)
+
+        if viewport_aspect <= img_aspect:
+            padded_w = img_w
+            padded_h = img_w / viewport_aspect
+        else:
+            desired_h = img_w / viewport_aspect
+            if desired_h >= min_visible_h:
+                padded_w = img_w
+                padded_h = desired_h
+            else:
+                padded_h = min_visible_h
+                padded_w = padded_h * viewport_aspect
+
+        x0 = image_rect.x() - (padded_w - img_w) / 2.0
+        if padded_h >= img_h:
+            y0 = image_rect.y() - (padded_h - img_h) / 2.0
+        else:
+            # Biasing the crop window toward MAP_CENTER_LAT_DEG can't be
+            # allowed to push either pole's own crop past max_crop_px even
+            # though the *total* north+south crop is within budget (e.g. an
+            # unclamped bias could zero out the north crop while doubling
+            # the south one) -- clamp the north-side crop individually so
+            # both poles stay within budget, same as the symmetric fallback
+            # above already guarantees.
+            total_crop_px = img_h - padded_h
+            center_y_local = img_h / 2.0 - (MAP_CENTER_LAT_DEG / 90.0) * (img_h / 2.0)
+            top_local_natural = center_y_local - padded_h / 2.0
+            lo = max(0.0, total_crop_px - max_crop_px)
+            hi = min(total_crop_px, max_crop_px)
+            top_local = max(lo, min(top_local_natural, hi))
+            y0 = image_rect.y() + top_local
+
+        return QRectF(x0, y0, padded_w, padded_h)
+
     def _fit_scene_rect(self, rect: QRectF) -> None:
-        """Always fitInView(KeepAspectRatioByExpanding): the view is scaled
-        uniformly (same x/y factor, so overlays/markers drawn in the same
-        scene coordinates never drift out of alignment with the basemap) and
-        centred, filling the viewport completely in both directions. Whatever
-        the pane's own aspect ratio is relative to the basemap's 2:1, the
-        excess is cropped off both edges of whichever axis overshoots --
-        symmetrically, since fitInView centres the rect -- rather than ever
-        leaving a dark letterbox/gutter bar (previously only cropped when the
-        pane was proportionally wider than 2:1; now applied unconditionally
-        so a pane proportionally *taller* than 2:1, e.g. plain 1280x800, no
-        longer letterboxes top/bottom either)."""
+        """Fits `rect` (the real basemap's bounding rect) into the viewport
+        via a scene rect padded to the viewport's own aspect ratio
+        (_padded_scene_rect) rather than cropping whichever axis the
+        viewport's own aspect overshoots (the old unconditional
+        KeepAspectRatioByExpanding behaviour, which cropped longitude at
+        1280x800 -- see p4-findings.md "(e) Map framing"). Once the padded
+        rect's aspect matches the viewport's, KeepAspectRatio (contain) and
+        KeepAspectRatioByExpanding (cover) are identical, since there's
+        nothing left to crop or letterbox; KeepAspectRatio is used as the
+        "fit exactly" intent. The view is still scaled uniformly (m11==m22),
+        so overlays/markers drawn in the same scene coordinates as the
+        basemap never drift out of alignment."""
         if rect.width() <= 0 or rect.height() <= 0:
             return
-        self.view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatioByExpanding)
+        vp = self.view.viewport()
+        vp_w, vp_h = vp.width(), vp.height()
+        if vp_w <= 0 or vp_h <= 0:
+            self.view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatioByExpanding)
+            return
+        padded = self._padded_scene_rect(rect, vp_w / vp_h)
+        self.view.fitInView(padded, Qt.AspectRatioMode.KeepAspectRatio)
 
     def _overlay_refresh_key(self, scene: MapScene, snapshot: _MapStateSnapshot) -> tuple:
         return (
@@ -342,6 +520,8 @@ class PropagationMapWidget(QWidget):
         meta = f"Greyline @ {format_map_hud_datetime(now)}{extra}"
         self.hud.setText("")  # gestures live on the help chip; meta under the title
         self.hud.hide()
+        self._greyline_meta_text = meta
+        self._reposition_legend()
         if hasattr(self, "greyline_meta_changed"):
             self.greyline_meta_changed.emit(meta)
 
@@ -516,7 +696,12 @@ class PropagationMapWidget(QWidget):
                 self._click_targets.append((tx, ty, float(freq), 18.0))
 
     def mouseDoubleClickEvent(self, event) -> None:
-        self.view.resetTransform()
+        # P4-8 (SPEC §7): "Double-click reset returns to this [cover]
+        # framing, not to contain" -- resetTransform() alone would leave the
+        # view at a raw 1:1 scale instead of the padded/cropped fit
+        # _fit_map_view() establishes, so re-run that fit instead of just
+        # clearing the transform.
+        self._fit_map_view()
         super().mouseDoubleClickEvent(event)
 
     def mousePressEvent(self, event) -> None:
@@ -556,6 +741,7 @@ class PropagationMapWidget(QWidget):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         self._fit_map_view()
+        self._reposition_empty_overlay()
 
     def _fit_map_view(self) -> None:
         if self._base_item.pixmap() and not self._base_item.pixmap().isNull():

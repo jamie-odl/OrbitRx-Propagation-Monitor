@@ -582,6 +582,7 @@ class QtOrbitRxApplication(QMainWindow):
         geom = self.ctrl.cfg.get("window_geometry", "1400x820")
         self.resize(*self._parse_geom(geom))
         self._build_ui()
+        self._render_cluster_label()  # P4-8: sync the map's cluster pill to the initial real state
         fit_to_screen(self, 640, 440)
         self._load_map()
         self._refresh_map()
@@ -731,7 +732,16 @@ class QtOrbitRxApplication(QMainWindow):
         if hasattr(self.map_widget, "greyline_meta_changed"):
             self.map_widget.greyline_meta_changed.connect(self._status_subtitle_lbl.setFullText)
         self.map_widget.map_clicked.connect(self._on_map_click)
-        map_layout.addWidget(self.map_widget, stretch=1)
+        # P4-8 (SPEC §7): "QFrame#mapFrame has a 1px BORDER_SUBTLE border,
+        # radius 8, and a MAP_OCEAN background" -- wraps the graphics view so
+        # the never-letterbox ocean padding _fit_scene_rect() now adds sits
+        # inside a visibly-framed map, not a borderless rectangle.
+        self._map_frame = QFrame()
+        self._map_frame.setObjectName("mapFrame")
+        map_frame_layout = QVBoxLayout(self._map_frame)
+        map_frame_layout.setContentsMargins(0, 0, 0, 0)
+        map_frame_layout.addWidget(self.map_widget)
+        map_layout.addWidget(self._map_frame, stretch=1)
 
         # M3: layer chips (checkable pills) in one wrapping row. Live/Heat apply
         # to the native map's own live-spots layer (set_live_spots), same as
@@ -1821,6 +1831,16 @@ class QtOrbitRxApplication(QMainWindow):
             self._status_cluster_lbl.setText(text)
         if hasattr(self, "_corner_cluster_lbl"):
             self._corner_cluster_lbl.setText(text)
+        # P4-8 (SPEC §10): the map's own "Cluster disconnected" pill, driven
+        # by the same real cluster_status the corner/status-bar labels use --
+        # "disconnected" (never started, or deliberately dropped) and
+        # "reconnecting" (lost a live connection) both mean there is no
+        # working cluster feed right now; "connecting" (first attempt) is
+        # not flagged here, since it isn't a failure yet.
+        if hasattr(self.map_widget, "set_cluster_pill"):
+            self.map_widget.set_cluster_pill(
+                "Cluster disconnected" if status in ("disconnected", "reconnecting") else ""
+            )
 
     def _update_location_hint_visibility(self) -> None:
         """M5: path_muf/sunrise/sunset only mean anything once a location is set;

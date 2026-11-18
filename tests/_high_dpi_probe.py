@@ -91,6 +91,23 @@ def main() -> int:
     bottom_right = view.mapFromScene(scene_rect.bottomRight())
     transform = view.transform()
 
+    # P4-8 / tests/test_map_full_longitude.py: where lon=-180/+180 (at lat 0)
+    # land in viewport pixels, and what world latitude the viewport's own
+    # top/bottom edge (at the horizontal centre) corresponds to -- lets the
+    # 150%-DPI case of that test check full-longitude visibility and the
+    # pole-crop budget the same way the non-DPI case does in-process.
+    from PySide6.QtCore import QPointF
+
+    renderer = win.renderer
+    lon_m180_x, lon_m180_y = renderer.world_to_map(0.0, -180.0)
+    lon_p180_x, lon_p180_y = renderer.world_to_map(0.0, 180.0)
+    lon_m180 = view.mapFromScene(QPointF(lon_m180_x, lon_m180_y))
+    lon_p180 = view.mapFromScene(QPointF(lon_p180_x, lon_p180_y))
+    top_center_scene = view.mapToScene(vp.width() // 2, 0)
+    bottom_center_scene = view.mapToScene(vp.width() // 2, vp.height() - 1)
+    top_center_lat, _ = renderer.map_to_world(top_center_scene.x(), top_center_scene.y())
+    bottom_center_lat, _ = renderer.map_to_world(bottom_center_scene.x(), bottom_center_scene.y())
+
     report = {
         "device_pixel_ratio": screen.devicePixelRatio(),
         "rounding_policy": str(QGuiApplication.highDpiScaleFactorRoundingPolicy()),
@@ -111,6 +128,14 @@ def main() -> int:
         "map_bottom": bottom_right.y(),
         "map_m11": transform.m11(),
         "map_m22": transform.m22(),
+        # P4-8: ocean-fill colour behind the basemap (replaces the old
+        # always-covers-exactly assumption; see test_map_fills_the_viewport
+        # _with_no_letterbox_at_150pct for how this is used).
+        "map_bg_color": view.backgroundBrush().color().name(),
+        "map_lon_m180_x": lon_m180.x(),
+        "map_lon_p180_x": lon_p180.x(),
+        "map_top_lat": top_center_lat,
+        "map_bottom_lat": bottom_center_lat,
     }
 
     try:
