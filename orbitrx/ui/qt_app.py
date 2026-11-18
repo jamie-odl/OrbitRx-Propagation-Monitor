@@ -683,14 +683,33 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _build_actions(self) -> None:
         """One QAction per command, shared between the menu bar and the toolbar
-        (P2A) so there is a single handler per command instead of duplicates."""
+        (P2A) so there is a single handler per command instead of duplicates.
+        Window-wide (Qt.WindowShortcut, QAction's default context) so e.g.
+        Ctrl+1 fires no matter which child widget inside the main window has
+        focus (P2C)."""
         self._actions: dict[str, QAction] = {}
 
-        def make(key: str, text: str, slot, shortcut: str | None = None) -> QAction:
+        def make(
+            key: str,
+            text: str,
+            slot,
+            shortcut: str | QKeySequence.StandardKey | None = None,
+            extra_standard_key: QKeySequence.StandardKey | None = None,
+        ) -> QAction:
             action = QAction(text, self)
             action.triggered.connect(slot)
-            if shortcut:
-                action.setShortcut(QKeySequence(shortcut))
+            sequences: list[QKeySequence] = []
+            seen: set[str] = set()
+            for raw in (extra_standard_key, shortcut):
+                if raw is None:
+                    continue
+                seq = QKeySequence(raw)
+                if seq.isEmpty() or seq.toString() in seen:
+                    continue
+                seen.add(seq.toString())
+                sequences.append(seq)
+            if sequences:
+                action.setShortcuts(sequences)
             self._actions[key] = action
             return action
 
@@ -698,14 +717,31 @@ class QtOrbitRxApplication(QMainWindow):
         make("Map", "Map", lambda: self._focus_panel("map"), "Ctrl+1")
         make("Bands", "Bands", lambda: self._focus_panel("bands"), "Ctrl+2")
         make("Log", "Log", lambda: self._focus_panel("log"), "Ctrl+3")
-        make("Settings", "Settings", self._settings, "Ctrl+,")
+        # Explicit "Ctrl+," so this works on Windows/Linux too -- the
+        # Preferences standard key only resolves to a real sequence on macOS.
+        make(
+            "Settings",
+            "Settings",
+            self._settings,
+            "Ctrl+,",
+            extra_standard_key=QKeySequence.StandardKey.Preferences,
+        )
 
         # Menu-only commands; every one of these existed on the old toolbar or
         # its » overflow menu and must stay reachable from the menu bar.
         make("Export snapshot", "Export snapshot", self._export_json)
         make("Export DX CSV", "Export DX CSV", self._export_dx)
         make("Quit", "Quit", self._quit_app, QKeySequence.StandardKey.Quit)
-        make("Refresh", "Refresh", self._auto_refresh, "F5")
+        # Explicit F5 alongside the Refresh standard key: the two already
+        # coincide on Windows/Linux, but this keeps F5 working even on
+        # platforms where the standard key resolves elsewhere (e.g. macOS).
+        make(
+            "Refresh",
+            "Refresh",
+            self._auto_refresh,
+            "F5",
+            extra_standard_key=QKeySequence.StandardKey.Refresh,
+        )
         make("Location", "Refresh Location", self.ctrl.refresh_location)
         make("Weather", "Refresh Weather", self.ctrl.fetch_weather)
         make("Rig", "Rig Wizard…", self._rig_wizard)

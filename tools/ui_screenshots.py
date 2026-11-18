@@ -3,6 +3,7 @@ offscreen and offline, at two sizes.
 
 Usage:
     python tools/ui_screenshots.py --out DIR
+    python tools/ui_screenshots.py --out DIR --scale 1.5
 
 Writes (into DIR):
     main_<size>.png
@@ -15,6 +16,12 @@ for size in ("1280x800", "683x485"). Exits 0 and prints the files it wrote,
 one per line; a widget/attribute this build no longer has is skipped rather
 than treated as fatal, so this keeps working across future threading
 refactors of orbitrx.ui.qt_app.
+
+--scale re-runs the same captures again with QT_SCALE_FACTOR set, so every
+filename gets a _<pct>pct suffix (e.g. main_1280x800_150pct.png) -- this must
+happen in a fresh subprocess, since Qt only reads QT_SCALE_FACTOR when its
+QGuiApplication is constructed. ORBITRX_UI_SCREENSHOTS_SCALE marks that child
+process so it does not try to spawn a scaled child of its own.
 """
 
 from __future__ import annotations
@@ -22,6 +29,7 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -29,6 +37,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _ui_offline_harness as harness
 
 SIZES = [("1280x800", 1280, 800), ("683x485", 683, 485)]
+_SCALE_ENV_VAR = "ORBITRX_UI_SCREENSHOTS_SCALE"
+
+
+def _scale_suffix(scale: float) -> str:
+    return f"_{round(scale * 100)}pct"
 
 
 def _slug(text: str) -> str:
@@ -83,7 +96,9 @@ def _composite_menu_open(app, win, menu) -> object:
     return composite
 
 
-def capture_size(app, out_dir: Path, label: str, width: int, height: int) -> list[Path]:
+def capture_size(
+    app, out_dir: Path, label: str, width: int, height: int, suffix: str = ""
+) -> list[Path]:
     written: list[Path] = []
     harness.patch_window_fit_avail(width, height)
 
@@ -99,7 +114,7 @@ def capture_size(app, out_dir: Path, label: str, width: int, height: int) -> lis
         win.show()
         harness.pump(app, 0.3)
 
-        main_path = out_dir / f"main_{label}.png"
+        main_path = out_dir / f"main_{label}{suffix}.png"
         win.grab().save(str(main_path))
         written.append(main_path)
 
@@ -108,7 +123,7 @@ def capture_size(app, out_dir: Path, label: str, width: int, height: int) -> lis
             try:
                 bar = status_bar()
                 if bar is not None and bar.isVisible():
-                    statusbar_path = out_dir / f"statusbar_{label}.png"
+                    statusbar_path = out_dir / f"statusbar_{label}{suffix}.png"
                     bar.grab().save(str(statusbar_path))
                     written.append(statusbar_path)
             except Exception as exc:
@@ -120,7 +135,7 @@ def capture_size(app, out_dir: Path, label: str, width: int, height: int) -> lis
                 dlg = build_dialog()
                 dlg.show()
                 harness.pump(app, 0.2)
-                settings_path = out_dir / f"settings_{label}.png"
+                settings_path = out_dir / f"settings_{label}{suffix}.png"
                 dlg.grab().save(str(settings_path))
                 written.append(settings_path)
                 dlg.reject()
@@ -131,7 +146,7 @@ def capture_size(app, out_dir: Path, label: str, width: int, height: int) -> lis
         for slug, menu in _menu_bar_menus(win):
             try:
                 composite = _composite_menu_open(app, win, menu)
-                menu_path = out_dir / f"menubar_{slug}_{label}.png"
+                menu_path = out_dir / f"menubar_{slug}_{label}{suffix}.png"
                 composite.save(str(menu_path))
                 written.append(menu_path)
             except Exception as exc:
@@ -142,17 +157,9 @@ def capture_size(app, out_dir: Path, label: str, width: int, height: int) -> lis
     return written
 
 
-def main(argv: list[str] | None = None) -> int:
-    harness.ensure_repo_on_path()
-    harness.offline_env()
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--out", required=True, help="Directory to write PNGs into")
-    args = parser.parse_args(argv)
-
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
+def _run_all_captures(out_dir: Path, suffix: str = "") -> list[Path]:
+    """The in-process capture pass: one real QApplication, every SIZES entry,
+    writing files with the given filename suffix."""
     work_dir = harness.make_work_dir()
     os.chdir(work_dir)
 
@@ -171,9 +178,60 @@ def main(argv: list[str] | None = None) -> int:
     written: list[Path] = []
     for label, width, height in SIZES:
         try:
-            written.extend(capture_size(app, out_dir, label, width, height))
+            written.extend(capture_size(app, out_dir, label, width, height, suffix=suffix))
         except Exception as exc:
             print(f"warning: capture at {label} failed: {exc}", file=sys.stderr)
+    return written
+
+
+def _spawn_scaled_capture(out_dir: Path, scale: float) -> list[Path]:
+    """QT_SCALE_FACTOR is only read when Qt's QGuiApplication is constructed,
+    which has already happened in this process -- so the scaled pass has to
+    run in a fresh subprocess instead."""
+    env = dict(os.environ)
+    env["QT_SCALE_FACTOR"] = str(scale)
+    env[_SCALE_ENV_VAR] = str(scale)
+    cmd = [sys.executable, str(Path(__file__).resolve()), "--out", str(out_dir)]
+    result = subprocess.run(cmd, env=env, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(result.stdout, file=sys.stderr)
+        print(result.stderr, file=sys.stderr)
+        return []
+    return [Path(line) for line in result.stdout.splitlines() if line.strip()]
+
+
+def main(argv: list[str] | None = None) -> int:
+    harness.ensure_repo_on_path()
+    harness.offline_env()
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--out", required=True, help="Directory to write PNGs into")
+    parser.add_argument(
+        "--scale",
+        type=float,
+        default=None,
+        help="Also capture at this Qt scale factor (e.g. 1.5 for 150%%), via a "
+        "subprocess with QT_SCALE_FACTOR set; those files get a _<pct>pct suffix",
+    )
+    args = parser.parse_args(argv)
+
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    child_scale = os.environ.get(_SCALE_ENV_VAR)
+    if child_scale is not None:
+        # We are the subprocess _spawn_scaled_capture launched: this process's
+        # QGuiApplication already sees QT_SCALE_FACTOR, so just capture once
+        # under the suffixed names and return -- no further spawning.
+        written = _run_all_captures(out_dir, suffix=_scale_suffix(float(child_scale)))
+        for path in written:
+            print(path)
+        return 0
+
+    written: list[Path] = list(_run_all_captures(out_dir))
+
+    if args.scale is not None:
+        written.extend(_spawn_scaled_capture(out_dir, args.scale))
 
     for path in written:
         print(path)
