@@ -203,13 +203,18 @@ def test_settings_test_cat_cancel_ignores_late_result(window, monkeypatch):
 
     dlg.test_cat_btn.click()
     assert dlg.test_cat_btn.isEnabled() is False
+    worker_thread = dlg._cat_runner._thread
     dlg.test_cat_cancel_btn.click()
     assert dlg.test_cat_btn.isEnabled() is True
     assert dlg.test_cat_result.text() == "Cancelled"
 
     # The worker is still sleeping; its eventual result must be dropped, not
     # overwrite the "Cancelled" status or crash on a since-cleaned-up runner.
-    _pump(app, 0.5)
+    # Join it deterministically instead of guessing a sleep margin, then pump
+    # once to deliver its (now-stale) queued result.
+    worker_thread.join(timeout=60.0)
+    assert not worker_thread.is_alive()
+    app.processEvents()
     assert dlg.test_cat_result.text() == "Cancelled"
 
 
@@ -223,7 +228,9 @@ def test_settings_test_cat_timeout(window, monkeypatch):
     app = QApplication.instance()
 
     dlg.test_cat_btn.click()
-    deadline = time.time() + 2.0
+    # deadline is only a hang guard -- the timeout itself fires at 0.05s, so
+    # this exits almost immediately on any runner.
+    deadline = time.time() + 60.0
     while dlg.test_cat_btn.isEnabled() is False and time.time() < deadline:
         app.processEvents()
         time.sleep(0.005)
@@ -242,7 +249,9 @@ def test_rig_wizard_test_cat_does_not_block_ui_thread(window, monkeypatch):
     gap = _max_heartbeat_gap_ms(app, dlg._test_cat, follow=0.8)
     assert gap < MAX_HEARTBEAT_GAP_MS
 
-    _pump(app, 0.5)
+    dlg._cat_runner._thread.join(timeout=60.0)
+    assert not dlg._cat_runner._thread.is_alive()
+    app.processEvents()
     assert dlg.test_btn.isEnabled() is True
     assert "Sent CAT" in dlg.status_text.text()
 
@@ -259,10 +268,15 @@ def test_rig_wizard_test_cat_cancel_and_timeout(window, monkeypatch):
     dlg = RigWizardDialog(window.ctrl.cfg, window.ctrl.cat, window)
     dlg._test_cat()
     assert dlg.test_btn.isEnabled() is False
+    worker_thread = dlg._cat_runner._thread
     dlg.cancel_test_btn.click()
     assert dlg.test_btn.isEnabled() is True
     assert dlg.status_text.text() == "Cancelled"
-    _pump(app, 0.5)
+    # Join the still-sleeping worker deterministically, then pump once to
+    # deliver its (now-stale) queued result and confirm it's dropped.
+    worker_thread.join(timeout=60.0)
+    assert not worker_thread.is_alive()
+    app.processEvents()
     assert dlg.status_text.text() == "Cancelled"  # late result dropped
 
     # Timeout.
@@ -270,7 +284,9 @@ def test_rig_wizard_test_cat_cancel_and_timeout(window, monkeypatch):
     monkeypatch.setattr(window.ctrl.cat, "tune", _slow_tune(2.0))
     dlg2 = RigWizardDialog(window.ctrl.cfg, window.ctrl.cat, window)
     dlg2._test_cat()
-    deadline = time.time() + 2.0
+    # deadline is only a hang guard -- the timeout itself fires at 0.05s, so
+    # this exits almost immediately on any runner.
+    deadline = time.time() + 60.0
     while dlg2.test_btn.isEnabled() is False and time.time() < deadline:
         app.processEvents()
         time.sleep(0.005)
@@ -289,11 +305,15 @@ def test_cat_test_survives_dialog_deletion_before_worker_finishes(window, monkey
     app = QApplication.instance()
 
     dlg._test_cat()
+    worker_thread = dlg._cat_runner._thread
     dlg.deleteLater()
     app.processEvents()
-    # The worker thread is still sleeping (0.3s) when its dialog is gone; let
-    # it finish and deliver its result -- this must not raise.
-    _pump(app, 0.6)
+    # The worker thread is still sleeping (0.3s) when its dialog is gone; join
+    # it deterministically and pump once to deliver its result -- this must
+    # not raise.
+    worker_thread.join(timeout=60.0)
+    assert not worker_thread.is_alive()
+    app.processEvents()
 
 
 # ---------------------------------------------------------------------------
@@ -394,7 +414,11 @@ def test_history_plot_shows_loading_state_and_does_not_block(window, monkeypatch
     assert gap < MAX_HEARTBEAT_GAP_MS
     assert window.plot_placeholder.text() == "Loading…"
 
-    deadline = time.time() + 2.0
+    window._plot_query_thread.join(timeout=60.0)
+    assert not window._plot_query_thread.is_alive()
+    # deadline is only a hang guard: the worker has already joined, this just
+    # waits for its queued delivery to be processed.
+    deadline = time.time() + 60.0
     while window.plot_container.count() < 2 and time.time() < deadline:
         app.processEvents()
         time.sleep(0.005)
@@ -420,17 +444,22 @@ def test_history_plot_drops_a_stale_result(window, monkeypatch):
 
     window._refresh_plot_tab()
     first_gen = window._plot_request_gen
+    first_thread = window._plot_query_thread  # captured before the second call overwrites it
     window._refresh_plot_tab()
     second_gen = window._plot_request_gen
     assert second_gen != first_gen
 
-    deadline = time.time() + 2.0
+    deadline = time.time() + 60.0
     while getattr(window, "_plot_last_handled_gen", None) != second_gen and time.time() < deadline:
         app.processEvents()
         time.sleep(0.005)
 
-    # Give the first (slow, stale) query's result a chance to arrive too.
-    _pump(app, 0.3)
+    # Let the first (slow, stale) query's result arrive too -- joined
+    # deterministically instead of guessing a sleep margin over its 0.3s
+    # delay, then pumped once to deliver its (now-stale) queued result.
+    first_thread.join(timeout=60.0)
+    assert not first_thread.is_alive()
+    app.processEvents()
     canvas = window.plot_container.itemAt(0).widget()
     ax = canvas.figure.get_axes()[0]
     assert ax.get_ylim() == (0.0, 9.0)  # the dual-axis chart from the second query

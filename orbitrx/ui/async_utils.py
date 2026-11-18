@@ -51,6 +51,9 @@ class CatTestRunner(QObject):
         self._timer.timeout.connect(self._on_timeout)
         self._generation = 0
         self._on_done: Callable[[str, str], None] | None = None
+        # Exposed so tests can join() the in-flight worker deterministically
+        # instead of guessing a sleep duration is longer than tune()'s delay.
+        self._thread: threading.Thread | None = None
 
     def is_active(self) -> bool:
         return self._on_done is not None
@@ -75,7 +78,8 @@ class CatTestRunner(QObject):
                 result = str(e)
             deliver(result)
 
-        threading.Thread(target=worker, daemon=True, name="cat-test").start()
+        self._thread = threading.Thread(target=worker, daemon=True, name="cat-test")
+        self._thread.start()
         self._timer.start(max(1, int((timeout_s or self.DEFAULT_TIMEOUT_S) * 1000)))
 
     def cancel(self) -> None:

@@ -264,12 +264,22 @@ class _ElidedLabel(QLabel):
 
 
 class _UiInvoker(QObject):
-    """Runs callables on the Qt GUI thread (controller callbacks come from worker threads)."""
+    """Runs callables on the Qt GUI thread (controller callbacks come from worker threads).
+
+    Must be parented to the window it delivers callbacks for: a queued
+    `call.emit(...)` posts an event that is only processed on a later turn of
+    the event loop, and destroying this invoker along with its window makes
+    Qt drop any such event still in flight. Without a parent this object
+    would outlive the window (kept alive only by a plain Python reference),
+    so a worker-thread result arriving after the window was closed would
+    still fire and touch widgets whose C++ objects are already deleted --
+    the "already deleted" shiboken RuntimeError this parenting prevents.
+    """
 
     call = Signal(object)
 
-    def __init__(self) -> None:
-        super().__init__()
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
         self.call.connect(lambda fn: fn(), Qt.ConnectionType.QueuedConnection)
 
     def wrap(self, fn):
@@ -313,7 +323,7 @@ class QtOrbitRxApplication(QMainWindow):
         self._map_rebuild_pending = False
         self._map_rebuild_pending_vectors_only = False
 
-        self._ui = _UiInvoker()
+        self._ui = _UiInvoker(self)
         self._map_load_thread: threading.Thread | None = None
         self._update_check_thread: threading.Thread | None = None
         self._plot_query_thread: threading.Thread | None = None
@@ -1533,6 +1543,7 @@ class QtOrbitRxApplication(QMainWindow):
         dlg.test_cat_btn = test_cat_btn
         dlg.test_cat_cancel_btn = test_cat_cancel_btn
         dlg.test_cat_result = test_cat_result
+        dlg._cat_runner = cat_runner
 
         # --- DX cluster ---
         dxc = self._add_form_page(page_list, stack, "DX cluster")

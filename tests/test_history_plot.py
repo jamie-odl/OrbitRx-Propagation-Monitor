@@ -18,18 +18,36 @@ pytest.importorskip("PySide6.QtWidgets")
 matplotlib = pytest.importorskip("matplotlib")
 
 
-def _refresh_and_wait(window, timeout: float = 2.0) -> None:
-    """_refresh_plot_tab() now runs the query + figure build on a worker thread
-    (P1) and delivers the result via a queued call; pump the event loop until
-    that generation has been handled instead of asserting synchronously."""
+def _wait_for_plot_gen(window, gen: int, timeout: float = 60.0) -> None:
+    """Pump the event loop until the given generation's queued result has been
+    handled. `timeout` is only a hang guard for a genuinely stuck worker/queued
+    call, not a budget for expected work -- the loop exits the instant the
+    condition is true, so a generous ceiling costs nothing on a fast runner
+    and avoids flaking on a slow one."""
     from PySide6.QtWidgets import QApplication
 
-    window._refresh_plot_tab()
     app = QApplication.instance()
     deadline = time.time() + timeout
-    while getattr(window, "_plot_last_handled_gen", None) != window._plot_request_gen and time.time() < deadline:
+    while getattr(window, "_plot_last_handled_gen", None) != gen and time.time() < deadline:
         app.processEvents()
         time.sleep(0.005)
+
+
+def _refresh_and_wait(window, timeout: float = 60.0) -> None:
+    """_refresh_plot_tab() now runs the query + figure build on a worker thread
+    (P1) and delivers the result via a queued call; pump the event loop until
+    that generation has been handled instead of asserting synchronously.
+
+    Captures the generation this call fired *before* waiting, rather than
+    re-reading window._plot_request_gen inside the wait loop -- if another
+    request is already in flight (e.g. a test driving several refreshes
+    itself), window._plot_request_gen can keep changing out from under a
+    live re-read, so the wait must pin down which generation it's actually
+    waiting for.
+    """
+    window._refresh_plot_tab()
+    gen = window._plot_request_gen
+    _wait_for_plot_gen(window, gen, timeout=timeout)
 
 
 @pytest.fixture
@@ -420,7 +438,6 @@ def test_rapid_refreshes_overlapping_a_map_rebuild_do_not_crash_and_latest_wins(
     import threading
 
     from PySide6.QtCore import QDate
-    from PySide6.QtWidgets import QApplication
 
     FINAL_DAY = 6
     release_stale = threading.Event()
@@ -428,7 +445,12 @@ def test_rapid_refreshes_overlapping_a_map_rebuild_do_not_crash_and_latest_wins(
     def fake_query(q):
         day = int(q.rsplit("-", 1)[-1])
         if day != FINAL_DAY:
-            release_stale.wait(timeout=5.0)
+            # This timeout is only a hang guard -- release_stale.set() below
+            # is what actually releases these in the normal case, almost
+            # immediately after the sixth query resolves. A generous ceiling
+            # here just means a genuinely stuck test fails slowly instead of
+            # this helper thread blocking forever.
+            release_stale.wait(timeout=60.0)
             kp = float(day)
         else:
             kp = 99.0
@@ -452,9 +474,18 @@ def test_rapid_refreshes_overlapping_a_map_rebuild_do_not_crash_and_latest_wins(
         window._refresh_plot_tab()
         history_threads.append(window._plot_query_thread)
 
-    # The sixth (latest) request does not wait on release_stale, so this
-    # settles quickly even though the first five are still blocked.
-    _refresh_and_wait(window, timeout=5.0)
+    # The last-fired (sixth/FINAL_DAY) request does not wait on
+    # release_stale, so its own worker settles quickly even though the first
+    # five are still blocked. Wait on that already-fired generation directly
+    # -- calling the _refresh_and_wait() helper here would fire a *seventh*,
+    # redundant request for the same (still-current) date, racing its result
+    # against the sixth's and flaking if the sixth's queued delivery happens
+    # to land after the seventh's.
+    final_gen = window._plot_request_gen
+    final_thread = history_threads[-1]
+    final_thread.join(timeout=60.0)
+    assert not final_thread.is_alive()
+    _wait_for_plot_gen(window, final_gen, timeout=60.0)
     assert window._plot_last_handled_gen == window._plot_request_gen
 
     canvas = window.plot_container.itemAt(0).widget()
@@ -465,13 +496,10 @@ def test_rapid_refreshes_overlapping_a_map_rebuild_do_not_crash_and_latest_wins(
     # Release the five stale, still-in-flight queries and let their results
     # arrive; the generation check must drop every one of them.
     release_stale.set()
-    app = QApplication.instance()
     for thread in history_threads:
-        thread.join(timeout=5.0)
+        thread.join(timeout=60.0)
         assert not thread.is_alive()
-    for _ in range(10):
-        app.processEvents()
-    assert window.map_widget.join_rebuild_thread(timeout=5.0) is True
+    assert window.map_widget.join_rebuild_thread(timeout=60.0) is True
 
     canvas = window.plot_container.itemAt(0).widget()
     kp_line = canvas.figure.get_axes()[0].get_lines()[0]

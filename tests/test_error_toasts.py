@@ -6,6 +6,7 @@ of them pop a modal dialog to do it."""
 from __future__ import annotations
 
 import os
+import threading
 import time
 
 import pytest
@@ -227,3 +228,86 @@ def test_rig_wizard_cat_test_failure_shows_toast_and_calls_on_rig_status(window,
     assert dlg._toasts.is_visible()
     assert seen and seen[-1][0] is False
     dlg.reject()
+
+
+# ---------------------------------------------------------------------------
+# P3: destroying the window must not crash a still-outstanding toast timer or
+# a worker-thread result queued for delivery via _UiInvoker.
+# ---------------------------------------------------------------------------
+
+
+def test_destroying_window_drops_pending_toast_and_queued_status_update(tmp_path, monkeypatch, capfd):
+    """Regression for repeated "libshiboken: Internal C++ object ... already
+    deleted" RuntimeErrors seen in CI. The main window's own _UiInvoker used
+    to have no QObject parent, so it outlived the window (kept alive only by
+    a plain Python reference) -- a worker-thread result arriving after the
+    window was torn down (the same forced, synchronous `shiboken6.delete()`
+    the suite's autouse teardown fixture uses once a background thread
+    outlasts its join timeout) would still fire and touch widgets -- the
+    toast's QLabel, a status label -- whose C++ objects were already gone.
+    _UiInvoker is now parented to its window, so Qt drops any such
+    still-queued delivery together with the window instead of running it."""
+    import shiboken6
+
+    monkeypatch.chdir(tmp_path)
+    from PySide6.QtWidgets import QApplication
+
+    import orbitrx.spots.service as svc
+    monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
+    import orbitrx.dx as dx
+    monkeypatch.setattr(dx.DxClusterService, "start", lambda self: None)
+    from orbitrx.ui.controller import OrbitRxController
+    monkeypatch.setattr(OrbitRxController, "refresh_location", lambda self: None)
+    import orbitrx.ui.controller as controller_mod
+
+    app = QApplication.instance() or QApplication([])
+    from orbitrx.ui.qt_app import QtOrbitRxApplication
+    win = QtOrbitRxApplication()
+    win.show()
+    app.processEvents()
+
+    # A toast whose auto-dismiss timer is still outstanding when the window
+    # is destroyed below.
+    win._toasts._duration_ms = 50
+    win._toasts.show_toast("about to go away", kind="info")
+    assert win._toasts.is_visible()
+
+    # Settle the startup map load first so only the weather fetch below is
+    # in flight -- this test is about that race, not an unrelated one.
+    if win._map_load_thread is not None:
+        win._map_load_thread.join(timeout=60.0)
+    win.map_widget.join_rebuild_thread(timeout=60.0)
+    app.processEvents()
+
+    # A weather-fetch worker whose result (a queued call into
+    # _refresh_labels_and_map, which sets label text) is still pending.
+    release = threading.Event()
+
+    def slow_fetch():
+        release.wait(timeout=60.0)
+        return {"kp_index": 2.0, "flux": 110.0, "time_utc": "2026-01-01 00:00"}
+
+    monkeypatch.setattr(controller_mod, "fetch_space_weather_data", slow_fetch)
+    monkeypatch.setattr(controller_mod, "fetch_solar_xml", lambda: None)
+    win.ctrl.fetch_weather()
+    weather_thread = win.ctrl._weather_thread
+
+    win.ctrl.stop()
+    # Same forcible, synchronous deletion the suite's own autouse
+    # _cleanup_orbitrx_qt_windows fixture falls back to (tests/conftest.py)
+    # when a straggler worker outlasts its join timeout -- the toast's QLabel
+    # and the window's status labels are gone the instant this returns.
+    shiboken6.delete(win)
+
+    # Only now does the weather worker's queued delivery actually arrive --
+    # the thread has already finished by the join() below, so this is just
+    # pumping the event loop to flush whatever it already posted, not
+    # waiting on further work to complete.
+    release.set()
+    weather_thread.join(timeout=60.0)
+    assert not weather_thread.is_alive()
+    _pump(app, 0.5)
+
+    out, err = capfd.readouterr()
+    assert "already deleted" not in err, err
+    assert "already deleted" not in out, out
