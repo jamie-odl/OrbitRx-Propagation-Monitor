@@ -108,7 +108,43 @@ def test_map_pane_is_at_least_65_percent_of_central_width_at_1280x800(window):
 def test_side_pane_default_width_is_roughly_280_to_320px(window):
     window.resize(1280, 800)
     window._update_compact_mode()
-    _wait_until(lambda: window._side_pane.width() > 0)
+    _wait_until(lambda: 260 <= window._side_pane.width() <= 340)
+    assert 260 <= window._side_pane.width() <= 340, window._side_pane.width()
+
+
+def test_regression_small_initial_width_then_resize_still_reaches_default_side_pane_width(window):
+    """Regression for a windows-latest-only CI failure: _apply_default_splitter_sizes()
+    is first called from __init__, before show() has established the window's
+    real geometry -- on that platform self.width() can report a small
+    provisional value there (observed: 254px), which clamps the computed
+    side-pane width down (width - 200) and used to latch *that* shrunken
+    value in as "the default is applied", via a sizes()[1] > 0 check that a
+    tiny width also satisfies. Every later resize then saw the latch already
+    set and skipped reapplying the real ~300px default, leaving the side
+    pane stuck at a few dozen pixels even at 1280x800. Simulates that exact
+    ordering directly rather than relying on the host platform's own
+    pre-show width quirks."""
+    # Hold compact-mode switching off while shrinking the window, matching
+    # __init__'s real ordering: _apply_default_splitter_sizes() runs at line
+    # 880 (while the window can report a small provisional width) *before*
+    # _update_compact_mode() is ever called at line 888, so the splitter
+    # still has both children at that point instead of having been torn
+    # down into compact tabs.
+    window._splitter_sizes_applied = False
+    original_update_compact_mode = window._update_compact_mode
+    window._update_compact_mode = lambda: None
+    try:
+        window.resize(254, 600)
+        window._apply_default_splitter_sizes()
+    finally:
+        window._update_compact_mode = original_update_compact_mode
+    assert window._splitter_sizes_applied is False, (
+        "a provisional narrow width must not latch a shrunken side-pane size in as the default"
+    )
+
+    window.resize(1280, 800)
+    window._update_compact_mode()
+    _wait_until(lambda: 260 <= window._side_pane.width() <= 340)
     assert 260 <= window._side_pane.width() <= 340, window._side_pane.width()
 
 

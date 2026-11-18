@@ -2064,13 +2064,24 @@ class QtOrbitRxApplication(QMainWindow):
         effect once the splitter has real width to distribute; before the
         first show/resize (or right after _exit_compact_mode re-inserts a
         child QSplitter forgot the size of) that width is 0 and the call is a
-        no-op, so this re-runs from showEvent/resizeEvent until it has stuck."""
+        no-op, so this re-runs from showEvent/resizeEvent until it has stuck.
+
+        On some platforms (observed on windows-latest CI) the window can
+        report a small provisional width -- e.g. a pre-layout default --
+        before its real geometry is established. If that provisional width
+        clamps side_w down (width - 200 < 300) and we latched on sizes()[1]
+        > 0 alone, the shrunken size would stick forever since every later
+        resize sees _splitter_sizes_applied already True and skips re-
+        applying the default. Only latch once side_w reflects the actual
+        ~300px target, which always holds once the window has reached a
+        normal (non-compact) width; a genuine user drag below that is never
+        observed here because this only runs while not latched yet."""
         width = self.width()
         if width <= 0 or getattr(self, "_splitter", None) is None:
             return
         side_w = min(300, max(0, width - 200))
         self._splitter.setSizes([max(0, width - side_w), side_w])
-        self._splitter_sizes_applied = self._splitter.sizes()[1] > 0
+        self._splitter_sizes_applied = side_w >= 280 and self._splitter.sizes()[1] >= 280
 
     def _enter_compact_mode(self) -> None:
         self._compact = True
