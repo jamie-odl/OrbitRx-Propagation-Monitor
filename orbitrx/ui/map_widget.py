@@ -213,6 +213,7 @@ class PropagationMapWidget(QWidget):
         self._legend_caption_lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._legend_caption_lbl.hide()
         self._greyline_meta_text = ""
+        self._repositioning_legend = False
         self._reposition_legend()
 
     def set_empty_overlay(self, text: str) -> None:
@@ -264,20 +265,45 @@ class PropagationMapWidget(QWidget):
         """SPEC §7: bottom-left legend at full width, swapped for the
         greyline timestamp caption alone once the pane gets too narrow for
         all three legend entries (same breakpoint the control strip's layer
-        chips collapse to a menu at)."""
-        inset = 12
-        compact = self.width() < LEGEND_COMPACT_WIDTH
-        if compact:
-            self._legend_lbl.hide()
-            self._legend_caption_lbl.setText(self._greyline_meta_text)
-            self._legend_caption_lbl.setVisible(bool(self._greyline_meta_text))
-            self._legend_caption_lbl.adjustSize()
-            self._legend_caption_lbl.move(8, self.height() - self._legend_caption_lbl.height() - 8)
-        else:
-            self._legend_caption_lbl.hide()
-            self._legend_lbl.setVisible(True)
-            self._legend_lbl.adjustSize()
-            self._legend_lbl.move(inset, self.height() - self._legend_lbl.height() - inset)
+        chips collapse to a menu at).
+
+        Round 8: showing/hiding a previously-hidden child here (setVisible()
+        on either label) can make Qt flush a pending ancestor LayoutRequest
+        synchronously -- if this widget is itself mid-resize (e.g. a splitter
+        correcting an in-flight geometry change), that flush re-enters this
+        same method with a *different* self.width() before the outer call's
+        own branch has finished applying. Looping until self.width() stops
+        moving mid-call (guarded against the reentrant call doing the same
+        work twice) makes the final applied state always match this widget's
+        actual settled width, instead of an interleaving of two widths'
+        decisions."""
+        if self._repositioning_legend:
+            return
+        self._repositioning_legend = True
+        try:
+            inset = 12
+            # Bounded, not `while True`: every observed case settles after
+            # one extra reentrant level, and a hard cap means a future,
+            # unrelated layout change could at worst leave a stale width's
+            # decision applied for one frame rather than hang the UI thread.
+            for _ in range(8):
+                width_before = self.width()
+                compact = width_before < LEGEND_COMPACT_WIDTH
+                if compact:
+                    self._legend_lbl.hide()
+                    self._legend_caption_lbl.setText(self._greyline_meta_text)
+                    self._legend_caption_lbl.setVisible(bool(self._greyline_meta_text))
+                    self._legend_caption_lbl.adjustSize()
+                    self._legend_caption_lbl.move(8, self.height() - self._legend_caption_lbl.height() - 8)
+                else:
+                    self._legend_caption_lbl.hide()
+                    self._legend_lbl.setVisible(True)
+                    self._legend_lbl.adjustSize()
+                    self._legend_lbl.move(inset, self.height() - self._legend_lbl.height() - inset)
+                if self.width() == width_before:
+                    break
+        finally:
+            self._repositioning_legend = False
 
     def set_layers(self, layers: MapLayers) -> None:
         if (

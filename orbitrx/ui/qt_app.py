@@ -218,8 +218,14 @@ class _ReflowGrid(QWidget):
         # native styles (e.g. Windows' chip padding) render noticeably wider
         # than Linux's, and a fixed width let a too-wide column overflow the
         # window on Windows while fitting fine on Ubuntu.
+        # Round 8: max() with minimumSizeHint() too -- on windows-latest CI a
+        # QToolButton's minimumSizeHint() has come back a few px wider than
+        # its own sizeHint() under bulkier Segoe UI metrics, so sizeHint()
+        # alone under-reserved a column and QGridLayout then had to squeeze
+        # that button below its real minimum to fit the chosen column count.
         self._min_item_width = max(
-            [max(1, min_item_width)] + [w.sizeHint().width() for w in widgets]
+            [max(1, min_item_width)]
+            + [max(w.sizeHint().width(), w.minimumSizeHint().width()) for w in widgets]
         )
         self._grid = QGridLayout(self)
         self._grid.setSpacing(spacing)
@@ -500,6 +506,26 @@ class _MapControlStrip(QWidget):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._apply_layout(self.width() >= self._SINGLE_ROW_MIN_WIDTH)
+
+    def minimumSizeHint(self):
+        """Round 8: the floor this strip can actually be squeezed to is the
+        *stacked* (chips above sliders) arrangement's minimum, not whichever
+        page _stack currently shows -- QStackedWidget's own minimumSizeHint
+        only reflects the current page, and while in single-row mode that
+        page's minimum is both chips and sliders side by side, which on
+        windows-latest's bulkier fonts pushed the whole map column's
+        minimumSizeHint past the 1280-minus-side-panel budget even though
+        resizeEvent() above would happily wrap onto two rows well before
+        actually running out of room."""
+        from PySide6.QtCore import QSize
+
+        chips_min = self._chips.minimumSizeHint()
+        sliders_min = self._sliders.minimumSizeHint()
+        spacing = self._col_layout.spacing()
+        return QSize(
+            max(chips_min.width(), sliders_min.width()),
+            chips_min.height() + sliders_min.height() + spacing,
+        )
 
 
 # P4-7 (SPEC §9 item 3): Kp over the window drawn as bars never exceeds this,

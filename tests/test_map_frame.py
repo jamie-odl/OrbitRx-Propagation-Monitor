@@ -13,6 +13,30 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
 
 
+def _resize_window_and_settle(win, app, width, height, timeout_s=2.0):
+    """resize() the top-level window and pump the event loop until it has
+    actually settled at that size. map_widget sits inside this window's own
+    splitter/layout, so resizing map_widget directly (as this module used
+    to) never reliably sticks -- the layout corrects it back on the very
+    next layout pass, which can even happen synchronously mid-resizeEvent.
+    Going through the real top-level resize path is what actually changes
+    map_widget's width, deterministically, the way a real user resize would.
+    """
+    from PySide6.QtTest import QTest
+
+    win.resize(width, height)
+    elapsed = 0.0
+    step_ms = 20
+    while elapsed < timeout_s:
+        app.processEvents()
+        if win.width() == width and win.height() == height:
+            break
+        QTest.qWait(step_ms)
+        elapsed += step_ms / 1000.0
+    win._update_compact_mode()
+    app.processEvents()
+
+
 def _build_window(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from PySide6.QtWidgets import QApplication
@@ -49,7 +73,9 @@ def test_map_frame_wraps_the_graphics_view(tmp_path, monkeypatch):
 def test_legend_names_greyline_night_and_dx_spot_at_full_width(tmp_path, monkeypatch):
     app, win = _build_window(tmp_path, monkeypatch)
     try:
-        win.map_widget.resize(1000, 600)
+        # A wide top-level window gives the splitter's map column well over
+        # LEGEND_COMPACT_WIDTH (820) even after the ~300px side panel.
+        _resize_window_and_settle(win, app, 1280, 800)
         legend_text = win.map_widget._legend_lbl.text()
         assert "Greyline" in legend_text
         assert "Night" in legend_text
@@ -67,7 +93,11 @@ def test_legend_swaps_to_caption_below_compact_width(tmp_path, monkeypatch):
 
     app, win = _build_window(tmp_path, monkeypatch)
     try:
-        win.map_widget.resize(LEGEND_COMPACT_WIDTH - 50, 400)
+        # Still above the side-panel/compact-mode breakpoint (COMPACT_WIDTH_
+        # BELOW=900), but narrow enough that the map column itself (window
+        # width minus the ~300px side panel) drops below LEGEND_COMPACT_WIDTH.
+        _resize_window_and_settle(win, app, 1000, 700)
+        assert win.map_widget.width() < LEGEND_COMPACT_WIDTH
         assert not win.map_widget._legend_lbl.isVisible()
         # The caption only becomes visible once a real greyline meta string
         # has been computed (i.e. after the first scene build) -- never a
@@ -144,8 +174,14 @@ def test_double_click_reset_returns_to_padded_cover_framing(tmp_path, monkeypatc
 
     app, win = _build_window(tmp_path, monkeypatch)
     try:
-        win.map_widget.resize(900, 600)
-        win.map_widget.view.resize(900, 580)
+        # Resizing map_widget/view directly (as this used to) doesn't
+        # reliably stick -- they're managed by this window's own splitter/
+        # layout, which can correct a direct child resize() back on the very
+        # next layout pass (even synchronously, mid-call). Resizing the real
+        # top-level window instead gives a viewport size that's actually
+        # settled, so fitted_m11 reflects what _fit_map_view() will compute
+        # again later from that same (unchanged) viewport.
+        _resize_window_and_settle(win, app, 1280, 800)
         fitted_m11 = win.map_widget.view.transform().m11()
 
         win.map_widget.view.scale(2.0, 2.0)
