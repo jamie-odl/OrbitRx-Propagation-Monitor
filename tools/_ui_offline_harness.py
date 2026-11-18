@@ -30,6 +30,9 @@ def offline_env() -> None:
     # Gate already used in production (orbitrx.offline.offline_fixture): makes
     # fetch_weather/controller.start() take their synchronous, no-network path.
     os.environ.setdefault("ORBITRX_OFFLINE_FIXTURE", "1")
+    # Must happen before either tool constructs its QApplication below.
+    from orbitrx.ui.dpi import set_high_dpi_rounding_policy
+    set_high_dpi_rounding_policy()
 
 
 def make_work_dir() -> Path:

@@ -23,6 +23,12 @@ def main(out_dir: Path) -> int:
     from PySide6.QtCore import QTimer, Qt, QPoint
     from PySide6.QtGui import QPainter, QImage
 
+    # Ensure repo importable
+    root = Path(__file__).resolve().parents[1]
+    sys.path.insert(0, str(root))
+
+    from orbitrx.ui.dpi import set_high_dpi_rounding_policy
+    set_high_dpi_rounding_policy()
     app = QApplication.instance() or QApplication(sys.argv)
 
     # Work in a private temp dir (never pollute the screens output folder).
@@ -34,10 +40,6 @@ def main(out_dir: Path) -> int:
         '"home_lat":51.5081,"home_lon":-0.1281,"ip_geolocation_enabled":false}',
         encoding="utf-8",
     )
-
-    # Ensure repo importable
-    root = Path(__file__).resolve().parents[1]
-    sys.path.insert(0, str(root))
 
     from orbitrx.ui.theme import apply_theme
     from orbitrx.ui.qt_app import QtOrbitRxApplication

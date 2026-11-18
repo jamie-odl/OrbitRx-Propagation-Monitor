@@ -16,6 +16,12 @@ if os.environ.get("QT_QPA_PLATFORM") == "offscreen" and sys.platform != "win32":
     _cfg = Path(__file__).resolve().parent / "data" / "offscreen-1920x1200.json"
     os.environ["QT_QPA_PLATFORM"] = f"offscreen:configfile={_cfg}"
 
+# Must run before any test in the session constructs its first QApplication.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from orbitrx.ui.dpi import set_high_dpi_rounding_policy  # noqa: E402
+
+set_high_dpi_rounding_policy()
+
 
 _exit_status = 0
 

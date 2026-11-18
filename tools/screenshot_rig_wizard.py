@@ -34,6 +34,8 @@ def main() -> int:
 
     from PySide6.QtWidgets import QApplication
 
+    from orbitrx.ui.dpi import set_high_dpi_rounding_policy
+    set_high_dpi_rounding_policy()
     app = QApplication.instance() or QApplication(sys.argv[:1])
 
     from orbitrx.cat import CatController

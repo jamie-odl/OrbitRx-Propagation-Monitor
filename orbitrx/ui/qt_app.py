@@ -19,6 +19,7 @@ from orbitrx.propagation import HF_BANDS
 from orbitrx.ui.async_utils import CatTestRunner
 from orbitrx.ui.band_panel import BandPanelWidget
 from orbitrx.ui.controller import OrbitRxController
+from orbitrx.ui.dpi import set_high_dpi_rounding_policy
 from orbitrx.ui.map_widget import PropagationMapWidget, QT_AVAILABLE, _pil_to_qimage
 from orbitrx.spots.settings import clamp_poll_seconds
 from orbitrx.ui.formatting import (
@@ -1783,6 +1784,7 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    set_high_dpi_rounding_policy()
     app = QApplication.instance() or QApplication([])
     apply_theme(app)
     # Capture mode must never block on a modal alarm popup.
@@ -2199,6 +2201,7 @@ FINALISE_WATCHDOG_SECONDS = 20.0
 
 
 def run_qt_app() -> None:
+    set_high_dpi_rounding_policy()
     capture_dir = os.environ.get("ORBITRX_CAPTURE_DIR")
     if capture_dir:
         run_capture_and_exit(capture_dir)
