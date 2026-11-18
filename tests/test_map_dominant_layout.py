@@ -400,6 +400,145 @@ def test_control_strip_stacks_when_the_pane_is_narrow(window):
         assert right <= window.width()
 
 
+@pytest.fixture
+def wide_font_window(tmp_path, monkeypatch, large_avail):
+    """Regression harness for a windows-latest-only CI failure: Segoe UI's
+    bulkier chip/button padding made the 7 layer chips + 2 sliders control
+    strip need ~1222px for a single row at a 1280px window -- wider than the
+    1280 - 300 (side panel) budget -- so the splitter crushed the side panel
+    to ~54px. QFont.setStretch() widens every glyph's rendered advance
+    without depending on which font families happen to be installed on a
+    given CI image, so this reproduces that same bulkier-glyph effect
+    deterministically on any platform (including this offscreen/Linux test
+    run). The font is restored after the test so it can't bleed into others
+    sharing this session's QApplication instance."""
+    monkeypatch.chdir(tmp_path)
+    from PySide6.QtGui import QFont
+    from PySide6.QtWidgets import QApplication
+
+    import orbitrx.spots.service as svc
+    monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
+    import orbitrx.dx as dx
+    monkeypatch.setattr(dx.DxClusterService, "start", lambda self: None)
+    from orbitrx.ui.controller import OrbitRxController
+    monkeypatch.setattr(OrbitRxController, "fetch_weather", lambda self: None)
+    monkeypatch.setattr(OrbitRxController, "refresh_location", lambda self: None)
+
+    app = QApplication.instance() or QApplication([])
+    original_font = QFont(app.font())
+    wide_font = QFont(app.font())
+    wide_font.setStretch(175)
+    app.setFont(wide_font)
+    try:
+        from orbitrx.ui.qt_app import QtOrbitRxApplication
+        win = QtOrbitRxApplication()
+        win.show()
+        app.processEvents()
+        win.activateWindow()
+        app.processEvents()
+        yield win
+        win.ctrl.stop()
+        win.close()
+    finally:
+        app.setFont(original_font)
+
+
+def test_side_pane_is_not_crushed_by_wide_fonts_at_1280(wide_font_window):
+    """The actual windows-latest regression this reproduces (see the
+    wide_font_window fixture docstring): without a font-independent cap on
+    how much width the single-row control strip can force onto the map
+    column, the side panel got crushed to ~54px at exactly this window size
+    on that CI image."""
+    window = wide_font_window
+    _resize_and_settle(window, 1280, 800)
+    assert window._map_tab.minimumSizeHint().width() + 300 <= window._splitter.width(), (
+        _layout_diag(window)
+    )
+    _wait_until(
+        lambda: 260 <= window._side_pane.width() <= 340,
+        diag=lambda: _layout_diag(window),
+    )
+    assert 260 <= window._side_pane.width() <= 340, _layout_diag(window)
+    assert window._splitter.sizes()[1] >= 260, window._splitter.sizes()
+
+
+def test_control_strip_wraps_instead_of_clipping_under_wide_fonts_at_1280(wide_font_window):
+    """Companion to test_side_pane_is_not_crushed_by_wide_fonts_at_1280: once
+    the side panel is no longer crushed, the map column itself is narrower
+    than the chips' one-row natural width -- every chip and slider must still
+    be fully reachable (wrapped onto more rows), not squeezed below its own
+    minimumSizeHint or clipped past the window edge."""
+    window = wide_font_window
+    _resize_and_settle(window, 1280, 800)
+    _wait_until(lambda: window._splitter.sizes()[1] >= 260, diag=lambda: _layout_diag(window))
+
+    for chip in window._layer_checks.values():
+        right = chip.mapTo(window, chip.rect().topRight()).x()
+        assert right <= window.width(), (chip.text(), right, window.width())
+        assert chip.width() >= chip.minimumSizeHint().width(), (chip.text(), chip.geometry())
+    for slider in (window.time_slider, window.replay_slider):
+        right = slider.mapTo(window, slider.rect().topRight()).x()
+        assert right <= window.width(), right
+
+
+@pytest.fixture
+def small_screen_window(tmp_path, monkeypatch):
+    """Second hypothesis for the windows-latest side-pane-crush failure:
+    that CI run's own screen.availableGeometry() (800x800) was narrower than
+    the 1280x800 test window. The side-pane default-width computation
+    (_apply_default_splitter_sizes) must come from the splitter's own actual
+    width after a resize, never from the screen's available geometry -- a
+    window can legitimately be resized wider than the screen reports (e.g. a
+    multi-monitor CI VM, or a caller that never re-clamps after the one-time
+    post-show window_fit refit), and the side pane must still get its normal
+    ~300px share in that case. Unlike the `window`/`large_avail` fixtures
+    (which make the screen roomy so window_fit.fit_to_screen's clamp is
+    always a no-op), this deliberately keeps the screen *smaller* than the
+    window to isolate this hypothesis."""
+    monkeypatch.chdir(tmp_path)
+    from PySide6.QtWidgets import QApplication
+
+    import orbitrx.ui.window_fit as window_fit
+    monkeypatch.setattr(window_fit, "_available_geometry", lambda widget: QRect(0, 0, 800, 800))
+
+    import orbitrx.spots.service as svc
+    monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
+    import orbitrx.dx as dx
+    monkeypatch.setattr(dx.DxClusterService, "start", lambda self: None)
+    from orbitrx.ui.controller import OrbitRxController
+    monkeypatch.setattr(OrbitRxController, "fetch_weather", lambda self: None)
+    monkeypatch.setattr(OrbitRxController, "refresh_location", lambda self: None)
+
+    app = QApplication.instance() or QApplication([])
+    from orbitrx.ui.qt_app import QtOrbitRxApplication
+    win = QtOrbitRxApplication()
+    win.show()
+    app.processEvents()
+    win.activateWindow()
+    app.processEvents()
+    yield win
+    win.ctrl.stop()
+    win.close()
+
+
+def test_side_pane_width_is_deterministic_on_a_screen_smaller_than_the_window(small_screen_window):
+    """Regression for the second hypothesis behind the windows-latest
+    side-pane-crush failure (see small_screen_window fixture docstring): a
+    1280x800 window on an 800x800-available screen must still get its normal
+    ~300px side pane and the map must still keep its >=65% share, because the
+    default-width computation is keyed off the splitter's real post-resize
+    width, not the screen's availableGeometry."""
+    window = small_screen_window
+    _resize_and_settle(window, 1280, 800)
+    _wait_until(
+        lambda: 260 <= window._side_pane.width() <= 340,
+        diag=lambda: _layout_diag(window),
+    )
+    assert 260 <= window._side_pane.width() <= 340, _layout_diag(window)
+    ratio = window._map_tab.width() / window._splitter.width()
+    assert ratio >= 0.65, (ratio, _layout_diag(window))
+
+
 # --- Compact mode: the map is the main thing visible ------------------------
 
 

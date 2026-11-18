@@ -213,6 +213,7 @@ class _ReflowGrid(QWidget):
         self._grid.setSpacing(6)
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._cols = 0
+        self._prefer_full_row = False
         self._relayout(self._columns_for_width(len(widgets) * self._min_item_width))
 
     def _columns_for_width(self, width: int) -> int:
@@ -239,16 +240,54 @@ class _ReflowGrid(QWidget):
             self._relayout(cols)
 
     def natural_width(self) -> int:
-        """Width needed to show every item in a single row. A sibling that
-        wants to reserve this much room (e.g. _MapControlStrip, which embeds
-        this grid in a QHBoxLayout alongside another widget) must not rely on
-        this grid's own sizeHint() instead: that reflects whatever column
-        count a previous, narrower width last settled it into, and a stretch-0
-        QHBoxLayout slot sized off a stale, narrow sizeHint hands this grid
-        too little width to ever recover -- a self-reinforcing single-column
-        layout even once real room is available."""
+        """Width needed to show every item in a single row."""
         n = len(self._widgets) or 1
         return n * self._min_item_width + (n - 1) * self._grid.spacing()
+
+    def set_prefer_full_row(self, enabled: bool) -> None:
+        """Tell sizeHint() to always ask for natural_width() (every item on
+        one row) regardless of this grid's *actual* current column count --
+        a sibling (_MapControlStrip) that wants to *try* a single-row display
+        calls this instead of relying on this grid's plain sizeHint(), which
+        otherwise reflects whatever column count a previous, narrower width
+        last settled it into: a stretch-0 QHBoxLayout slot sized off that
+        stale, narrow sizeHint would hand this grid too little width to ever
+        recover -- a self-reinforcing single-column layout even once real
+        room is available. The actual rendered column count still comes from
+        resizeEvent()/_columns_for_width() once real geometry is assigned, so
+        asking big here never forces anything to render below its own
+        per-item minimum -- see minimumSizeHint()."""
+        if self._prefer_full_row != enabled:
+            self._prefer_full_row = enabled
+            self.updateGeometry()
+
+    def sizeHint(self):
+        if self._prefer_full_row:
+            from PySide6.QtCore import QSize
+
+            return QSize(self.natural_width(), super().sizeHint().height())
+        return super().sizeHint()
+
+    def minimumSizeHint(self):
+        """Width/height for about half the items in one row -- independent of
+        self._cols (the column count actually being rendered right now, which
+        set_prefer_full_row() above can push as high as every item in one
+        row). Reporting that live, possibly-maximal _cols arrangement as this
+        grid's *minimum* would force an ancestor layout (here: the map column
+        vs. the side panel) to always reserve this grid's full single-row
+        width even when a squeeze (e.g. unusually wide Windows fonts) leaves
+        less room than that -- this floor is low enough that the grid can
+        still wrap onto extra rows instead."""
+        from PySide6.QtCore import QSize
+
+        n = len(self._widgets) or 1
+        cols = max(1, -(-n // 2))
+        rows = -(-n // cols)
+        spacing = self._grid.spacing()
+        row_height = max([w.sizeHint().height() for w in self._widgets], default=0)
+        width = cols * self._min_item_width + (cols - 1) * spacing
+        height = rows * row_height + (rows - 1) * spacing
+        return QSize(width, height)
 
     def _relayout(self, cols: int) -> None:
         self._cols = cols
@@ -336,22 +375,26 @@ class _MapControlStrip(QWidget):
         if self._single_row == single_row:
             return
         self._single_row = single_row
+        # _ReflowGrid.set_prefer_full_row() makes the chips grid *ask* for
+        # its one-row natural width via sizeHint() while in this mode, but
+        # its minimumSizeHint() always stays well below that -- unlike the
+        # old setMinimumWidth(natural_width) pin, which forced this
+        # ancestor's (the map column's) minimumSizeHint that wide too, and on
+        # Windows' bulkier Segoe UI chip padding that exceeded the room
+        # actually available once the ~300px side panel is accounted for,
+        # crushing it to a few dozen px. Short of the full natural width, the
+        # grid's own resizeEvent wraps it onto extra rows instead.
+        if hasattr(self._chips, "set_prefer_full_row"):
+            self._chips.set_prefer_full_row(single_row)
         if single_row:
             self._col_layout.removeWidget(self._chips)
             self._col_layout.removeWidget(self._sliders)
-            # Pin the chips' width to their one-row natural width instead of
-            # leaving the HBoxLayout to size this stretch-0 slot off the
-            # chips' own (possibly stale/narrow) sizeHint -- see
-            # _ReflowGrid.natural_width.
-            natural_width = getattr(self._chips, "natural_width", lambda: 0)()
-            self._chips.setMinimumWidth(natural_width)
             self._row_layout.addWidget(self._chips)
             self._row_layout.addWidget(self._sliders, 1)
             self._stack.setCurrentWidget(self._row_page)
         else:
             self._row_layout.removeWidget(self._chips)
             self._row_layout.removeWidget(self._sliders)
-            self._chips.setMinimumWidth(0)
             self._col_layout.addWidget(self._chips)
             self._col_layout.addWidget(self._sliders)
             self._stack.setCurrentWidget(self._col_page)
