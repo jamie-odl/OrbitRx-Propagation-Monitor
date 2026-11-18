@@ -6,6 +6,7 @@ Usage:
 
 Writes (into DIR):
     main_<size>.png
+    statusbar_<size>.png        (crop of the main window's status bar)
     settings_<size>.png
     menubar_<name>_<size>.png   (one per File/View/Tools/Help menu, composited
                                  onto the whole main window)
@@ -101,6 +102,17 @@ def capture_size(app, out_dir: Path, label: str, width: int, height: int) -> lis
         main_path = out_dir / f"main_{label}.png"
         win.grab().save(str(main_path))
         written.append(main_path)
+
+        status_bar = getattr(win, "statusBar", None)
+        if callable(status_bar):
+            try:
+                bar = status_bar()
+                if bar is not None and bar.isVisible():
+                    statusbar_path = out_dir / f"statusbar_{label}.png"
+                    bar.grab().save(str(statusbar_path))
+                    written.append(statusbar_path)
+            except Exception as exc:
+                print(f"warning: status bar capture failed: {exc}", file=sys.stderr)
 
         build_dialog = getattr(win, "_build_settings_dialog", None)
         if callable(build_dialog):

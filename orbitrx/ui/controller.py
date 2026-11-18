@@ -49,6 +49,7 @@ class OrbitRxController:
         on_alarm_excellent: Callable[[], None] | None = None,
         on_alarm_storm: Callable[[], None] | None = None,
         on_band_beep: Callable[[dict], None] | None = None,
+        on_error: Callable[[str], None] | None = None,
     ) -> None:
         self.log = setup_logging()
         self.cfg = AppConfig().load()
@@ -62,6 +63,10 @@ class OrbitRxController:
         self._on_alarm_excellent = on_alarm_excellent or (lambda: None)
         self._on_alarm_storm = on_alarm_storm or (lambda: None)
         self._on_band_beep = on_band_beep or (lambda _s: None)
+        # P2B: a concise, non-blocking surface for failures that used to be
+        # logged only (weather fetch, geolocation) -- the UI wraps this in a
+        # toast via the _UiInvoker pattern, same as every other callback here.
+        self._on_error = on_error or (lambda _s: None)
 
         self._dx = DxClusterService(
             self.state,
@@ -164,11 +169,14 @@ class OrbitRxController:
             try:
                 self.state.user_lat = float(home_lat)
                 self.state.user_lon = float(home_lon)
+                self.state.location_source = "manual"
             except (TypeError, ValueError):
                 self.log.warning("Invalid home_lat/home_lon in config")
+                self.state.location_source = "unset"
             self._on_weather()
             return
         if not self.cfg.get("ip_geolocation_enabled", False):
+            self.state.location_source = "unset"
             self._on_weather()
             return
 
@@ -180,10 +188,13 @@ class OrbitRxController:
                     la, lo = info["loc"].split(",")
                     self.state.user_lat = float(la)
                     self.state.user_lon = float(lo)
+                    self.state.location_source = "geolocated"
             except Exception as e:
                 self.log.warning("Location failed: %s", e)
                 self.state.user_lat = None
                 self.state.user_lon = None
+                self.state.location_source = "unset"
+                self._on_error("Location lookup failed, map centred without your position")
             self._on_weather()
         self._location_thread = threading.Thread(target=worker, daemon=True, name="geo-location")
         self._location_thread.start()
@@ -208,8 +219,10 @@ class OrbitRxController:
                 offline = True
                 if not data:
                     self._on_status(f"Weather error: {e}")
+                    self._on_error(f"Weather update failed: {e}")
                     self.state.weather_fetch_in_progress = False
                     return
+                self._on_error("Weather update failed, showing cached data")
             try:
                 self._apply_weather(data, offline)
             except Exception:

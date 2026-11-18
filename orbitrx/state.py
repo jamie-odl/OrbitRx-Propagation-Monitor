@@ -50,6 +50,9 @@ class AppState:
     last_dx_update: datetime.datetime | None = None
     dx_coord_source: dict[str, str] = field(default_factory=dict)
     hamqsl_band_hint: str = ""
+    # "manual" (home_lat/home_lon configured), "geolocated" (IP lookup succeeded),
+    # or "unset" (neither) -- drives the status bar's location indicator.
+    location_source: str = "unset"
 
     def prune_dx_spots(self, max_age: float = 300) -> None:
         now = time.time()

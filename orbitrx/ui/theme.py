@@ -196,6 +196,7 @@ QToolButton#layerChip:checked {{
 }}
 QToolButton#layerChip:disabled {{ opacity: 0.45; }}
 QStatusBar {{ background: {BG}; color: {TEXT_MUTED}; font-size: 11px; border-top: 1px solid {BORDER}; }}
+QStatusBar QLabel {{ color: {TEXT_MUTED}; font-size: 11px; padding: 0 8px; }}
 QDialogButtonBox {{ dialogbuttonbox-buttons-have-icons: 0; }}
 QDialogButtonBox QPushButton {{ min-width: 72px; }}
 QDialogButtonBox QPushButton#primaryButton {{

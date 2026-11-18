@@ -30,6 +30,7 @@ from orbitrx.ui.formatting import (
 )
 from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
 from orbitrx.ui.theme import CARD_STYLE, CARD_TEXT, ERR, FONT_BODY, MUTED, MUTED_SECONDARY, OK, apply_theme
+from orbitrx.ui.toast import ToastManager
 from orbitrx.ui.window_fit import fit_to_screen
 from orbitrx.update_checker import check_github_release
 
@@ -97,6 +98,9 @@ COMPACT_WIDTH_ABOVE = 940
 # Default Test CAT timeout; a module attribute (not a literal in do_test_cat) so
 # tests can monkeypatch it to run a slow-serial-stub scenario quickly.
 CAT_TEST_TIMEOUT_S = 5.0
+
+# P2B: status bar wording for AppState.location_source.
+LOCATION_SOURCE_LABELS = {"manual": "manual", "geolocated": "geolocated", "unset": "not set"}
 
 
 def _build_history_figure(rows: list[dict], poll_interval_s: float) -> tuple[Figure, bool]:
@@ -313,6 +317,10 @@ class QtOrbitRxApplication(QMainWindow):
         self._map_load_thread: threading.Thread | None = None
         self._update_check_thread: threading.Thread | None = None
         self._plot_query_thread: threading.Thread | None = None
+        # P2B: one toast surface for the whole main window, used by both
+        # controller-reported failures (below) and the UI's own (export,
+        # map-load, update-check) failure paths.
+        self._toasts = ToastManager(self)
         ui = self._ui.wrap
         self.ctrl = OrbitRxController(
             on_status=ui(self._set_status),
@@ -321,6 +329,7 @@ class QtOrbitRxApplication(QMainWindow):
             on_cluster=ui(self._set_cluster),
             on_alarm_excellent=ui(self._alarm_excellent),
             on_alarm_storm=ui(self._alarm_storm),
+            on_error=ui(self._on_controller_error),
         )
         self.ctrl._on_band_beep = ui(self._spot_beep)
         self.ctrl.on_live_spots = ui(self._refresh_live_spots)
@@ -363,6 +372,7 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _build_ui(self) -> None:
         self._build_toolbar()
+        self._build_status_bar()
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -756,6 +766,33 @@ class QtOrbitRxApplication(QMainWindow):
 
         self._build_menu_bar()
 
+    def _build_status_bar(self) -> None:
+        """Permanent status bar widgets (P2B): rig/CAT, DX cluster, last-refresh
+        time and location source, so system health is visible without opening
+        any dialog. Driven entirely by existing controller callbacks/signals
+        via _UiInvoker -- nothing here polls serial/network on the UI thread."""
+        bar = self.statusBar()
+        bar.setSizeGripEnabled(False)
+
+        def make(object_name: str, text: str) -> QLabel:
+            lbl = QLabel(text)
+            lbl.setObjectName(object_name)
+            lbl.setTextFormat(Qt.TextFormat.RichText)
+            bar.addPermanentWidget(lbl)
+            return lbl
+
+        self._status_rig_lbl = make("statusRig", f'<span style="color:{MUTED}">●</span> Rig: not tested')
+        self._status_cluster_lbl = make("statusCluster", "Cluster: disconnected")
+        self._status_refresh_lbl = make("statusRefresh", "Refresh: --:--:--")
+        self._status_location_lbl = make("statusLocation", "Location: not set")
+
+    def _set_rig_status(self, ok: bool, detail: str) -> None:
+        """Updates the status bar's rig/CAT indicator. Driven by Test CAT
+        (Settings dialog and Rig Wizard) and by tuning a frequency from the
+        map -- the only places the app actually talks to the rig."""
+        color = OK if ok else ERR
+        self._status_rig_lbl.setText(f'<span style="color:{color}">●</span> Rig: {detail}')
+
     def _focus_panel(self, which: str) -> None:
         """Focus/raise Map, Bands or Log, in both wide (splitter) and compact
         (tab) layouts (P2A)."""
@@ -880,6 +917,7 @@ class QtOrbitRxApplication(QMainWindow):
         self.banner_hint.setFullText("")
         self.banner.setProperty("state", "error")
         self.banner.style().polish(self.banner)
+        self._toasts.show_toast(f"Map failed to load: {exc}", kind="error")
 
     def _current_layers(self) -> MapLayers:
         return MapLayers(
@@ -966,6 +1004,14 @@ class QtOrbitRxApplication(QMainWindow):
         self._render_cluster_label()
         self.band_panel.update_grid(self.ctrl.state.band_grid)
         self.last_updated_lbl.setText(self.ctrl.last_updated_text())
+        # P2B: "whenever data refresh completes" -- on_weather and on_dx are
+        # both wired to this same method, so this covers both triggers.
+        self._status_refresh_lbl.setText(
+            f"Refresh: {datetime.datetime.now().strftime('%H:%M:%S')}"
+        )
+        self._status_location_lbl.setText(
+            f"Location: {LOCATION_SOURCE_LABELS.get(self.ctrl.state.location_source, 'not set')}"
+        )
         self._schedule_map_rebuild()
 
     def _schedule_map_rebuild(self, vectors_only: bool = False) -> None:
@@ -1042,14 +1088,23 @@ class QtOrbitRxApplication(QMainWindow):
         def confirm(msg: str) -> bool:
             return QMessageBox.question(self, "CAT", msg) == QMessageBox.StandardButton.Yes
         result = self.ctrl.tune_radio(freq, confirm if self.ctrl.cfg.get("cat_confirm_before_tune") else None)
+        if result != "cancelled":
+            ok = "Sent CAT" in result
+            self._set_rig_status(ok, result if ok else "tune failed")
         QMessageBox.information(self, "CAT", result)
 
     def _set_status(self, text: str) -> None:
         self.status_lbl.setText(text)
 
+    def _on_controller_error(self, message: str) -> None:
+        self._toasts.show_toast(message, kind="error")
+
     def _set_cluster(self, status: str) -> None:
+        was_connected = self.ctrl.state.cluster_status == "connected"
         self.ctrl.state.cluster_status = status
         self._render_cluster_label()
+        if status == "reconnecting" and was_connected:
+            self._toasts.show_toast("DX cluster disconnected, reconnecting…", kind="warning")
 
     def _tick_cluster_pulse(self) -> None:
         self._cluster_pulse_phase = not self._cluster_pulse_phase
@@ -1067,6 +1122,8 @@ class QtOrbitRxApplication(QMainWindow):
             self._labels["cluster"].setText(text)
         if hasattr(self, "cluster_live_lbl"):
             self.cluster_live_lbl.setText(text)
+        if hasattr(self, "_status_cluster_lbl"):
+            self._status_cluster_lbl.setText(text)
 
     def _update_location_hint_visibility(self) -> None:
         """M5: path_muf/sunrise/sunset only mean anything once a location is set;
@@ -1118,11 +1175,15 @@ class QtOrbitRxApplication(QMainWindow):
         # never run it on the UI thread, or a slow/unreachable GitHub freezes
         # the whole window for up to that long.
         on_done = self._ui.wrap(self._show_update_available)
+        on_error = self._ui.wrap(self._on_update_check_error)
 
         def worker() -> None:
             info = check_github_release(__version__)
             if info.get("update_available"):
                 on_done(info)
+            elif info.get("error"):
+                # Previously silent: a failed check never told the user anything.
+                on_error(info.get("message") or "could not reach GitHub")
 
         # Stored so capture-process teardown can join it before deleting any
         # Qt object the finished callback might otherwise reach into.
@@ -1135,18 +1196,30 @@ class QtOrbitRxApplication(QMainWindow):
             f"{info['message']}\n\nDownload: {info['url']}",
         )
 
+    def _on_update_check_error(self, message: str) -> None:
+        self._toasts.show_toast(f"Update check failed: {message}", kind="warning")
+
     def _export_json(self) -> None:
-        p = self.ctrl.export_json()
+        try:
+            p = self.ctrl.export_json()
+        except Exception as e:
+            self._toasts.show_toast(f"Export failed: {e}", kind="error")
+            return
         QMessageBox.information(self, "Export", f"Saved {p}")
 
     def _export_dx(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Export DX", "dx_spots.csv", "CSV (*.csv)")
-        if path:
+        if not path:
+            return
+        try:
             self.ctrl.store.export_dx_csv(Path(path))
-            QMessageBox.information(self, "Export", f"Saved {path}")
+        except Exception as e:
+            self._toasts.show_toast(f"Export failed: {e}", kind="error")
+            return
+        QMessageBox.information(self, "Export", f"Saved {path}")
 
     def _rig_wizard(self) -> None:
-        dlg = RigWizardDialog(self.ctrl.cfg, self.ctrl.cat, self)
+        dlg = RigWizardDialog(self.ctrl.cfg, self.ctrl.cat, self, on_rig_status=self._set_rig_status)
         dlg.exec()
 
     def _refresh_plot_tab(self) -> None:
@@ -1216,9 +1289,14 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _save_fig(self, fig) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Save PNG", "history.png", "PNG (*.png)")
-        if path:
+        if not path:
+            return
+        try:
             fig.savefig(path, dpi=150, facecolor="#0B1220")
-            QMessageBox.information(self, "Saved", path)
+        except Exception as e:
+            self._toasts.show_toast(f"Save failed: {e}", kind="error")
+            return
+        QMessageBox.information(self, "Saved", path)
 
     def _eye_icon(self, crossed: bool, size: int = 16) -> QIcon:
         """Small drawn eye glyph for the QRZ key show/hide action (no icon asset needed)."""
@@ -1276,6 +1354,10 @@ class QtOrbitRxApplication(QMainWindow):
         dlg.setWindowTitle("Settings")
         dlg.setMinimumSize(520, 380)
         outer = QVBoxLayout(dlg)
+        # P2B: a separate toast surface anchored to the dialog itself -- the
+        # dialog is modal, so a toast on the main window underneath it would
+        # never be seen.
+        dlg._toasts = ToastManager(dlg)
 
         # The list+pages area scrolls independently so a small/scaled-up screen can
         # shrink the dialog without ever hiding the Save/Cancel buttons below it.
@@ -1385,9 +1467,15 @@ class QtOrbitRxApplication(QMainWindow):
             if kind == "timeout":
                 test_cat_result.setText(message)
                 test_cat_result.setStyleSheet(f"color: {ERR};")
+                self._set_rig_status(False, "test timed out")
+                dlg._toasts.show_toast(f"CAT test failed: {message}", kind="error")
                 return
+            ok = "Sent CAT" in message
             test_cat_result.setText(message)
-            test_cat_result.setStyleSheet(f"color: {OK if 'Sent CAT' in message else ERR};")
+            test_cat_result.setStyleSheet(f"color: {OK if ok else ERR};")
+            self._set_rig_status(ok, "connected" if ok else "test failed")
+            if not ok:
+                dlg._toasts.show_toast(f"CAT test failed: {message}", kind="error")
 
         def do_test_cat() -> None:
             cfg.data["cat_port"] = (fields["cat_port"].currentData() or fields["cat_port"].currentText()).strip()
@@ -1626,6 +1714,7 @@ class QtOrbitRxApplication(QMainWindow):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._update_compact_mode()
+        self._toasts.reposition()
 
     def _apply_map_min_height(self) -> None:
         """N6 / M9.3: in compact Map tab, keep the map at least ~40% of the

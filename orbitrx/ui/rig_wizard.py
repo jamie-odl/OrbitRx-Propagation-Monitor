@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from typing import Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -12,6 +13,7 @@ from orbitrx.cat import CatController, RIG_PROFILES, default_port_fallback
 from orbitrx.config import AppConfig
 from orbitrx.ui.async_utils import CatTestRunner
 from orbitrx.ui.theme import ERR, MUTED, OK
+from orbitrx.ui.toast import ToastManager
 from orbitrx.ui.window_fit import fit_to_screen
 
 # N1: distinct from the normal OK colour, this marks a *simulated* connected state
@@ -85,11 +87,21 @@ def populate_port_combo(combo: QComboBox, cat: CatController, current_port: str)
 class RigWizardDialog(QDialog):
     """Detect serial port, test CAT, save rig profile."""
 
-    def __init__(self, cfg: AppConfig, cat: CatController, parent=None) -> None:
+    def __init__(
+        self,
+        cfg: AppConfig,
+        cat: CatController,
+        parent=None,
+        on_rig_status: Callable[[bool, str], None] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.cfg = cfg
         self.cat = cat
         self._cat_runner = CatTestRunner(self)
+        # P2B: lets the main window's status bar reflect a test run here too,
+        # without this dialog knowing anything about that widget.
+        self._on_rig_status = on_rig_status or (lambda ok, detail: None)
+        self._toasts = ToastManager(self)
         self.setWindowTitle("Rig setup")
         self.setMinimumWidth(420)
         lay = QVBoxLayout(self)
@@ -192,6 +204,8 @@ class RigWizardDialog(QDialog):
             self.status_icon.setText("🔴")
             self.status_text.setText(message)
             self.status_text.setStyleSheet(f"color: {ERR};")
+            self._on_rig_status(False, "test timed out")
+            self._toasts.show_toast(f"CAT test failed: {message}", kind="error")
             return
         result = message
         if result.startswith(_SIMULATED_PREFIX):
@@ -199,13 +213,17 @@ class RigWizardDialog(QDialog):
             self.status_icon.setText("🟢")
             self.status_text.setText(f"Connected: {freq} MHz")  # the status icon already shows the dot
             self.status_text.setStyleSheet(f"color: {SIMULATED_CAT_COLOR};")
+            self._on_rig_status(True, "connected")
             return
         ok = "Sent CAT" in result
         self.status_icon.setText("🟢" if ok else "🔴")
         self.status_text.setText(f"{result} (test frequency {test_freq} MHz)" if ok else result)
         self.status_text.setStyleSheet(f"color: {OK if ok else ERR};")
+        self._on_rig_status(ok, "connected" if ok else "test failed")
         if ok:
             QMessageBox.information(self, "CAT", "Rig responded. Profile looks good.")
+        else:
+            self._toasts.show_toast(f"CAT test failed: {result}", kind="error")
 
     def _save(self) -> None:
         port = self._current_port()

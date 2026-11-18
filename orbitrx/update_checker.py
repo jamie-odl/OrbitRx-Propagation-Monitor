@@ -23,6 +23,7 @@ def check_github_release(current_version: str) -> dict[str, Any]:
         "latest": current_version,
         "url": f"https://github.com/{GITHUB_REPO}/releases",
         "message": "",
+        "error": False,
     }
     try:
         req = urllib.request.Request(
@@ -42,4 +43,5 @@ def check_github_release(current_version: str) -> dict[str, Any]:
             result["message"] = f"Up to date (v{current_version})"
     except Exception as e:
         result["message"] = f"Update check skipped: {e}"
+        result["error"] = True
     return result
