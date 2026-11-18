@@ -120,8 +120,9 @@ class PropagationMapWidget(QWidget):
         self._pan_anchor = None
         self.view.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
-        # P2: letterbox fill, so a pane that isn't exactly 2:1 shows dark bars
-        # (never a crop) above/below or left/right of the map.
+        # Fallback fill behind the scene before the first basemap pixmap is
+        # loaded/fitted; _fit_scene_rect() always crops to fill the viewport
+        # afterwards, so this brush is never actually visible once running.
         self.view.setBackgroundBrush(QBrush(QColor(BG_MAP_MATTE)))
         layout.addWidget(self.view, stretch=1)
 
@@ -198,10 +199,24 @@ class PropagationMapWidget(QWidget):
         self._base_item.setPixmap(pixmap)
         self._base_item.setPos(0, 0)
         self.scene.setSceneRect(0, 0, w, h)
-        # P2: KeepAspectRatio letterboxes (dark bars, #0F1720) instead of cropping,
-        # so the poles are never clipped asymmetrically and the map is centred.
-        self.view.fitInView(QRectF(0, 0, w, h), Qt.AspectRatioMode.KeepAspectRatio)
+        self._fit_scene_rect(QRectF(0, 0, w, h))
         self._view_fitted = True
+
+    def _fit_scene_rect(self, rect: QRectF) -> None:
+        """Always fitInView(KeepAspectRatioByExpanding): the view is scaled
+        uniformly (same x/y factor, so overlays/markers drawn in the same
+        scene coordinates never drift out of alignment with the basemap) and
+        centred, filling the viewport completely in both directions. Whatever
+        the pane's own aspect ratio is relative to the basemap's 2:1, the
+        excess is cropped off both edges of whichever axis overshoots --
+        symmetrically, since fitInView centres the rect -- rather than ever
+        leaving a dark letterbox/gutter bar (previously only cropped when the
+        pane was proportionally wider than 2:1; now applied unconditionally
+        so a pane proportionally *taller* than 2:1, e.g. plain 1280x800, no
+        longer letterboxes top/bottom either)."""
+        if rect.width() <= 0 or rect.height() <= 0:
+            return
+        self.view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatioByExpanding)
 
     def _overlay_refresh_key(self, scene: MapScene, snapshot: _MapStateSnapshot) -> tuple:
         return (
@@ -546,4 +561,4 @@ class PropagationMapWidget(QWidget):
         if self._base_item.pixmap() and not self._base_item.pixmap().isNull():
             r = self._base_item.boundingRect()
             if r.width() > 0 and r.height() > 0:
-                self.view.fitInView(r, Qt.AspectRatioMode.KeepAspectRatio)
+                self._fit_scene_rect(r)

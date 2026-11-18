@@ -66,7 +66,30 @@ def main() -> int:
     avail = screen.availableGeometry()
 
     win = QtOrbitRxApplication()
+
+    # MAP_PROBE_SIZE="<w>x<h>" (optional): resize to a specific logical size
+    # before measuring the map, so the map-coverage fields below reflect a
+    # requested size rather than whatever fit_to_screen() defaulted to.
+    map_probe_size = os.environ.get("MAP_PROBE_SIZE")
+    if map_probe_size:
+        req_w, req_h = (int(part) for part in map_probe_size.split("x"))
+        win.resize(req_w, req_h)
+        win.show()
+        # A single resize() + processEvents() can leave the splitter/layout
+        # reflow mid-settle (same reasoning as _wait_until() in
+        # tests/test_map_dominant_layout.py): pump on real elapsed time,
+        # not a fixed iteration count, so the map viewport/scene-fit measured
+        # below is the final, settled one regardless of host speed.
+        harness.pump(app, 0.5)
+
     dlg = win._build_settings_dialog()
+
+    view = win.map_widget.view
+    vp = view.viewport()
+    scene_rect = win.map_widget._base_item.sceneBoundingRect()
+    top_left = view.mapFromScene(scene_rect.topLeft())
+    bottom_right = view.mapFromScene(scene_rect.bottomRight())
+    transform = view.transform()
 
     report = {
         "device_pixel_ratio": screen.devicePixelRatio(),
@@ -80,6 +103,14 @@ def main() -> int:
         "dlg_w": dlg.width(),
         "dlg_h": dlg.height(),
         "save_button_visible": _save_button_fully_visible(dlg),
+        "map_vp_w": vp.width(),
+        "map_vp_h": vp.height(),
+        "map_left": top_left.x(),
+        "map_top": top_left.y(),
+        "map_right": bottom_right.x(),
+        "map_bottom": bottom_right.y(),
+        "map_m11": transform.m11(),
+        "map_m22": transform.m22(),
     }
 
     try:

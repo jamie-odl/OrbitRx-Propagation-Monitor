@@ -73,6 +73,93 @@ def test_static_map_fills_most_of_viewport_width(tmp_path, monkeypatch): # S3
     app.processEvents()
 
 
+def _pump(app, seconds: float) -> None:
+    """Pump the event loop for a fixed wall-clock duration, not a fixed
+    iteration count. Settling the map-dominant layout after a resize/show can
+    take several independent deferred passes -- window_fit's post-show
+    QTimer(0) re-fit, the splitter's own re-apply-until-it-sticks retry (see
+    _apply_default_splitter_sizes), and the base-map rebuild worker thread's
+    queued delivery -- each of which can itself trigger another resizeEvent.
+    A loop keyed on iteration count or on "stopped changing for N reads" can
+    lock onto an intermediate state that happens to hold steady for a few
+    reads before the next pass lands; pumping a fixed real-time window (long
+    enough to cover all of the above) is the only way that's reliable
+    regardless of host speed."""
+    import time
+    from PySide6.QtTest import QTest
+
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        app.processEvents()
+        QTest.qWait(10)
+
+
+@pytest.mark.parametrize("width,height", [(1280, 800), (683, 485)])
+def test_map_fills_viewport_with_no_letterbox(tmp_path, monkeypatch, width, height):
+    """Owner fix: dark empty bands above/below (or left/right of) the map are
+    not acceptable at any window size. map_widget._fit_scene_rect() always
+    fitInView(KeepAspectRatioByExpanding), so the basemap's mapped rect must
+    cover the whole viewport on every edge (cropping symmetrically off
+    whichever axis the pane's own aspect overshoots), and the fit must stay a
+    uniform zoom (m11 == m22) so overlay/marker items -- drawn in the same
+    scene coordinates as the basemap -- never drift out of alignment."""
+    monkeypatch.chdir(tmp_path)
+    from PySide6.QtCore import QRect
+    from PySide6.QtWidgets import QApplication
+    import orbitrx.ui.window_fit as window_fit
+
+    # Decouple from the real/offscreen platform's own default screen size
+    # (tools/_ui_offline_harness.py documents it clamping a requested
+    # 1280x800 window on its own) -- window_fit.fit_to_screen()'s clamp is a
+    # no-op against a generously large available geometry regardless of
+    # which size this test resizes to.
+    monkeypatch.setattr(window_fit, "_available_geometry", lambda widget: QRect(0, 0, 1920, 1200))
+
+    import orbitrx.spots.service as svc
+    monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
+    import orbitrx.dx as dx
+    monkeypatch.setattr(dx.DxClusterService, "start", lambda self: None)
+    from orbitrx.ui.controller import OrbitRxController
+    monkeypatch.setattr(OrbitRxController, "fetch_weather", lambda self: None)
+    monkeypatch.setattr(OrbitRxController, "refresh_location", lambda self: None)
+
+    app = QApplication.instance() or QApplication([])
+    from orbitrx.ui.qt_app import QtOrbitRxApplication
+    win = QtOrbitRxApplication()
+    win.resize(width, height)
+    win.show()
+
+    _pump(app, 0.5)
+    win.map_widget.join_rebuild_thread(timeout=5.0)
+    app.processEvents()
+
+    view = win.map_widget.view
+    vp = view.viewport()
+    rect = win.map_widget._base_item.sceneBoundingRect()
+    tl = view.mapFromScene(rect.topLeft())
+    br = view.mapFromScene(rect.bottomRight())
+    t = view.transform()
+    vp_w, vp_h = vp.width(), vp.height()
+    left, top, right, bottom = tl.x(), tl.y(), br.x(), br.y()
+    m11, m22 = t.m11(), t.m22()
+
+    # fitInView's own scale/centering rounds to whole device pixels, so the
+    # axis that's supposed to match the viewport exactly can land 2-3px shy
+    # of it rather than exactly 0 -- a gap far too small to read as a dark
+    # bar, but real, so the coverage check allows it rather than demanding
+    # exact equality.
+    TOLERANCE = 3
+    assert left <= TOLERANCE, (left, top, right, bottom, vp_w, vp_h)
+    assert top <= TOLERANCE, (left, top, right, bottom, vp_w, vp_h)
+    assert right >= vp_w - TOLERANCE, (left, top, right, bottom, vp_w, vp_h)
+    assert bottom >= vp_h - TOLERANCE, (left, top, right, bottom, vp_w, vp_h)
+    assert m11 == pytest.approx(m22), (m11, m22)
+
+    win.ctrl.stop()
+    win.deleteLater()
+    app.processEvents()
+
+
 def test_no_visible_qlabel_renders_below_caption_minimum(tmp_path, monkeypatch): # S2
     monkeypatch.chdir(tmp_path)
     from PySide6.QtWidgets import QApplication, QLabel

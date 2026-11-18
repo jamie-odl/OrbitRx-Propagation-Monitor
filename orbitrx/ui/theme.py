@@ -221,6 +221,7 @@ QFrame#keyMetricTile {{
 }}
 QLabel#keyMetricValue {{ color: {TEXT}; font-size: {FONT_TITLE}px; font-weight: 700; }}
 QLabel#keyMetricCaption {{ color: {MUTED}; font-size: {FONT_CAPTION}px; font-weight: 600; }}
+QLabel#keyMetricSubCaption {{ color: {MUTED}; font-size: {FONT_CAPTION}px; font-weight: 400; }}
 QStatusBar {{ background: {BG}; color: {TEXT_MUTED}; font-size: 11px; border-top: 1px solid {BORDER}; }}
 QStatusBar QLabel {{ color: {TEXT_MUTED}; font-size: 11px; padding: 0 8px; }}
 QDialogButtonBox {{ dialogbuttonbox-buttons-have-icons: 0; }}

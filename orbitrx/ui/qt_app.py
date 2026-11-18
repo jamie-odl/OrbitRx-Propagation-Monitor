@@ -390,6 +390,10 @@ class _UiInvoker(QObject):
 
 
 class QtOrbitRxApplication(QMainWindow):
+    # Side-panel collapse button glyphs (see _set_side_panel_visible).
+    _SIDE_PANEL_COLLAPSE_GLYPH = ">>"
+    _SIDE_PANEL_EXPAND_GLYPH = "<<"
+
     def __init__(self) -> None:
         self._t_init_start = time.perf_counter()
         super().__init__()
@@ -397,10 +401,11 @@ class QtOrbitRxApplication(QMainWindow):
         if app is not None:
             apply_theme(app)
         self.setWindowTitle(f"OrbitRx Propagation Monitor {__version__}")
-        # 2:1 matches the equirectangular basemap's own aspect; as long as the
-        # map pane itself is narrower than 2:1 (true for every realistic window
-        # shape used here), fitInView(KeepAspectRatio) always letterboxes only
-        # top/bottom -- never the side gutters a mismatched aspect produced.
+        # 2:1 matches the equirectangular basemap's own aspect; map_widget's
+        # _fit_scene_rect() always fitInView(KeepAspectRatioByExpanding), so
+        # the map fills the pane completely with a uniform zoom (overlays
+        # stay aligned) and crops symmetrically off whichever axis the pane's
+        # own aspect overshoots, instead of ever leaving a dark letterbox bar.
         self.renderer = MapRenderer(width=1200, height=600)
         self._labels: dict[str, QLabel] = {}
         self._layer_checks: dict[str, QToolButton] = {}
@@ -519,6 +524,12 @@ class QtOrbitRxApplication(QMainWindow):
         self._side_panel_toggle_btn.setCheckable(True)
         self._side_panel_toggle_btn.setChecked(True)
         self._side_panel_toggle_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        # Plain ASCII, not a unicode chevron glyph: this has to render on every
+        # offscreen/CI font (Windows + Ubuntu runners), not just ones with a
+        # symbol-font fallback. ">>" (visible) = "click to collapse towards the
+        # edge"; "<<" (hidden) = "click to bring it back" -- flips in
+        # _set_side_panel_visible so it always matches the current state.
+        self._side_panel_toggle_btn.setText(self._SIDE_PANEL_COLLAPSE_GLYPH)
         self._side_panel_toggle_btn.setToolTip("Show/hide the side panel (Ctrl+B)")
         self._side_panel_toggle_btn.toggled.connect(self._set_side_panel_visible)
         header_row.addWidget(self._side_panel_toggle_btn)
@@ -668,6 +679,11 @@ class QtOrbitRxApplication(QMainWindow):
         # the numbers that matter most for a go/no-go glance don't need the
         # grouped cards below at all.
         self._kpi_labels: dict[str, QLabel] = {}
+        # The MUF tile's big number is just the MUF value -- the combined
+        # "MUF: n/a / LUF: n/a" string (fine as a small grouped-card row)
+        # overflowed the tile in big type, so LUF gets its own small caption
+        # here instead (set in _refresh_labels_and_map).
+        self._muf_luf_caption: QLabel | None = None
         key_metrics_row = QHBoxLayout()
         key_metrics_row.setSpacing(SPACE_2)
         for key, caption in (("kp", "Kp"), ("solar", "SFI"), ("muf", "MUF")):
@@ -684,6 +700,11 @@ class QtOrbitRxApplication(QMainWindow):
             caption_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             tile_layout.addWidget(value_lbl)
             tile_layout.addWidget(caption_lbl)
+            if key == "muf":
+                self._muf_luf_caption = QLabel("")
+                self._muf_luf_caption.setObjectName("keyMetricSubCaption")
+                self._muf_luf_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                tile_layout.addWidget(self._muf_luf_caption)
             self._kpi_labels[key] = value_lbl
             key_metrics_row.addWidget(tile, 1)
         stats_outer.addLayout(key_metrics_row)
@@ -729,7 +750,11 @@ class QtOrbitRxApplication(QMainWindow):
             card.setObjectName("statsCard")
             grid = QGridLayout(card)
             grid.setContentsMargins(SPACE_3, SPACE_2, SPACE_3, SPACE_2)
-            grid.setHorizontalSpacing(SPACE_2)
+            # Owner fix: captions were right-aligned and crowded the values
+            # (lined up hard against them with only SPACE_2 between). Left
+            # alignment plus a roomier SPACE_3 gutter reads as a normal
+            # label/value row instead of a cramped, ledger-style column.
+            grid.setHorizontalSpacing(SPACE_3)
             grid.setVerticalSpacing(SPACE_1)
             grid.setColumnStretch(1, 1)
             hdr = QLabel(title)
@@ -739,7 +764,7 @@ class QtOrbitRxApplication(QMainWindow):
                 name = QLabel(pretty.get(key, key))
                 name.setObjectName("muted")
                 name.setMinimumWidth(96)
-                name.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+                name.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 self._stat_name_labels[key] = name
                 grid.addWidget(name, row, 0)
                 grid.addWidget(self._labels[key], row, 1)
@@ -852,7 +877,7 @@ class QtOrbitRxApplication(QMainWindow):
         self._splitter.setStretchFactor(0, 3)
         self._splitter.setStretchFactor(1, 1)
         self._splitter.setChildrenCollapsible(True)
-        self._splitter.setSizes([980, 300])
+        self._apply_default_splitter_sizes()
 
         self._compact_tabs = QTabWidget()
         self._compact_tabs.setObjectName("compactTabs")
@@ -1041,8 +1066,13 @@ class QtOrbitRxApplication(QMainWindow):
         side_pane = getattr(self, "_side_pane", None)
         if side_pane is not None and not getattr(self, "_compact", False):
             side_pane.setVisible(visible)
+        toggle_btn = getattr(self, "_side_panel_toggle_btn", None)
+        if toggle_btn is not None:
+            toggle_btn.setText(
+                self._SIDE_PANEL_COLLAPSE_GLYPH if visible else self._SIDE_PANEL_EXPAND_GLYPH
+            )
         for widget in (
-            getattr(self, "_side_panel_toggle_btn", None),
+            toggle_btn,
             getattr(self, "_actions", {}).get("ShowSidePanel"),
         ):
             if widget is not None and widget.isChecked() != visible:
@@ -1253,8 +1283,22 @@ class QtOrbitRxApplication(QMainWindow):
                     v = v[len(prefix):]
                 self._labels[k].setText(v)
                 # P4: the key-metrics tiles (Kp/SFI/MUF) mirror the same
-                # stripped value, just rendered large above the grouped cards.
-                if k in self._kpi_labels:
+                # stripped value, just rendered large above the grouped
+                # cards -- but each tile is only ~65-90px wide once squeezed
+                # into a 3-up row inside the default ~300px side pane at
+                # 1280x800, so unlike the grouped card's room-to-spare row,
+                # the tile only ever gets the bare number: no unit suffix,
+                # no trend arrow/word. The full text (unit, trend, LUF) stays
+                # in window._labels[k] (the grouped stats card) unchanged.
+                if k == "muf" and self._muf_luf_caption is not None:
+                    muf_part, sep, luf_part = v.partition(" / LUF: ")
+                    self._kpi_labels[k].setText(muf_part.removesuffix(" MHz"))
+                    self._muf_luf_caption.setText(
+                        f"LUF: {luf_part.removesuffix(' MHz')}" if sep else ""
+                    )
+                elif k == "solar" and k in self._kpi_labels:
+                    self._kpi_labels[k].setText(v.split(" ", 1)[0])
+                elif k in self._kpi_labels:
                     self._kpi_labels[k].setText(v)
         self._update_location_hint_visibility()
         self.alerts_list.clear()
@@ -1980,6 +2024,8 @@ class QtOrbitRxApplication(QMainWindow):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._update_compact_mode()
+        if not self._compact and not getattr(self, "_splitter_sizes_applied", False):
+            self._apply_default_splitter_sizes()
         self._toasts.reposition()
 
     def _apply_map_min_height(self) -> None:
@@ -2013,6 +2059,19 @@ class QtOrbitRxApplication(QMainWindow):
             self._exit_compact_mode()
         self._apply_map_min_height()
 
+    def _apply_default_splitter_sizes(self) -> None:
+        """Explicit ~300px side-pane default. QSplitter.setSizes() only takes
+        effect once the splitter has real width to distribute; before the
+        first show/resize (or right after _exit_compact_mode re-inserts a
+        child QSplitter forgot the size of) that width is 0 and the call is a
+        no-op, so this re-runs from showEvent/resizeEvent until it has stuck."""
+        width = self.width()
+        if width <= 0 or getattr(self, "_splitter", None) is None:
+            return
+        side_w = min(300, max(0, width - 200))
+        self._splitter.setSizes([max(0, width - side_w), side_w])
+        self._splitter_sizes_applied = self._splitter.sizes()[1] > 0
+
     def _enter_compact_mode(self) -> None:
         self._compact = True
         central_layout = self.centralWidget().layout()
@@ -2043,9 +2102,15 @@ class QtOrbitRxApplication(QMainWindow):
         self._splitter.setStretchFactor(1, 1)
         central_layout.addWidget(self._splitter)
         self._splitter.show()
+        # QTabWidget explicitly hides a page that isn't its current tab, and
+        # that explicit-hide flag survives insertWidget() reparenting it back
+        # into the splitter -- without this it stays invisible (0-width) even
+        # though its new parent is shown.
+        self._map_tab.show()
         self._side_pane.setVisible(self._side_panel_visible)
         self._side_panel_toggle_btn.setEnabled(True)
         self._actions["ShowSidePanel"].setEnabled(True)
+        self._apply_default_splitter_sizes()
 
     def changeEvent(self, event) -> None:
         super().changeEvent(event)

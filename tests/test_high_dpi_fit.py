@@ -36,7 +36,7 @@ SPACIOUS_AVAIL = (1920, 1200)
 DPR = 1.5
 
 
-def _dpi_report(tmp_path, width: int, height: int, dpr: float = DPR) -> dict:
+def _dpi_report(tmp_path, width: int, height: int, dpr: float = DPR, map_probe_size: str | None = None) -> dict:
     cfg_path = tmp_path / "offscreen-dpi.json"
     cfg_path.write_text(
         json.dumps({
@@ -61,6 +61,8 @@ def _dpi_report(tmp_path, width: int, height: int, dpr: float = DPR) -> dict:
     # that's when Qt's offscreen plugin reads this file.
     env["QT_QPA_PLATFORM"] = f"offscreen:configfile={cfg_path.name}"
     env["ORBITRX_OFFLINE_FIXTURE"] = "1"
+    if map_probe_size is not None:
+        env["MAP_PROBE_SIZE"] = map_probe_size
     result = subprocess.run(
         [sys.executable, "-X", "faulthandler", str(PROBE), str(out_path)],
         cwd=tmp_path, env=env, capture_output=True, text=True, timeout=PROBE_TIMEOUT_S,
@@ -106,3 +108,25 @@ def test_window_fit_clamping_still_works_at_150pct(tmp_path):
     assert report["dlg_h"] <= avail_h
     assert report["dlg_w"] >= 520 or report["dlg_w"] == avail_w
     assert report["save_button_visible"] is True
+
+
+@pytest.mark.parametrize("map_probe_size", ["1280x800", "683x485"])
+def test_map_fills_the_viewport_with_no_letterbox_at_150pct(tmp_path, map_probe_size):
+    """Owner fix: dark letterbox/gutter bars around the map are not acceptable
+    at any size, including under a real 150% device pixel ratio. The basemap's
+    mapped rect must cover the whole viewport (map_widget._fit_scene_rect()
+    always fitInView(KeepAspectRatioByExpanding)), and the fitted scale must
+    stay uniform (m11 == m22) so overlays/markers -- drawn in the same scene
+    coordinates as the basemap -- never drift out of alignment."""
+    report = _dpi_report(tmp_path, *SPACIOUS_AVAIL, map_probe_size=map_probe_size)
+
+    # Same rounding tolerance as tests/test_ui_smoke.py's equivalent check:
+    # fitInView's own scale/centering rounds to whole device pixels, so the
+    # axis meant to match the viewport exactly can land a couple of pixels
+    # shy of it -- far too small to read as a dark bar, but real.
+    TOLERANCE = 3
+    assert report["map_left"] <= TOLERANCE
+    assert report["map_top"] <= TOLERANCE
+    assert report["map_right"] >= report["map_vp_w"] - TOLERANCE
+    assert report["map_bottom"] >= report["map_vp_h"] - TOLERANCE
+    assert report["map_m11"] == pytest.approx(report["map_m22"])
