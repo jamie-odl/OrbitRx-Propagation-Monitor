@@ -63,6 +63,65 @@ RADIUS_L = 14
 # Aliases used across the app
 PANEL = SURFACE
 
+# --- P4 design-direction tokens (SPEC.md S3/S4/S5) ---------------------------
+# Additive only: these are *new* names that sit alongside the ones above.
+# Nothing above is renamed or removed -- band_panel.py, spots/settings.py and
+# spots/alerts.py import BG/SURFACE/OK/WARN/ERR/SPACE_*/BORDER directly.
+#
+# 4/8 spacing scale (SPEC S5). S1/S2 equal the existing SPACE_1/SPACE_2;
+# S4 equals the existing SPACE_3 (SPEC asks to rename SPACE_3->S4, which the
+# hard rule against renaming blocks -- S4 is added as a same-valued alias
+# instead); S3/S5/S6 are new.
+S1 = SPACE_1  # 4
+S2 = SPACE_2  # 8
+S3 = 12
+S4 = SPACE_3  # 16
+S5 = SPACE_4  # 24
+S6 = 32
+
+# Surfaces and lines (SPEC 3.1)
+BG_CANVAS = "#0A0D12"
+BG_SURFACE = "#0F131A"
+BG_RAISED = "#151A23"
+BG_HOVER = "#1B212C"
+BG_INSET = "#0C1017"
+BORDER_SUBTLE = "#1E2530"
+BORDER_DEFAULT = "#283140"
+BORDER_CONTROL = "#667287"
+
+# Text (SPEC 3.2)
+TEXT_PRIMARY = "#E6EAF0"
+TEXT_SECONDARY = "#A4AEBD"
+TEXT_TERTIARY = "#808A9A"
+TEXT_DISABLED = "#525B69"
+
+# Accent and semantic colours (SPEC 3.3). GOOD/FAIR/POOR/UNKNOWN are new
+# names with new hex values -- SPEC asks to eventually retire OK/WARN/ERR as
+# names, but those three stay exactly as-is per the hard rule; GOOD/FAIR/POOR
+# are additive siblings for new P4 UI (e.g. propagation.kp_state()'s token).
+GOOD = "#4ACF8F"
+GOOD_BG = "#1C3332"
+FAIR = "#E9B949"
+FAIR_BG = "#333028"
+POOR = "#F47F82"
+POOR_BG = "#342830"
+UNKNOWN = TEXT_TERTIARY
+
+# Map tokens (SPEC 3.3). GREYLINE already exists above with the same hex
+# SPEC specifies, so it is left untouched rather than duplicated.
+MAP_OCEAN = "#0B111A"
+MAP_LAND = "#3A475D"
+MAP_GRATICULE = "#141B26"
+MAP_GRATICULE_EQUATOR = "#1A2230"
+MAP_NIGHT = "rgba(4,7,13,0.62)"
+SPOT = "#B48CFF"
+
+# Font stacks (P4-1(d)): system fallback chains only, no bundled font files
+# (bundling a font would pull in SIL-OFL NOTICE/packaging obligations, which
+# is off-limits per the hard rules). See p4-findings.md (d) for the evidence.
+FONT_UI = '"Segoe UI Variable Text", "Segoe UI", -apple-system, sans-serif'
+FONT_MONO = '"Cascadia Mono", Consolas, "DejaVu Sans Mono", monospace'
+
 
 def _assets_dir() -> Path:
     from orbitrx.paths import bundled_root

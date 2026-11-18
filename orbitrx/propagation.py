@@ -99,3 +99,15 @@ def flux_trend_arrow(recent_flux: list[float]) -> str:
 def aurora_oval_lat(kp: float) -> float:
     """Approximate equatorward edge of auroral oval vs Kp."""
     return max(50.0, 70.0 - kp * 2.5)
+
+
+def kp_state(kp: float) -> tuple[str, str]:
+    """Kp display word + semantic colour-token name for the space-weather
+    panel's Kp badge (P4 design direction): quiet below 4, unsettled at 4,
+    storm from 5 up. Pure display bucketing -- unrelated to the user-
+    configurable alert_kp_threshold/storm_kp_threshold toast triggers."""
+    if kp >= 5:
+        return "storm", "POOR"
+    if kp >= 4:
+        return "unsettled", "FAIR"
+    return "quiet", "GOOD"

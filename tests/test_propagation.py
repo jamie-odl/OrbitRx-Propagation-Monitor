@@ -1,5 +1,5 @@
 from orbitrx.propagation import (
-    band_condition, band_grid, estimate_muf, flux_trend_arrow, voacap_lite_path_muf,
+    band_condition, band_grid, estimate_muf, flux_trend_arrow, kp_state, voacap_lite_path_muf,
 )
 
 
@@ -31,3 +31,21 @@ def test_flux_trend_arrow_labels_the_direction(): # N-new-8
     # Too little history: show nothing, never a bare "--" placeholder (M7).
     assert flux_trend_arrow([100]) == ""
     assert "--" not in flux_trend_arrow([])
+
+
+def test_kp_state_quiet_below_four(): # P4-2
+    assert kp_state(0.0) == ("quiet", "GOOD")
+    assert kp_state(3.0) == ("quiet", "GOOD")
+    assert kp_state(3.999) == ("quiet", "GOOD")
+
+
+def test_kp_state_unsettled_at_four_up_to_five(): # P4-2
+    assert kp_state(4.0) == ("unsettled", "FAIR")
+    assert kp_state(4.5) == ("unsettled", "FAIR")
+    assert kp_state(4.999) == ("unsettled", "FAIR")
+
+
+def test_kp_state_storm_from_five_up(): # P4-2
+    assert kp_state(5.0) == ("storm", "POOR")
+    assert kp_state(7.0) == ("storm", "POOR")
+    assert kp_state(9.0) == ("storm", "POOR")

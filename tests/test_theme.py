@@ -14,6 +14,11 @@ from orbitrx.ui.theme import (
     BG, BG_ELEVATED, CHECK_BORDER, CONTROL_BORDER, FONT_BODY, FONT_CAPTION, FONT_SECTION, FONT_TITLE, QSS,
     SURFACE,
 )
+from orbitrx.ui.theme import (
+    BG_CANVAS, BG_HOVER, BG_RAISED, BG_SURFACE, BORDER_CONTROL as P4_BORDER_CONTROL, FAIR, FONT_MONO, FONT_UI,
+    GOOD, OK, POOR, S1, S2, S3, S4, S5, S6, SPACE_1, SPACE_2, SPACE_3, SPACE_4, TEXT_PRIMARY, TEXT_SECONDARY,
+    TEXT_TERTIARY, WARN, ERR,
+)
 
 
 def _relative_luminance(hex_color: str) -> float:
@@ -135,3 +140,51 @@ def test_spinbox_inner_line_edit_has_no_own_border_and_arrows_never_vanish():  #
     assert "QAbstractSpinBox QLineEdit" in qss and "border: none" in qss
     assert "spin-up-dim.svg" in qss and "spin-down-dim.svg" in qss
     assert "image: none" not in qss
+
+
+# --- P4-1: new design-direction tokens are additive, not replacements -------
+
+def test_p4_tokens_do_not_rename_or_change_existing_names(): # P4-1
+    """SPACE_1..4 and OK/WARN/ERR keep their original values -- other modules
+    (band_panel.py, spots/settings.py, spots/alerts.py) import them directly."""
+    assert (SPACE_1, SPACE_2, SPACE_3, SPACE_4) == (4, 8, 16, 24)
+    assert (OK, WARN, ERR) == ("#3DDC97", "#F0B429", "#F07178")
+
+
+def test_p4_spacing_scale_s1_to_s6_matches_4_8_grid(): # P4-1, SPEC S5
+    assert (S1, S2, S3, S4, S5, S6) == (4, 8, 12, 16, 24, 32)
+    # S1/S2/S4/S5 are same-valued aliases of the pre-existing SPACE_* tokens.
+    assert (S1, S2, S4, S5) == (SPACE_1, SPACE_2, SPACE_3, SPACE_4)
+
+
+@pytest.mark.parametrize("surface", [BG_CANVAS, BG_SURFACE, BG_RAISED, BG_HOVER])
+@pytest.mark.parametrize("fg", [TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY])
+def test_p4_text_tokens_meet_aa_text_contrast_on_every_new_surface(fg, surface): # P4-1, SPEC 3.4
+    assert _contrast_ratio(fg, surface) >= 4.5
+
+
+@pytest.mark.parametrize("surface", [BG_CANVAS, BG_SURFACE, BG_RAISED, BG_HOVER])
+def test_p4_border_control_meets_non_text_contrast_minimum(surface): # P4-1, SPEC 3.4
+    assert _contrast_ratio(P4_BORDER_CONTROL, surface) >= 3.0
+
+
+@pytest.mark.parametrize("semantic", [GOOD, FAIR, POOR])
+def test_p4_semantic_tokens_meet_aa_text_contrast_on_canvas(semantic): # P4-1, SPEC 3.4
+    assert _contrast_ratio(semantic, BG_CANVAS) >= 4.5
+
+
+def test_p4_font_stacks_have_no_bundled_font_and_end_in_a_generic_fallback(): # P4-1(d)
+    """No bundled font file (e.g. a shipped Cascadia Mono .ttf) -- system
+    fallback chains only, so the OFL NOTICE/packaging pipeline stays untouched."""
+    assert FONT_UI.rstrip('"').endswith("sans-serif")
+    assert FONT_MONO.rstrip('"').endswith("monospace")
+    assert ".ttf" not in FONT_UI and ".ttf" not in FONT_MONO
+    assert "Cascadia Mono" in FONT_MONO and "Consolas" in FONT_MONO and "DejaVu Sans Mono" in FONT_MONO
+
+
+def test_p4_fonts_are_not_registered_as_application_fonts(): # P4-1(d)
+    """addApplicationFont would mean a bundled .ttf; theme.py must never call it."""
+    from orbitrx.ui import theme
+    import inspect
+    source = inspect.getsource(theme)
+    assert "addApplicationFont" not in source
