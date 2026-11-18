@@ -154,7 +154,7 @@ def test_right_column_has_only_one_vertical_scrollbar(tmp_path, monkeypatch): # 
 
 def test_action_button_grid_has_no_ragged_hole(tmp_path, monkeypatch): # N-new-5
     monkeypatch.chdir(tmp_path)
-    from PySide6.QtWidgets import QApplication, QPushButton, QToolBar
+    from PySide6.QtWidgets import QApplication, QPushButton, QMenu
 
     import orbitrx.spots.service as svc
     monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
@@ -167,10 +167,11 @@ def test_action_button_grid_has_no_ragged_hole(tmp_path, monkeypatch): # N-new-5
     app = QApplication.instance() or QApplication([])
     from orbitrx.ui.qt_app import QtOrbitRxApplication
     win = QtOrbitRxApplication()
-    # M1 (BRIEF-TO-9): the action buttons moved into the top toolbar.
-    labels = [b.text() for b in win.findChildren(QPushButton) if b.text() in ("Export snapshot", "Export DX CSV")]
-    for tb in win.findChildren(QToolBar):
-        labels += [a.text() for a in tb.actions() if a.text() in ("Export snapshot", "Export DX CSV")]
+    # P2A: Export actions moved off the toolbar/» overflow into the File menu;
+    # they must not also exist as separate QPushButtons.
+    assert not [b for b in win.findChildren(QPushButton) if b.text() in ("Export snapshot", "Export DX CSV")]
+    menu_file = win.findChild(QMenu, "menuFile")
+    labels = [a.text() for a in menu_file.actions() if a.text() in ("Export snapshot", "Export DX CSV")]
     assert sorted(labels) == ["Export DX CSV", "Export snapshot"]
     win.ctrl.stop()
     win.deleteLater()

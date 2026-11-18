@@ -81,6 +81,19 @@ QToolBar QToolButton {{
 }}
 QToolBar QToolButton:hover {{ color: {TEXT}; background: {ACCENT_SOFT}; }}
 QToolBar::separator {{ background: {BORDER}; width: 1px; height: 16px; margin: 0 6px; }}
+QMenuBar {{
+    background: {BG}; color: {MUTED}; border: none; border-bottom: 1px solid {BORDER};
+    padding: 2px 4px;
+}}
+QMenuBar::item {{ padding: 4px 10px; border-radius: 6px; background: transparent; }}
+QMenuBar::item:selected, QMenuBar::item:pressed {{ color: {TEXT}; background: {ACCENT_SOFT}; }}
+QMenu {{
+    background: {SURFACE}; color: {TEXT}; border: 1px solid {BORDER}; padding: 4px;
+}}
+QMenu::item {{ padding: 6px 24px 6px 12px; border-radius: 6px; }}
+QMenu::item:selected {{ background: {ACCENT_SOFT}; color: {TEXT}; }}
+QMenu::item:disabled {{ color: {TEXT_MUTED}; }}
+QMenu::separator {{ background: {BORDER}; height: 1px; margin: 4px 8px; }}
 QGroupBox {{
     border: none; margin-top: 16px; padding-top: 4px;
 }}

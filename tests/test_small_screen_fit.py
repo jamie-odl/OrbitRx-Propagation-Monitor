@@ -211,8 +211,8 @@ def test_main_window_reflows_at_small_sizes(window, width, height, expect_compac
         assert control.width() > 0
         assert _not_clipped_horizontally(control, win)
 
-    # M1: Settings/Rig/About live in the top toolbar now, reachable directly or
-    # via the overflow chevron regardless of compact/split mode.
+    # P2A: Settings lives on the slim toolbar; Rig/About live in the menu bar.
+    # Both must stay reachable regardless of compact/split mode.
     reachable = win.controls_reachable()
     for name in ("Settings", "Rig", "About"):
         assert reachable[name] is True

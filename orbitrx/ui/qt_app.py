@@ -37,7 +37,7 @@ if not QT_AVAILABLE:
     raise ImportError("PySide6 is required for the Qt UI")
 
 from PySide6.QtCore import QDate, QEvent, QObject, QRect, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QFontMetrics, QGuiApplication, QIcon, QPixmap
+from PySide6.QtGui import QAction, QFontMetrics, QGuiApplication, QIcon, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QSizePolicy,
@@ -590,6 +590,7 @@ class QtOrbitRxApplication(QMainWindow):
         self.alerts_list.setUniformItemSizes(True)
         stats_outer.addWidget(self.alerts_list)
         self.tabs.addTab(stats_tab, "Stats")
+        self._stats_tab = stats_tab
 
         plot_tab = QWidget()
         plot_layout = QVBoxLayout(plot_tab)
@@ -670,10 +671,75 @@ class QtOrbitRxApplication(QMainWindow):
         self._compact = False
         self._update_compact_mode()
 
+    def _build_actions(self) -> None:
+        """One QAction per command, shared between the menu bar and the toolbar
+        (P2A) so there is a single handler per command instead of duplicates."""
+        self._actions: dict[str, QAction] = {}
+
+        def make(key: str, text: str, slot, shortcut: str | None = None) -> QAction:
+            action = QAction(text, self)
+            action.triggered.connect(slot)
+            if shortcut:
+                action.setShortcut(QKeySequence(shortcut))
+            self._actions[key] = action
+            return action
+
+        # Shared between the primary toolbar and the View/Tools menus.
+        make("Map", "Map", lambda: self._focus_panel("map"), "Ctrl+1")
+        make("Bands", "Bands", lambda: self._focus_panel("bands"), "Ctrl+2")
+        make("Log", "Log", lambda: self._focus_panel("log"), "Ctrl+3")
+        make("Settings", "Settings", self._settings, "Ctrl+,")
+
+        # Menu-only commands; every one of these existed on the old toolbar or
+        # its » overflow menu and must stay reachable from the menu bar.
+        make("Export snapshot", "Export snapshot", self._export_json)
+        make("Export DX CSV", "Export DX CSV", self._export_dx)
+        make("Quit", "Quit", self._quit_app, QKeySequence.StandardKey.Quit)
+        make("Refresh", "Refresh", self._auto_refresh, "F5")
+        make("Location", "Refresh Location", self.ctrl.refresh_location)
+        make("Weather", "Refresh Weather", self.ctrl.fetch_weather)
+        make("Rig", "Rig Wizard…", self._rig_wizard)
+        make("About", "About", self._about)
+        make("Check for Updates", "Check for Updates", self._check_updates)
+
+    def _build_menu_bar(self) -> None:
+        """File/View/Tools/Help (P2A): every command that used to live on the
+        toolbar or its » overflow menu is reachable here, even once the
+        toolbar itself is slimmed down to four primary actions."""
+        menu_bar = self.menuBar()
+
+        menu_file = menu_bar.addMenu("&File")
+        menu_file.setObjectName("menuFile")
+        menu_file.addAction(self._actions["Export snapshot"])
+        menu_file.addAction(self._actions["Export DX CSV"])
+        menu_file.addSeparator()
+        menu_file.addAction(self._actions["Quit"])
+
+        menu_view = menu_bar.addMenu("&View")
+        menu_view.setObjectName("menuView")
+        menu_view.addAction(self._actions["Map"])
+        menu_view.addAction(self._actions["Bands"])
+        menu_view.addAction(self._actions["Log"])
+        menu_view.addSeparator()
+        menu_view.addAction(self._actions["Refresh"])
+        menu_view.addAction(self._actions["Location"])
+        menu_view.addAction(self._actions["Weather"])
+
+        menu_tools = menu_bar.addMenu("&Tools")
+        menu_tools.setObjectName("menuTools")
+        menu_tools.addAction(self._actions["Settings"])
+        menu_tools.addAction(self._actions["Rig"])
+
+        menu_help = menu_bar.addMenu("&Help")
+        menu_help.setObjectName("menuHelp")
+        menu_help.addAction(self._actions["About"])
+        menu_help.addAction(self._actions["Check for Updates"])
+
     def _build_toolbar(self) -> None:
-        """Primary: Settings · Rig · About · Location · Weather. Export behind » menu
-        (V11 must-fix 5) so overflow is always explicit and working."""
-        from PySide6.QtWidgets import QMenu
+        """Slim primary toolbar (P2A): exactly Map, Bands, Log, Settings. Every
+        other command that used to live here (Rig/About/Location/Weather, the
+        » Export overflow) moved to the menu bar in _build_menu_bar."""
+        self._build_actions()
 
         toolbar = QToolBar("Main", self)
         toolbar.setObjectName("mainToolbar")
@@ -683,75 +749,45 @@ class QtOrbitRxApplication(QMainWindow):
         self.addToolBar(toolbar)
         self._toolbar = toolbar
         self._toolbar_actions: dict[str, QAction] = {}
-        for text, slot in [
-            ("Settings", self._settings),
-            ("Rig", self._rig_wizard),
-            ("About", self._about),
-            ("Location", self.ctrl.refresh_location),
-            ("Weather", self.ctrl.fetch_weather),
-        ]:
-            action = QAction(text, self)
-            action.triggered.connect(slot)
+        for key in ("Map", "Bands", "Log", "Settings"):
+            action = self._actions[key]
             toolbar.addAction(action)
-            self._toolbar_actions[text] = action
-        toolbar.addSeparator()
-        export_btn = QToolButton(toolbar)
-        export_btn.setObjectName("toolbarOverflow")
-        export_btn.setText("»")
-        export_btn.setToolTip("Export")
-        export_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
-        export_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        export_menu = QMenu(export_btn)
-        for text, slot in [
-            ("Export snapshot", self._export_json),
-            ("Export DX CSV", self._export_dx),
-        ]:
-            # Hidden toolbar QAction keeps tests/controls_reachable happy; a separate
-            # menu QAction stays visible under » (sharing one action would hide both).
-            tb_action = QAction(text, self)
-            tb_action.triggered.connect(slot)
-            tb_action.setPriority(QAction.Priority.LowPriority)
-            tb_action.setVisible(False)
-            toolbar.addAction(tb_action)
-            self._toolbar_actions[text] = tb_action
-            menu_action = QAction(text, self)
-            menu_action.triggered.connect(slot)
-            export_menu.addAction(menu_action)
-        export_btn.setMenu(export_menu)
-        toolbar.addWidget(export_btn)
-        self._toolbar_overflow = export_btn
-        self._hide_export_toolbar_buttons()
+            self._toolbar_actions[key] = action
 
-    def _hide_export_toolbar_buttons(self) -> None:
-        """Export actions stay on the toolbar (tests) but only the » menu shows them."""
-        for name in ("Export snapshot", "Export DX CSV"):
-            action = self._toolbar_actions.get(name)
-            if action is None:
-                continue
-            btn = self._toolbar.widgetForAction(action)
-            if btn is not None:
-                btn.setVisible(False)
-        overflow = getattr(self, "_toolbar_overflow", None)
-        if overflow is not None:
-            overflow.setVisible(True)
+        self._build_menu_bar()
 
-    def showEvent(self, event) -> None:  # noqa: N802
-        super().showEvent(event)
-        self._hide_export_toolbar_buttons()
+    def _focus_panel(self, which: str) -> None:
+        """Focus/raise Map, Bands or Log, in both wide (splitter) and compact
+        (tab) layouts (P2A)."""
+        if which == "map":
+            if self._compact:
+                self._compact_tabs.setCurrentWidget(self._map_tab)
+            self.map_widget.setFocus()
+            return
+        if self._compact:
+            self._compact_tabs.setCurrentWidget(self._side_pane)
+        if which == "bands":
+            self._right_scroll.ensureWidgetVisible(self.band_panel)
+            self.band_panel.setFocus()
+        elif which == "log":
+            self.tabs.setCurrentWidget(self._stats_tab)
+            self._right_scroll.ensureWidgetVisible(self.alerts_list)
+            self.alerts_list.setFocus()
 
     def controls_reachable(self) -> dict[str, bool]:
-        """Primary toolbar actions visible; Export actions reachable via the » menu."""
-        overflow = getattr(self, "_toolbar_overflow", None)
-        overflow_ok = bool(overflow and overflow.isVisible())
+        """Every tracked command: toolbar actions are reachable if their
+        widget (or Qt's own toolbar overflow chevron) is visible; menu-only
+        actions are reachable as long as the menu bar itself is shown."""
         ext_button = self._toolbar.findChild(QWidget, "qt_toolbar_ext_button")
         qt_overflow = bool(ext_button and ext_button.isVisible())
-        result = {}
+        result: dict[str, bool] = {}
         for name, action in self._toolbar_actions.items():
-            if name.startswith("Export"):
-                result[name] = overflow_ok or qt_overflow
-                continue
             widget = self._toolbar.widgetForAction(action)
             result[name] = bool(widget and widget.isVisible()) or qt_overflow
+        menu_bar_visible = self.menuBar().isVisible()
+        for name, action in self._actions.items():
+            reachable = menu_bar_visible and action.isVisible() and action.isEnabled()
+            result[name] = result.get(name, False) or reachable
         return result
 
     def hscroll_visible(self) -> bool:

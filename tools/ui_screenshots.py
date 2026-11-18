@@ -1,4 +1,4 @@
-"""Grab PNGs of the main window, Settings dialog and every toolbar/overflow menu,
+"""Grab PNGs of the main window, Settings dialog and every menu-bar menu,
 offscreen and offline, at two sizes.
 
 Usage:
@@ -7,7 +7,8 @@ Usage:
 Writes (into DIR):
     main_<size>.png
     settings_<size>.png
-    menu_<name>_<size>.png   (one per toolbar QToolButton that has a menu)
+    menubar_<name>_<size>.png   (one per File/View/Tools/Help menu, composited
+                                 onto the whole main window)
 
 for size in ("1280x800", "683x485"). Exits 0 and prints the files it wrote,
 one per line; a widget/attribute this build no longer has is skipped rather
@@ -34,33 +35,54 @@ def _slug(text: str) -> str:
     return cleaned or "menu"
 
 
-def _toolbar_menus(win) -> list[tuple[str, object, object]]:
-    """(slug, button, menu) for every toolbar QToolButton with a popup menu."""
-    toolbar = getattr(win, "_toolbar", None)
-    if toolbar is None:
+def _menu_bar_menus(win) -> list[tuple[str, object]]:
+    """(slug, QMenu) for every top-level menu on the main window's menu bar."""
+    menu_bar = getattr(win, "menuBar", None)
+    if menu_bar is None:
         return []
-    try:
-        from PySide6.QtWidgets import QToolButton
-    except Exception:
+    bar = menu_bar()
+    if bar is None:
         return []
     menus = []
     seen_slugs: set[str] = set()
-    for btn in toolbar.findChildren(QToolButton):
-        menu = btn.menu() if hasattr(btn, "menu") else None
+    for action in bar.actions():
+        menu = action.menu()
         if menu is None:
             continue
-        name = btn.objectName() or btn.text() or "menu"
+        name = menu.objectName() or action.text() or "menu"
         slug = _slug(name)
         while slug in seen_slugs:
             slug += "_"
         seen_slugs.add(slug)
-        menus.append((slug, btn, menu))
+        menus.append((slug, menu))
     return menus
 
 
-def capture_size(app, out_dir: Path, label: str, width: int, height: int) -> list[Path]:
-    from PySide6.QtCore import QPoint
+def _composite_menu_open(app, win, menu) -> object:
+    """Render the whole window plus the given (already-open) popup menu
+    composited at its on-screen position, as one QPixmap."""
+    from PySide6.QtGui import QPainter
 
+    action = menu.menuAction()
+    menu_bar = win.menuBar()
+    rect = menu_bar.actionGeometry(action)
+    pos = menu_bar.mapToGlobal(rect.bottomLeft())
+    menu.popup(pos)
+    harness.pump(app, 0.15)
+
+    menu_pixmap = menu.grab()
+    composite = win.grab()
+    top_left = win.mapFromGlobal(menu.pos())
+    painter = QPainter(composite)
+    painter.drawPixmap(top_left, menu_pixmap)
+    painter.end()
+
+    menu.close()
+    harness.pump(app, 0.05)
+    return composite
+
+
+def capture_size(app, out_dir: Path, label: str, width: int, height: int) -> list[Path]:
     written: list[Path] = []
     harness.patch_window_fit_avail(width, height)
 
@@ -94,18 +116,14 @@ def capture_size(app, out_dir: Path, label: str, width: int, height: int) -> lis
             except Exception as exc:
                 print(f"warning: settings dialog capture failed: {exc}", file=sys.stderr)
 
-        for slug, btn, menu in _toolbar_menus(win):
+        for slug, menu in _menu_bar_menus(win):
             try:
-                pos = btn.mapToGlobal(QPoint(0, btn.height()))
-                menu.popup(pos)
-                harness.pump(app, 0.15)
-                menu_path = out_dir / f"menu_{slug}_{label}.png"
-                menu.grab().save(str(menu_path))
+                composite = _composite_menu_open(app, win, menu)
+                menu_path = out_dir / f"menubar_{slug}_{label}.png"
+                composite.save(str(menu_path))
                 written.append(menu_path)
-                menu.close()
-                harness.pump(app, 0.05)
             except Exception as exc:
-                print(f"warning: menu '{slug}' capture failed: {exc}", file=sys.stderr)
+                print(f"warning: menubar '{slug}' capture failed: {exc}", file=sys.stderr)
     finally:
         harness.teardown_window(app, win)
 

@@ -8,7 +8,9 @@ Measures (median of --runs runs, in ms, unless noted):
     settings_open_ms       trigger -> Settings dialog shown, events processed
     settings_apply_ms      Apply Settings (accept the dialog)
     config_writes          how many times AppConfig.save() ran during Apply
-    menu_<name>_ms         trigger -> that toolbar/overflow menu's popup shown
+    menubar_<name>_ms      trigger -> that menu-bar menu's (File/View/Tools/
+                           Help) popup shown; menu_toolbarOverflow_ms reports
+                           "n/a" now that the toolbar's » overflow menu is gone
     cat_test_main_ui_block_max_ms     longest UI-thread gap while the Settings
                                       dialog's Test CAT runs against an
                                       unresponsive port
@@ -152,30 +154,39 @@ def time_settings_open_close(app, win, runs: int) -> tuple[list[float], list[flo
     return open_ms, apply_ms, writes
 
 
-def time_menus(app, win, runs: int) -> dict[str, list[float]]:
-    from PySide6.QtCore import QPoint
-    from PySide6.QtWidgets import QToolButton
+def time_menus(app, win, runs: int) -> dict[str, dict]:
+    """median_<runs> ms to open each top-level menu-bar menu (File/View/Tools/
+    Help), keyed menubar_<name>_ms (P2A). The old toolbar » overflow menu is
+    gone, so its timing key is reported n/a instead of silently dropped, in
+    case anything still reads it out of the JSON."""
     import re
 
-    toolbar = getattr(win, "_toolbar", None)
-    if toolbar is None:
-        return {}
-    results: dict[str, list[float]] = {}
-    for btn in toolbar.findChildren(QToolButton):
-        menu = btn.menu() if hasattr(btn, "menu") else None
+    results: dict[str, dict] = {}
+    menu_bar_fn = getattr(win, "menuBar", None)
+    bar = menu_bar_fn() if callable(menu_bar_fn) else None
+    if bar is None:
+        results["menu_toolbarOverflow_ms"] = {"na": True, "reason": "menu bar not found"}
+        return results
+    for action in bar.actions():
+        menu = action.menu()
         if menu is None:
             continue
-        name = re.sub(r"[^A-Za-z0-9]+", "_", btn.objectName() or btn.text() or "menu").strip("_") or "menu"
+        name = re.sub(r"[^A-Za-z0-9]+", "_", menu.objectName() or action.text() or "menu").strip("_") or "menu"
+        rect = bar.actionGeometry(action)
+        pos = bar.mapToGlobal(rect.bottomLeft())
         times: list[float] = []
         for _ in range(runs):
-            pos = btn.mapToGlobal(QPoint(0, btn.height()))
             t0 = time.perf_counter()
             menu.popup(pos)
             harness.pump(app, 0.01)
             times.append((time.perf_counter() - t0) * 1000.0)
             menu.close()
             harness.pump(app, 0.01)
-        results[name] = times
+        results[f"menubar_{name}_ms"] = {"median": statistics.median(times), "samples": times}
+    # Legacy key: the toolbar's » overflow popup no longer exists (the
+    # toolbar was slimmed to Map/Bands/Log/Settings) -- reported rather than
+    # dropped so an old JSON consumer sees "n/a" instead of a KeyError.
+    results["menu_toolbarOverflow_ms"] = {"na": True, "reason": "» overflow menu removed (P2A)"}
     return results
 
 
@@ -212,8 +223,7 @@ def run_measurements(runs: int, cat_delay: float) -> dict:
         results["settings_apply_ms"] = {"median": statistics.median(apply_ms), "samples": apply_ms}
         results["config_writes"] = {"median": statistics.median(writes), "samples": writes}
 
-        for name, times in time_menus(app, win, runs).items():
-            results[f"menu_{name}_ms"] = {"median": statistics.median(times), "samples": times}
+        results.update(time_menus(app, win, runs))
 
         cat_available = harness.patch_slow_cat_serial(cat_delay)
         if not cat_available:
