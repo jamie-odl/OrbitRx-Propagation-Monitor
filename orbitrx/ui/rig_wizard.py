@@ -10,13 +10,18 @@ from PySide6.QtWidgets import (
 
 from orbitrx.cat import CatController, RIG_PROFILES, default_port_fallback
 from orbitrx.config import AppConfig
-from orbitrx.ui.theme import ERR, OK
+from orbitrx.ui.async_utils import CatTestRunner
+from orbitrx.ui.theme import ERR, MUTED, OK
 from orbitrx.ui.window_fit import fit_to_screen
 
 # N1: distinct from the normal OK colour, this marks a *simulated* connected state
 # (screenshots/tests only) so it is never mistaken for a genuine CAT success.
 SIMULATED_CAT_COLOR = "#3FB950"
 _SIMULATED_PREFIX = "SIMULATED_CONNECTED:"
+
+# Default Test CAT timeout; a module attribute (not a literal in _test_cat) so
+# tests can monkeypatch it to run a slow-serial-stub scenario quickly.
+CAT_TEST_TIMEOUT_S = 5.0
 
 
 class SimulatedCatController:
@@ -84,6 +89,7 @@ class RigWizardDialog(QDialog):
         super().__init__(parent)
         self.cfg = cfg
         self.cat = cat
+        self._cat_runner = CatTestRunner(self)
         self.setWindowTitle("Rig setup")
         self.setMinimumWidth(420)
         lay = QVBoxLayout(self)
@@ -123,9 +129,12 @@ class RigWizardDialog(QDialog):
 
         test_row = QHBoxLayout()
         refresh_btn = QPushButton("Refresh ports", clicked=self._refresh_ports)
-        test_btn = QPushButton("Test CAT", clicked=self._test_cat)
+        self.test_btn = QPushButton("Test CAT", clicked=self._test_cat)
+        self.cancel_test_btn = QPushButton("Cancel", clicked=self._cat_runner.cancel)
+        self.cancel_test_btn.setVisible(False)
         test_row.addWidget(refresh_btn, stretch=1)
-        test_row.addWidget(test_btn, stretch=1)
+        test_row.addWidget(self.test_btn, stretch=1)
+        test_row.addWidget(self.cancel_test_btn, stretch=1)
         lay.addLayout(test_row)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
@@ -160,7 +169,31 @@ class RigWizardDialog(QDialog):
         self.cfg.data["cat_baud"] = int(self.baud_combo.currentText())
         self.cfg.data["cat_rig_profile"] = self.profile_combo.currentText()
         test_freq = 14.200
-        result = self.cat.tune(test_freq, confirm=None)
+        self.test_btn.setEnabled(False)
+        self.cancel_test_btn.setVisible(True)
+        self.status_icon.setText("")
+        self.status_text.setText("Testing…")
+        self.status_text.setStyleSheet("")
+        self._cat_runner.start(
+            self.cat, test_freq,
+            lambda kind, message: self._on_cat_test_done(kind, message, test_freq),
+            timeout_s=CAT_TEST_TIMEOUT_S,
+        )
+
+    def _on_cat_test_done(self, kind: str, message: str, test_freq: float) -> None:
+        self.test_btn.setEnabled(True)
+        self.cancel_test_btn.setVisible(False)
+        if kind == "cancelled":
+            self.status_icon.setText("")
+            self.status_text.setText("Cancelled")
+            self.status_text.setStyleSheet(f"color: {MUTED};")
+            return
+        if kind == "timeout":
+            self.status_icon.setText("🔴")
+            self.status_text.setText(message)
+            self.status_text.setStyleSheet(f"color: {ERR};")
+            return
+        result = message
         if result.startswith(_SIMULATED_PREFIX):
             freq = result[len(_SIMULATED_PREFIX):]
             self.status_icon.setText("🟢")

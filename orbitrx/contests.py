@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import re
+import threading
 import urllib.request
 from typing import Any
 
@@ -14,6 +15,8 @@ UPCOMING_CONTESTS: list[dict[str, Any]] = [
 _CONTEST_URL = "https://www.contestcalendar.com/contestcal/weeklycontest.php"
 _CACHE: list[dict[str, Any]] | None = None
 _CACHE_AT: datetime.datetime | None = None
+_refresh_lock = threading.Lock()
+_refresh_thread: threading.Thread | None = None
 
 
 def _parse_contest_page(html: str) -> list[dict[str, Any]]:
@@ -39,21 +42,36 @@ def _parse_contest_page(html: str) -> list[dict[str, Any]]:
     return contests
 
 
-def fetch_upcoming_contests() -> list[dict[str, Any]]:
+def _refresh_cache() -> None:
     global _CACHE, _CACHE_AT
-    now = datetime.datetime.now()
-    if _CACHE and _CACHE_AT and (now - _CACHE_AT).total_seconds() < 3600:
-        return _CACHE
     try:
         html = urllib.request.urlopen(_CONTEST_URL, timeout=12).read().decode("utf-8", errors="ignore")
         parsed = _parse_contest_page(html)
         if parsed:
             _CACHE = parsed
-            _CACHE_AT = now
-            return parsed
+            _CACHE_AT = datetime.datetime.now()
     except Exception:
         pass
-    return UPCOMING_CONTESTS
+
+
+def _start_cache_refresh() -> None:
+    global _refresh_thread
+    with _refresh_lock:
+        if _refresh_thread is not None and _refresh_thread.is_alive():
+            return
+        _refresh_thread = threading.Thread(target=_refresh_cache, daemon=True, name="contest-fetch")
+        _refresh_thread.start()
+
+
+def fetch_upcoming_contests() -> list[dict[str, Any]]:
+    """Returns whatever is cached right now (or the static fallback list) and
+    never blocks on network I/O: weather_labels() calls this on every weather/DX
+    refresh, directly on the UI thread (P1). A stale/missing cache kicks off a
+    background refresh for next time instead of fetching inline."""
+    now = datetime.datetime.now()
+    if _CACHE is None or _CACHE_AT is None or (now - _CACHE_AT).total_seconds() >= 3600:
+        _start_cache_refresh()
+    return _CACHE or UPCOMING_CONTESTS
 
 
 def get_next_contest() -> dict[str, Any] | None:

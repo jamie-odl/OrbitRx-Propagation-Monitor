@@ -16,6 +16,7 @@ from orbitrx import __version__
 from orbitrx.dx import verify_qrz_api
 from orbitrx.map_renderer import MapLayers, MapRenderer
 from orbitrx.propagation import HF_BANDS
+from orbitrx.ui.async_utils import CatTestRunner
 from orbitrx.ui.band_panel import BandPanelWidget
 from orbitrx.ui.controller import OrbitRxController
 from orbitrx.ui.map_widget import PropagationMapWidget, QT_AVAILABLE, _pil_to_qimage
@@ -91,6 +92,91 @@ SETTINGS_PAGE_DESCRIPTIONS = {
 # the boundary doesn't flip back and forth.
 COMPACT_WIDTH_BELOW = 900
 COMPACT_WIDTH_ABOVE = 940
+
+# Default Test CAT timeout; a module attribute (not a literal in do_test_cat) so
+# tests can monkeypatch it to run a slow-serial-stub scenario quickly.
+CAT_TEST_TIMEOUT_S = 5.0
+
+
+def _build_history_figure(rows: list[dict], poll_interval_s: float) -> tuple[Figure, bool]:
+    """Pure matplotlib work (no Qt widgets touched) so _refresh_plot_tab can run
+    it on a worker thread (P1). Returns (figure, has_enough_data); the caller
+    only needs to wrap the figure in a FigureCanvasQTAgg (a QWidget, so that
+    part stays on the UI thread) and add it to the layout."""
+    times, kp, flux = [], [], []
+    for r in rows:
+        times.append(datetime.datetime.fromisoformat(r["ts"]))
+        kp.append(float(r.get("kp") or 0))
+        flux.append(float(r.get("flux") or 0))
+
+    fig = Figure(figsize=(5, 3.5), facecolor="#0B1220")
+    ax = fig.add_subplot(111)
+    ax.set_facecolor("#0B1220")
+    ax.tick_params(colors="#CDDDFE")
+    for spine in ax.spines.values():
+        spine.set_color("#37474F")
+
+    if len(times) < 2 or (max(times) - min(times)).total_seconds() < 60:
+        # S2: fewer than two readings at least a minute apart have no meaningful line to plot.
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.text(
+            0.5, 0.5, "Not enough data yet", transform=ax.transAxes,
+            ha="center", va="center", color=MUTED, fontsize=13,
+        )
+        fig.tight_layout()
+        return fig, False
+
+    # S2: pad the data range by 10% total (5% each side) so points never sit
+    # flush against an axis edge, with a minimum 1 h span centred on the data
+    # so a tight cluster of points still occupies most of the plot width
+    # instead of a sliver.
+    lo, hi = pad_datetime_range(min(times), max(times))
+    lo, hi = widen_to_min_span(lo, hi)
+    span_h = (hi - lo).total_seconds() / 3600.0
+    if span_h < 36:
+        locator = AutoDateLocator(maxticks=6)
+    else:
+        # "dd MMM" daily ticks: one tick per day (or fewer) so they never overlap.
+        locator = DayLocator(interval=max(1, round(span_h / 24 / 3)))
+    ax.xaxis.set_major_locator(locator)
+    # M4/S3: HH:mm within a day, "dd MMM HH:mm" up to 36 h, then date-only "dd MMM"
+    # daily ticks so labels never repeat "00:00".
+    ax.xaxis.set_major_formatter(DateFormatter(history_plot_date_format(lo, hi)))
+    ax.set_xlim(lo, hi)
+
+    # M4: break the line (insert a NaN) only across a gap bigger than a real
+    # outage would allow -- max(3x the app's expected poll interval, 30 min) --
+    # instead of the old median-relative rule, which broke real, jittery data
+    # into isolated points. Isolated points still show via a size-7 marker.
+    kp_times, kp_gapped = insert_gap_breaks(times, kp, poll_interval_s)
+    flux_times, flux_gapped = insert_gap_breaks(times, flux, poll_interval_s)
+
+    kp_line, = ax.plot(
+        kp_times, kp_gapped, label="Kp", marker="o", markersize=7, linestyle="-", color="#64B5F6"
+    )
+    ax.set_ylabel("Kp", color="#64B5F6")
+    ax.set_ylim(0, 9)
+    ax.yaxis.set_ticks(range(0, 10))
+
+    ax2 = ax.twinx()
+    sfi_line, = ax2.plot(
+        flux_times, flux_gapped, label="SFI", marker="o", markersize=7, linestyle="-", color="#FFD54F"
+    )
+    ax2.set_ylabel("SFI", color="#FFD54F")
+    ax2.set_ylim(50, 300)
+    for spine in ax2.spines.values():
+        spine.set_color("#37474F")
+    ax2.tick_params(colors="#CDDDFE")
+
+    legend = ax.legend(
+        [kp_line, sfi_line], ["Kp", "SFI"],
+        loc="upper left", fontsize=8, facecolor="#16212C", edgecolor="#37474F",
+    )
+    for text in legend.get_texts():
+        text.set_color("#E3EAF2")
+    fig.tight_layout()
+    return fig, True
 
 
 class _ReflowGrid(QWidget):
@@ -180,7 +266,12 @@ class _UiInvoker(QObject):
         self.call.connect(lambda fn: fn(), Qt.ConnectionType.QueuedConnection)
 
     def wrap(self, fn):
-        return lambda *args: self.call.emit(lambda: fn(*args))
+        def emit(*args):
+            import shiboken6
+            if not shiboken6.isValid(self):
+                return  # window closed/deleted before this worker-thread result arrived
+            self.call.emit(lambda: fn(*args))
+        return emit
 
 
 class QtOrbitRxApplication(QMainWindow):
@@ -205,6 +296,15 @@ class QtOrbitRxApplication(QMainWindow):
         self._replay_refresh_timer.setSingleShot(True)
         self._replay_refresh_timer.timeout.connect(self._replay_refresh_cooldown)
         self._replay_refresh_pending = False
+        # P1: weather-refresh and DX-spot-triggered map rebuilds share the same
+        # ~80ms debounce as the slider/replay drags above, so a burst of either
+        # (e.g. several DX spots landing close together) coalesces into at most
+        # one extra rebuild instead of one dispatch per event.
+        self._map_rebuild_timer = QTimer(self)
+        self._map_rebuild_timer.setSingleShot(True)
+        self._map_rebuild_timer.timeout.connect(self._map_rebuild_cooldown)
+        self._map_rebuild_pending = False
+        self._map_rebuild_pending_vectors_only = False
 
         self._ui = _UiInvoker()
         self._map_load_thread: threading.Thread | None = None
@@ -826,7 +926,29 @@ class QtOrbitRxApplication(QMainWindow):
         self._render_cluster_label()
         self.band_panel.update_grid(self.ctrl.state.band_grid)
         self.last_updated_lbl.setText(self.ctrl.last_updated_text())
-        self._refresh_map()
+        self._schedule_map_rebuild()
+
+    def _schedule_map_rebuild(self, vectors_only: bool = False) -> None:
+        # P1: weather refreshes and DX spot arrivals share this debounce (same
+        # pattern as _slider_moved/_replay_moved above) so a burst of either
+        # triggers at most one extra rebuild instead of one dispatch per event.
+        # A full rebuild requested anywhere in the burst wins over a vectors-only
+        # one, so a pending full redraw is never downgraded.
+        if self._map_rebuild_timer.isActive():
+            if self._map_rebuild_pending:
+                self._map_rebuild_pending_vectors_only = self._map_rebuild_pending_vectors_only and vectors_only
+            else:
+                self._map_rebuild_pending = True
+                self._map_rebuild_pending_vectors_only = vectors_only
+            return
+        self._refresh_map(vectors_only=vectors_only)
+        self._map_rebuild_timer.start(80)
+
+    def _map_rebuild_cooldown(self) -> None:
+        if self._map_rebuild_pending:
+            self._map_rebuild_pending = False
+            self._refresh_map(vectors_only=self._map_rebuild_pending_vectors_only)
+            self._map_rebuild_timer.start(80)
 
     def _layers_changed(self) -> None:
         # F8: the chip itself already flipped (native QToolButton paint, before
@@ -917,7 +1039,7 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _spot_beep(self, spot: dict) -> None:
         self.ctrl.spot_beep(spot)
-        self._refresh_map(vectors_only=True)
+        self._schedule_map_rebuild(vectors_only=True)
 
     def _alarm_excellent(self) -> None:
         # Non-modal: a queued alarm must never spin a nested event loop (that
@@ -988,102 +1110,63 @@ class QtOrbitRxApplication(QMainWindow):
         dlg.exec()
 
     def _refresh_plot_tab(self) -> None:
+        # P1: the sqlite query and the matplotlib Figure build (both potentially
+        # slow on a long date range) run on a worker thread; only the cheap
+        # FigureCanvasQTAgg wrap + layout swap below touches Qt widgets. A
+        # generation counter drops a result superseded by a newer Refresh/date
+        # change before it ever reaches the UI.
         if not PLOT_QT:
             self.plot_placeholder.setText("matplotlib Qt backend required")
             return
         q = self.hist_date.date().toString("yyyy-MM-dd")
-        try:
-            rows = self.ctrl.store.query_propagation(q)
-        except ValueError as e:
-            self.plot_placeholder.setText(str(e))
-            return
-        if not rows:
-            self.plot_placeholder.setText("No data for this date range")
-            return
+        poll_interval_s = float(self.ctrl.cfg.get("refresh_interval_seconds", EXPECTED_POLL_S))
+        self._plot_request_gen = getattr(self, "_plot_request_gen", 0) + 1
+        gen = self._plot_request_gen
+
         while self.plot_container.count():
             item = self.plot_container.takeAt(0)
-            if item.widget():
+            if item.widget() is not None and item.widget() is not self.plot_placeholder:
                 item.widget().deleteLater()
-        times, kp, flux = [], [], []
-        for r in rows:
-            times.append(datetime.datetime.fromisoformat(r["ts"]))
-            kp.append(float(r.get("kp") or 0))
-            flux.append(float(r.get("flux") or 0))
+        self.plot_placeholder.setText("Loading…")
+        self.plot_container.addWidget(self.plot_placeholder)
 
-        fig = Figure(figsize=(5, 3.5), facecolor="#0B1220")
-        ax = fig.add_subplot(111)
-        ax.set_facecolor("#0B1220")
-        ax.tick_params(colors="#CDDDFE")
-        for spine in ax.spines.values():
-            spine.set_color("#37474F")
+        on_done = self._ui.wrap(lambda payload: self._on_plot_tab_ready(gen, payload))
 
-        if len(times) < 2 or (max(times) - min(times)).total_seconds() < 60:
-            # S2: fewer than two readings at least a minute apart have no meaningful line to plot.
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.text(
-                0.5, 0.5, "Not enough data yet", transform=ax.transAxes,
-                ha="center", va="center", color=MUTED, fontsize=13,
-            )
-            fig.tight_layout()
-            canvas = FigureCanvas(fig)
-            self.plot_container.addWidget(canvas)
+        def worker() -> None:
+            try:
+                rows = self.ctrl.store.query_propagation(q)
+            except ValueError as e:
+                on_done(("error", str(e)))
+                return
+            if not rows:
+                on_done(("empty", None))
+                return
+            on_done(("ok", _build_history_figure(rows, poll_interval_s)))
+
+        self._plot_query_thread = threading.Thread(target=worker, daemon=True, name="history-query")
+        self._plot_query_thread.start()
+
+    def _on_plot_tab_ready(self, gen: int, payload: tuple) -> None:
+        self._plot_last_handled_gen = gen
+        if gen != getattr(self, "_plot_request_gen", gen):
+            return  # a newer Refresh/date change already superseded this result
+        kind, data = payload
+        if kind == "error":
+            self.plot_placeholder.setText(data)
             return
-
-        # S2: pad the data range by 10% total (5% each side) so points never sit
-        # flush against an axis edge, with a minimum 1 h span centred on the data
-        # so a tight cluster of points still occupies most of the plot width
-        # instead of a sliver.
-        lo, hi = pad_datetime_range(min(times), max(times))
-        lo, hi = widen_to_min_span(lo, hi)
-        span_h = (hi - lo).total_seconds() / 3600.0
-        if span_h < 36:
-            locator = AutoDateLocator(maxticks=6)
-        else:
-            # "dd MMM" daily ticks: one tick per day (or fewer) so they never overlap.
-            locator = DayLocator(interval=max(1, round(span_h / 24 / 3)))
-        ax.xaxis.set_major_locator(locator)
-        # M4/S3: HH:mm within a day, "dd MMM HH:mm" up to 36 h, then date-only "dd MMM"
-        # daily ticks so labels never repeat "00:00".
-        ax.xaxis.set_major_formatter(DateFormatter(history_plot_date_format(lo, hi)))
-        ax.set_xlim(lo, hi)
-
-        # M4: break the line (insert a NaN) only across a gap bigger than a real
-        # outage would allow -- max(3x the app's expected poll interval, 30 min) --
-        # instead of the old median-relative rule, which broke real, jittery data
-        # into isolated points. Isolated points still show via a size-7 marker.
-        poll_interval_s = float(self.ctrl.cfg.get("refresh_interval_seconds", EXPECTED_POLL_S))
-        kp_times, kp_gapped = insert_gap_breaks(times, kp, poll_interval_s)
-        flux_times, flux_gapped = insert_gap_breaks(times, flux, poll_interval_s)
-
-        kp_line, = ax.plot(
-            kp_times, kp_gapped, label="Kp", marker="o", markersize=7, linestyle="-", color="#64B5F6"
-        )
-        ax.set_ylabel("Kp", color="#64B5F6")
-        ax.set_ylim(0, 9)
-        ax.yaxis.set_ticks(range(0, 10))
-
-        ax2 = ax.twinx()
-        sfi_line, = ax2.plot(
-            flux_times, flux_gapped, label="SFI", marker="o", markersize=7, linestyle="-", color="#FFD54F"
-        )
-        ax2.set_ylabel("SFI", color="#FFD54F")
-        ax2.set_ylim(50, 300)
-        for spine in ax2.spines.values():
-            spine.set_color("#37474F")
-        ax2.tick_params(colors="#CDDDFE")
-
-        legend = ax.legend(
-            [kp_line, sfi_line], ["Kp", "SFI"],
-            loc="upper left", fontsize=8, facecolor="#16212C", edgecolor="#37474F",
-        )
-        for text in legend.get_texts():
-            text.set_color("#E3EAF2")
-        fig.tight_layout()
+        if kind == "empty":
+            self.plot_placeholder.setText("No data for this date range")
+            return
+        fig, has_enough_data = data
+        while self.plot_container.count():
+            item = self.plot_container.takeAt(0)
+            if item.widget() is not None and item.widget() is not self.plot_placeholder:
+                item.widget().deleteLater()
         canvas = FigureCanvas(fig)
         self.plot_container.addWidget(canvas)
-        save_btn = QPushButton("Save PNG", clicked=lambda: self._save_fig(fig))
-        self.plot_container.addWidget(save_btn)
+        if has_enough_data:
+            save_btn = QPushButton("Save PNG", clicked=lambda: self._save_fig(fig))
+            self.plot_container.addWidget(save_btn)
 
     def _save_fig(self, fig) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Save PNG", "history.png", "PNG (*.png)")
@@ -1240,21 +1323,46 @@ class QtOrbitRxApplication(QMainWindow):
         self._add_settings_row(rig, "Rig control", rig_control)
         test_cat_row = QHBoxLayout()
         test_cat_btn = QPushButton("Test CAT")
+        test_cat_cancel_btn = QPushButton("Cancel")
+        test_cat_cancel_btn.setVisible(False)
         test_cat_result = QLabel("")
         test_cat_result.setWordWrap(True)
+        cat_runner = CatTestRunner(dlg)
+
+        def on_cat_test_done(kind: str, message: str) -> None:
+            test_cat_btn.setEnabled(True)
+            test_cat_cancel_btn.setVisible(False)
+            if kind == "cancelled":
+                test_cat_result.setText("Cancelled")
+                test_cat_result.setStyleSheet(f"color: {MUTED};")
+                return
+            if kind == "timeout":
+                test_cat_result.setText(message)
+                test_cat_result.setStyleSheet(f"color: {ERR};")
+                return
+            test_cat_result.setText(message)
+            test_cat_result.setStyleSheet(f"color: {OK if 'Sent CAT' in message else ERR};")
 
         def do_test_cat() -> None:
             cfg.data["cat_port"] = (fields["cat_port"].currentData() or fields["cat_port"].currentText()).strip()
             cfg.data["cat_baud"] = int(fields["cat_baud"].currentText())
             cfg.data["cat_rig_profile"] = fields["cat_rig_profile"].currentText()
-            result = self.ctrl.cat.tune(14.200, confirm=None)
-            test_cat_result.setText(result)
-            test_cat_result.setStyleSheet(f"color: {OK if 'Sent CAT' in result else ERR};")
+            test_cat_btn.setEnabled(False)
+            test_cat_cancel_btn.setVisible(True)
+            test_cat_result.setText("Testing…")
+            test_cat_result.setStyleSheet("")
+            cat_runner.start(self.ctrl.cat, 14.200, on_cat_test_done, timeout_s=CAT_TEST_TIMEOUT_S)
 
         test_cat_btn.clicked.connect(do_test_cat)
+        test_cat_cancel_btn.clicked.connect(cat_runner.cancel)
         test_cat_row.addWidget(test_cat_btn)
+        test_cat_row.addWidget(test_cat_cancel_btn)
         test_cat_row.addWidget(test_cat_result, stretch=1)
         rig.addRow("", test_cat_row)
+        # Stable handles for tests, same convention as dlg.fields/band_checks below.
+        dlg.test_cat_btn = test_cat_btn
+        dlg.test_cat_cancel_btn = test_cat_cancel_btn
+        dlg.test_cat_result = test_cat_result
 
         # --- DX cluster ---
         dxc = self._add_form_page(page_list, stack, "DX cluster")
@@ -1395,26 +1503,32 @@ class QtOrbitRxApplication(QMainWindow):
         return dlg
 
     def _apply_settings_dialog(self, dlg: QDialog) -> None:
+        # P1: one combined write instead of one cfg.save() per field (18 full-file
+        # disk writes on the UI thread in the old code) -- set_many() updates every
+        # key in memory and flush() writes the batch once.
         fields = dlg.fields
         cfg = self.ctrl.cfg
-        cfg.set("spots_callsign", fields["spots_callsign"].text().strip())
-        cfg.set("home_lat", None if fields["home_lat"].value() == -90.0 else fields["home_lat"].value())
-        cfg.set("home_lon", None if fields["home_lon"].value() == -180.0 else fields["home_lon"].value())
-        cfg.set("ip_geolocation_enabled", fields["ip_geolocation_enabled"].isChecked())
-        cfg.set("cat_port", (fields["cat_port"].currentData() or fields["cat_port"].currentText()).strip())
-        cfg.set("cat_baud", int(fields["cat_baud"].currentText()))
-        cfg.set("cat_rig_profile", fields["cat_rig_profile"].currentText())
-        cfg.set("rig_control", fields["rig_control"].currentData())
-        cfg.set("dx_cluster_callsign", fields["dx_cluster_callsign"].text().strip())
-        cfg.set("target_dx_callsign", fields["target_dx_callsign"].text().strip())
-        cfg.set("target_dx_lat", None if fields["target_dx_lat"].value() == -90.0 else fields["target_dx_lat"].value())
-        cfg.set("target_dx_lon", None if fields["target_dx_lon"].value() == -180.0 else fields["target_dx_lon"].value())
-        cfg.set("dx_filter_bands_mhz", [f for f, cb in dlg.band_checks.items() if cb.isChecked()])
-        cfg.set("dx_filter_continents", [c for c, cb in dlg.cont_checks.items() if cb.isChecked()])
-        cfg.set("spots_mode", fields["spots_mode"].currentText())
-        cfg.set("pskreporter_poll_seconds", clamp_poll_seconds(fields["pskreporter_poll_seconds"].value()))
-        cfg.set("qrz_api_key", fields["qrz_api_key"].text().strip())
-        cfg.set("refresh_interval_seconds", fields["refresh_interval_seconds"].value())
+        cfg.set_many({
+            "spots_callsign": fields["spots_callsign"].text().strip(),
+            "home_lat": None if fields["home_lat"].value() == -90.0 else fields["home_lat"].value(),
+            "home_lon": None if fields["home_lon"].value() == -180.0 else fields["home_lon"].value(),
+            "ip_geolocation_enabled": fields["ip_geolocation_enabled"].isChecked(),
+            "cat_port": (fields["cat_port"].currentData() or fields["cat_port"].currentText()).strip(),
+            "cat_baud": int(fields["cat_baud"].currentText()),
+            "cat_rig_profile": fields["cat_rig_profile"].currentText(),
+            "rig_control": fields["rig_control"].currentData(),
+            "dx_cluster_callsign": fields["dx_cluster_callsign"].text().strip(),
+            "target_dx_callsign": fields["target_dx_callsign"].text().strip(),
+            "target_dx_lat": None if fields["target_dx_lat"].value() == -90.0 else fields["target_dx_lat"].value(),
+            "target_dx_lon": None if fields["target_dx_lon"].value() == -180.0 else fields["target_dx_lon"].value(),
+            "dx_filter_bands_mhz": [f for f, cb in dlg.band_checks.items() if cb.isChecked()],
+            "dx_filter_continents": [c for c, cb in dlg.cont_checks.items() if cb.isChecked()],
+            "spots_mode": fields["spots_mode"].currentText(),
+            "pskreporter_poll_seconds": clamp_poll_seconds(fields["pskreporter_poll_seconds"].value()),
+            "qrz_api_key": fields["qrz_api_key"].text().strip(),
+            "refresh_interval_seconds": fields["refresh_interval_seconds"].value(),
+        })
+        cfg.flush()
         self._timer.setInterval(int(cfg.get("refresh_interval_seconds", 60)) * 1000)
         self._populate_cluster_combo()
 
@@ -1550,6 +1664,7 @@ class QtOrbitRxApplication(QMainWindow):
             return
         self._flush_layers_save()
         self.ctrl.cfg.set("window_geometry", f"{self.width()}x{self.height()}")
+        self.ctrl.cfg.flush()  # P1: nothing from a batched set_many() is lost on close
         self.ctrl.stop()
         super().closeEvent(event)
 

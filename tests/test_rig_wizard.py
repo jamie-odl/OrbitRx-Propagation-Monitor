@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 import pytest
 
@@ -175,6 +176,12 @@ def test_simulated_cat_controller_shows_connected_state(app, cfg, monkeypatch): 
     monkeypatch.setenv("ORBITRX_TEST_SIMULATED_RIG", "1")
     dlg = RigWizardDialog(cfg, SimulatedCatController())
     dlg._test_cat()
+    # Test CAT now runs on a worker thread; pump the event loop for the
+    # queued result instead of asserting on it synchronously.
+    deadline = time.time() + 2.0
+    while not dlg.test_btn.isEnabled() and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.005)
     assert dlg.status_text.text() == "Connected: 14.074 MHz"
     assert "●" not in dlg.status_text.text()  # single status dot comes from status_icon
     assert dlg.status_text.styleSheet() == "color: #3FB950;"

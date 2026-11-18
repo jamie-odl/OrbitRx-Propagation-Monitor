@@ -63,6 +63,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
 class AppConfig:
     path: Path = field(default_factory=lambda: Path("config.json"))
     data: dict[str, Any] = field(default_factory=lambda: deepcopy(DEFAULT_CONFIG))
+    _dirty: bool = field(default=False, init=False, repr=False, compare=False)
 
     def load(self) -> AppConfig:
         if self.path.exists():
@@ -78,10 +79,27 @@ class AppConfig:
     def save(self) -> None:
         with open(self.path, "w", encoding="utf-8") as f:
             json.dump(self.data, f, indent=2)
+        self._dirty = False
 
     def get(self, key: str, default: Any = None) -> Any:
         return self.data.get(key, default)
 
     def set(self, key: str, value: Any) -> None:
+        """Single-key update, saved immediately. Kept for every existing caller
+        that expects one write per call; batch multiple keys with set_many()
+        + flush() instead when a single combined write matters (e.g. the
+        Settings dialog's Apply button)."""
         self.data[key] = value
         self.save()
+
+    def set_many(self, mapping: dict[str, Any]) -> None:
+        """Update several keys in memory without writing to disk. Pair with an
+        explicit flush() so a batch of changes costs exactly one write instead
+        of one per key."""
+        self.data.update(mapping)
+        self._dirty = True
+
+    def flush(self) -> None:
+        """Write to disk if set_many() left unsaved changes; a no-op otherwise."""
+        if self._dirty:
+            self.save()

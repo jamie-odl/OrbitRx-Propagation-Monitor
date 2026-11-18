@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 import json
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,20 @@ HISTORY_IRREGULAR = Path(__file__).resolve().parent / "data" / "history_irregula
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
 matplotlib = pytest.importorskip("matplotlib")
+
+
+def _refresh_and_wait(window, timeout: float = 2.0) -> None:
+    """_refresh_plot_tab() now runs the query + figure build on a worker thread
+    (P1) and delivers the result via a queued call; pump the event loop until
+    that generation has been handled instead of asserting synchronously."""
+    from PySide6.QtWidgets import QApplication
+
+    window._refresh_plot_tab()
+    app = QApplication.instance()
+    deadline = time.time() + timeout
+    while getattr(window, "_plot_last_handled_gen", None) != window._plot_request_gen and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.005)
 
 
 @pytest.fixture
@@ -60,7 +75,7 @@ def test_plot_builds_dual_axes_for_kp_and_sfi(window, monkeypatch):
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     assert window.plot_container.count() == 2
     canvas = window.plot_container.itemAt(0).widget()
     fig = canvas.figure
@@ -80,7 +95,7 @@ def test_plot_legend_uses_dark_theme_colors(window, monkeypatch):
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     canvas = window.plot_container.itemAt(0).widget()
     legend = canvas.figure.get_axes()[0].get_legend()
     assert legend is not None
@@ -97,7 +112,7 @@ def test_plot_x_axis_ticks_show_hours_and_minutes(window, monkeypatch): # M4
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     canvas = window.plot_container.itemAt(0).widget()
     ax = canvas.figure.get_axes()[0]
     assert ax.xaxis.get_major_formatter().fmt == "%H:%M"
@@ -112,7 +127,7 @@ def test_plot_x_axis_ticks_include_day_for_multi_day_range(window, monkeypatch):
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     canvas = window.plot_container.itemAt(0).widget()
     ax = canvas.figure.get_axes()[0]
     assert ax.xaxis.get_major_formatter().fmt == "%d %b"  # S3: >= 36h is date-only
@@ -123,7 +138,7 @@ def test_no_data_shows_placeholder_not_crash(window):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
     window.hist_date.setDate(window.hist_date.date().addYears(-5))
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     assert "No data" in window.plot_placeholder.text()
 
 
@@ -137,7 +152,7 @@ def test_48h_sample_fixture_uses_day_level_tick_format(window, monkeypatch): # M
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     canvas = window.plot_container.itemAt(0).widget()
     ax = canvas.figure.get_axes()[0]
     assert ax.xaxis.get_major_formatter().fmt == "%d %b"  # S3: >= 36h is date-only
@@ -155,7 +170,7 @@ def test_48h_sample_fixture_breaks_the_line_across_its_gap(window, monkeypatch):
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     canvas = window.plot_container.itemAt(0).widget()
     kp_ax, sfi_ax = canvas.figure.get_axes()
     assert any(math.isnan(y) for y in kp_ax.get_lines()[0].get_ydata())
@@ -173,7 +188,7 @@ def test_medium_range_keeps_day_and_time_tick_format(window, monkeypatch): # S3
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     canvas = window.plot_container.itemAt(0).widget()
     ax = canvas.figure.get_axes()[0]
     assert ax.xaxis.get_major_formatter().fmt == "%d %b %H:%M"
@@ -193,14 +208,14 @@ def test_hist_ending_label_visible_in_empty_and_data_states(window, monkeypatch)
 
     # Empty state: a query that finds nothing for the selected date.
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: [])
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     assert "No data" in window.plot_placeholder.text()
     assert window.hist_ending_lbl.isVisible() is True
 
     # Data state: a multi-day range renders the full dual-axis chart.
     data = json.loads(HISTORY_SAMPLE_48H.read_text())
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: data["rows"])
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     assert window.hist_ending_lbl.isVisible() is True
 
     # Data state: a short, single-day range still renders a chart.
@@ -209,7 +224,7 @@ def test_hist_ending_label_visible_in_empty_and_data_states(window, monkeypatch)
         {"ts": "2026-11-04T23:00:00+00:00", "kp": 2.5, "flux": 115},
     ]
     monkeypatch.setattr(window.ctrl.store, "query_propagation", lambda q: short_rows)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     assert window.hist_ending_lbl.isVisible() is True
 
 
@@ -219,7 +234,7 @@ def test_single_point_shows_not_enough_data_text_in_plot(window, monkeypatch): #
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     assert window.plot_container.count() == 1
     canvas = window.plot_container.itemAt(0).widget()
     ax = canvas.figure.get_axes()[0]
@@ -236,7 +251,7 @@ def test_lines_connect_the_data_points(window, monkeypatch): # S2
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     canvas = window.plot_container.itemAt(0).widget()
     ax = canvas.figure.get_axes()[0]
     kp_line = ax.get_lines()[0]
@@ -253,7 +268,7 @@ def test_tight_cluster_widens_to_a_minimum_one_hour_span_centred_on_data(window,
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     canvas = window.plot_container.itemAt(0).widget()
     ax = canvas.figure.get_axes()[0]
     import matplotlib.dates as mdates
@@ -275,7 +290,7 @@ def test_wide_range_pads_ten_percent_so_data_fills_most_of_the_width(window, mon
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     canvas = window.plot_container.itemAt(0).widget()
     ax = canvas.figure.get_axes()[0]
     import matplotlib.dates as mdates
@@ -320,7 +335,7 @@ def test_48h_sample_tick_labels_do_not_overlap(window, monkeypatch):  # M4
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     canvas = window.plot_container.itemAt(0).widget()
     canvas.resize(420, 420)
     canvas.draw()
@@ -345,7 +360,7 @@ def test_irregular_real_like_fixture_connects_jitter_and_breaks_only_the_outage(
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     canvas = window.plot_container.itemAt(0).widget()
     kp_ax, sfi_ax = canvas.figure.get_axes()
     kp_line = kp_ax.get_lines()[0]
@@ -364,7 +379,7 @@ def test_history_plot_markers_are_visible_for_isolated_points(window, monkeypatc
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     canvas = window.plot_container.itemAt(0).widget()
     kp_ax, sfi_ax = canvas.figure.get_axes()
     assert kp_ax.get_lines()[0].get_markersize() == 7
@@ -380,7 +395,7 @@ def test_two_readings_seconds_apart_show_not_enough_data(window, monkeypatch):  
     if getattr(window, "_compact", False):
         window._compact_tabs.setCurrentWidget(window._side_pane)
     window.tabs.setCurrentIndex(1)
-    window._refresh_plot_tab()
+    _refresh_and_wait(window)
     canvas = window.plot_container.itemAt(0).widget()
     texts = [t.get_text() for ax in canvas.figure.get_axes() for t in ax.texts]
     assert "Not enough data yet" in texts

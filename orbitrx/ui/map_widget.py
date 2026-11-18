@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import datetime
+import threading
+from dataclasses import dataclass
 from typing import Any
 
 from PIL import Image
@@ -19,6 +21,7 @@ try:
         QGraphicsScene, QGraphicsTextItem, QGraphicsView, QLabel, QSizePolicy,
         QVBoxLayout, QWidget,
     )
+    from orbitrx.ui.async_utils import UiInvoker
     QT_AVAILABLE = True
 
     class SmoothGraphicsView(QGraphicsView):
@@ -29,6 +32,18 @@ try:
 except ImportError:
     QT_AVAILABLE = False
     SmoothGraphicsView = None  # type: ignore
+
+
+@dataclass
+class _MapStateSnapshot:
+    """The handful of AppState fields build_scene() reads, copied out before
+    handing off to the rebuild worker thread (P1): the live AppState object is
+    owned and mutated by the UI thread and must never be touched off it."""
+
+    slider_offset_hours: float
+    kp_index: float
+    user_lat: float | None
+    user_lon: float | None
 
 
 # Native port of the Leaflet setLiveSpots JS: same caps so a big PSKReporter
@@ -70,6 +85,14 @@ class PropagationMapWidget(QWidget):
         self._overlay_key: tuple | None = None
         self._base_pixmap: QPixmap | None = None
         self._overlay_pixmap: QPixmap | None = None
+
+        # P1: build_scene()'s PIL compositing runs on a worker thread; at most one
+        # runs at a time, with a newer request while one is in flight coalescing
+        # into a single pending rebuild (the latest state wins, nothing queues up).
+        self._invoker = UiInvoker(self)
+        self._rebuild_running = False
+        self._pending_rebuild: tuple[int, tuple] | None = None
+        self._rebuild_generation = 0
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -177,23 +200,23 @@ class PropagationMapWidget(QWidget):
         self.view.fitInView(QRectF(0, 0, w, h), Qt.AspectRatioMode.KeepAspectRatio)
         self._view_fitted = True
 
-    def _overlay_refresh_key(self, scene: MapScene, state: Any) -> tuple:
+    def _overlay_refresh_key(self, scene: MapScene, snapshot: _MapStateSnapshot) -> tuple:
         return (
             round(scene.sun_lon_deg, 1),
             round(scene.declination_deg, 1),
-            round(state.slider_offset_hours, 1),
+            round(snapshot.slider_offset_hours, 1),
             self._layers.greyline,
             self._layers.night,
             self._layers.aurora,
             self._layers.grid,
-            round(float(state.kp_index), 1),
+            round(float(snapshot.kp_index), 1),
         )
 
-    def _update_overlay(self, scene: MapScene, state: Any) -> None:
-        key = self._overlay_refresh_key(scene, state)
+    def _update_overlay_from_qimage(self, scene: MapScene, snapshot: _MapStateSnapshot, qimage: QImage) -> None:
+        key = self._overlay_refresh_key(scene, snapshot)
         if key == self._overlay_key and self._overlay_pixmap is not None:
             return
-        pixmap = _pil_to_qpixmap(scene.overlay_rgba)
+        pixmap = QPixmap.fromImage(qimage)
         if pixmap.isNull():
             raise RuntimeError("Overlay pixmap conversion failed")
         self._overlay_pixmap = pixmap
@@ -208,17 +231,67 @@ class PropagationMapWidget(QWidget):
         coordinates: dict[str, tuple[float, float]],
         vectors_only: bool = False,
     ) -> None:
-        scene = self.renderer.build_scene(state, self._layers, spots, coordinates)
+        """Dispatches to a worker thread (P1): build_scene()'s PIL compositing and
+        the PIL->QImage conversion never run on the UI thread. Only the final
+        QImage (and the lightweight vector annotation data) comes back here,
+        where it's turned into a QPixmap (QPixmap is UI-thread only) and painted.
+        """
+        snapshot = _MapStateSnapshot(
+            slider_offset_hours=state.slider_offset_hours,
+            kp_index=state.kp_index,
+            user_lat=state.user_lat,
+            user_lon=state.user_lon,
+        )
+        args = (snapshot, list(spots), dict(coordinates), vectors_only, self._layers)
+        self._rebuild_generation += 1
+        gen = self._rebuild_generation
+        if self._rebuild_running:
+            self._pending_rebuild = (gen, args)
+            return
+        self._start_rebuild(gen, args)
+
+    def _start_rebuild(self, gen: int, args: tuple) -> None:
+        snapshot, spots, coordinates, vectors_only, layers = args
+        need_base = self._base_pixmap is None or self._base_item.pixmap().isNull()
+        self._rebuild_running = True
+        deliver = self._invoker.wrap(lambda result: self._on_scene_built(gen, args, result))
+
+        def worker() -> None:
+            scene = self.renderer.build_scene(snapshot, layers, spots, coordinates)
+            overlay_qimage = None if vectors_only else _pil_to_qimage(scene.overlay_rgba)
+            base_qimage = _pil_to_qimage(scene.base_rgba) if need_base else None
+            deliver((scene, overlay_qimage, base_qimage))
+
+        threading.Thread(target=worker, daemon=True, name="map-rebuild").start()
+
+    def _on_scene_built(self, gen: int, args: tuple, result: tuple) -> None:
+        snapshot, _spots, _coordinates, vectors_only, _layers = args
+        scene, overlay_qimage, base_qimage = result
+        self._apply_scene(scene, overlay_qimage, base_qimage, snapshot, vectors_only)
+        self._rebuild_running = False
+        if self._pending_rebuild is not None:
+            next_gen, next_args = self._pending_rebuild
+            self._pending_rebuild = None
+            self._start_rebuild(next_gen, next_args)
+
+    def _apply_scene(
+        self,
+        scene: MapScene,
+        overlay_qimage: QImage | None,
+        base_qimage: QImage | None,
+        snapshot: _MapStateSnapshot,
+        vectors_only: bool,
+    ) -> None:
         self._scene_data = scene
 
-        if self._base_pixmap is None or self._base_item.pixmap().isNull():
-            self.set_base_map(scene.base_rgba)
+        if base_qimage is not None:
+            self._assign_base_pixmap(QPixmap.fromImage(base_qimage), base_qimage.width(), base_qimage.height())
 
-        if not vectors_only:
-            self._update_overlay(scene, state)
+        if not vectors_only and overlay_qimage is not None:
+            self._update_overlay_from_qimage(scene, snapshot, overlay_qimage)
 
         self._draw_vectors(scene)
-        offset = state.slider_offset_hours
+        offset = snapshot.slider_offset_hours
         now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=offset)
         extra = f"  ({format_hour_offset(offset)})" if offset else ""
         meta = f"Greyline @ {format_map_hud_datetime(now)}{extra}"
