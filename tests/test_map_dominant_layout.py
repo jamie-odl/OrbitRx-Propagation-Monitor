@@ -10,8 +10,9 @@ band cards. These pin the acceptance criteria from the P4 redesign chunk:
   folding them into one control strip
 - in compact mode (683x485, the size tools/ui_screenshots.py captures) the
   map is the main thing visible, not a thumbnail squeezed under tall chrome
-- band cards expose their OPEN/FAIR/POOR/UNKNOWN state as a widget property
-  and a matching left-edge colour
+- band cards (QFrame#bandCard + bandName/bandFreq/stateBadge child labels,
+  P4-5) expose their good/fair/poor/unknown state as a widget property, with
+  a matching badge word/colour and never a raw "UNKNOWN" string
 - the Kp/SFI/MUF key-metric tiles exist and track the same values as the
   grouped stats cards below them
 """
@@ -557,31 +558,158 @@ def test_map_dominates_compact_window_height_at_683x485(window):
     assert ratio >= 0.50, ratio
 
 
-# --- Band cards: state property + matching left-edge colour ----------------
+# --- Band cards: QFrame#bandCard + state property + badge (P4-5, SPEC §8) --
 
 
 @pytest.mark.parametrize(
-    "condition,expected_state",
-    [("OPEN", "open"), ("FAIR", "fair"), ("POOR", "poor"), ("UNKNOWN", "unknown")],
+    "condition,expected_state,expected_badge_is_word",
+    [
+        ("OPEN", "good", "GOOD"),
+        ("FAIR", "fair", "FAIR"),
+        ("CLOSED", "poor", "POOR"),
+        ("UNKNOWN", "unknown", None),
+    ],
 )
-def test_band_card_exposes_state_property_and_matching_colour(window, condition, expected_state):
-    from orbitrx.ui.band_panel import _STATUS_COLOR
+def test_band_card_exposes_state_property_and_matching_badge(window, condition, expected_state, expected_badge_is_word):
+    """band_grid()'s real OPEN/FAIR/CLOSED/UNKNOWN vocabulary (see
+    propagation.band_condition) maps onto the card's good/fair/poor/unknown
+    state; the badge shows a word or the shared NO_DATA dash (P4-6), never the
+    literal "UNKNOWN"."""
+    from orbitrx.ui.theme import NO_DATA
 
     band = next(iter(window.band_panel._cards))
     window.band_panel.update_grid({band: condition})
 
     card = window.band_panel._cards[band]
+    badge = window.band_panel._badge_labels[band]
     assert card.property("state") == expected_state
-    assert _STATUS_COLOR[condition] in card.styleSheet()
-    assert "border-left" in card.styleSheet()
+    assert badge.property("state") == expected_state
+    assert badge.text() == (expected_badge_is_word or NO_DATA)
+    assert "UNKNOWN" not in badge.text()
 
 
-def test_band_cards_for_different_states_get_different_colours(window):
+def test_band_cards_for_different_states_get_different_badge_text(window):
     bands = list(window.band_panel._cards.keys())[:2]
-    window.band_panel.update_grid({bands[0]: "OPEN", bands[1]: "POOR"})
-    style_open = window.band_panel._cards[bands[0]].styleSheet()
-    style_poor = window.band_panel._cards[bands[1]].styleSheet()
-    assert style_open != style_poor
+    window.band_panel.update_grid({bands[0]: "OPEN", bands[1]: "CLOSED"})
+    badge_good = window.band_panel._badge_labels[bands[0]].text()
+    badge_poor = window.band_panel._badge_labels[bands[1]].text()
+    assert badge_good != badge_poor
+
+
+def test_band_card_has_no_per_card_inline_stylesheet(window):
+    """SPEC §8 'Implementation': drop the inline setStyleSheet per card (and
+    its old 4px coloured left bar) -- state is communicated purely via the
+    dynamic "state" property, themed through theme.QSS."""
+    band = next(iter(window.band_panel._cards))
+    window.band_panel.update_grid({band: "OPEN"})
+    card = window.band_panel._cards[band]
+    assert card.styleSheet() == ""
+
+
+def test_band_card_defaults_unrecognised_condition_to_unknown(window):
+    """Defensive: any condition outside the real vocabulary band_grid() can
+    emit reads as unknown, never surfaced as a raw/unexpected word."""
+    from orbitrx.ui.theme import NO_DATA
+
+    band = next(iter(window.band_panel._cards))
+    window.band_panel.update_grid({band: "SOMETHING_ELSE"})
+    card = window.band_panel._cards[band]
+    badge = window.band_panel._badge_labels[band]
+    assert card.property("state") == "unknown"
+    assert badge.text() == NO_DATA
+
+
+def test_band_cards_show_no_data_dash_when_never_loaded(window):
+    """Never-loaded state (SPEC §10/states-sheet.png 'Unknown: dash, no
+    colour'): state.band_grid defaults to {} and every card starts in the
+    "unknown" state at construction time (BandPanelWidget.__init__), before
+    update_grid() is ever called -- the badge must show the shared NO_DATA
+    glyph, never the literal word "UNKNOWN"."""
+    from orbitrx.ui.theme import NO_DATA
+
+    assert window.ctrl.state.band_grid == {}
+    for band in window.band_panel._cards:
+        assert window.band_panel._cards[band].property("state") == "unknown"
+        assert window.band_panel._badge_labels[band].text() == NO_DATA
+
+
+def test_band_cards_show_no_data_dash_on_feed_failure(tmp_path, monkeypatch):
+    """Feed-failure state: a weather fetch that raises with no cache leaves
+    state.band_grid exactly as it was before the attempt (the controller
+    never reaches band_grid() at all -- see controller.fetch_weather's
+    early-return on a cache-less failure) -- fed into a real
+    BandPanelWidget, this must render as the NO_DATA dash, never a crash or
+    a raw "UNKNOWN"."""
+    monkeypatch.chdir(tmp_path)
+    from PySide6.QtWidgets import QApplication
+    from orbitrx.ui.theme import NO_DATA
+    from orbitrx.ui.controller import OrbitRxController
+    from orbitrx.ui.band_panel import BandPanelWidget
+    import orbitrx.ui.controller as controller_mod
+
+    QApplication.instance() or QApplication([])
+    errors = []
+    ctrl = OrbitRxController(on_error=errors.append)
+    ctrl.cfg.data["offline_cache_enabled"] = False
+    monkeypatch.setattr(
+        controller_mod, "fetch_space_weather_data", lambda: (_ for _ in ()).throw(RuntimeError("NOAA down"))
+    )
+
+    ctrl.fetch_weather()
+    ctrl._weather_thread.join(timeout=5)
+
+    assert errors, "weather fetch failure never reached on_error"
+    assert ctrl.state.band_grid == {}
+
+    panel = BandPanelWidget()
+    panel.update_grid(ctrl.state.band_grid)
+    for band in panel._cards:
+        assert panel._cards[band].property("state") == "unknown"
+        assert panel._badge_labels[band].text() == NO_DATA
+
+
+def test_band_card_structure_is_frame_with_name_freq_and_badge_labels(window):
+    from PySide6.QtWidgets import QFrame, QLabel
+
+    band = next(iter(window.band_panel._cards))
+    card = window.band_panel._cards[band]
+    assert isinstance(card, QFrame)
+    assert card.objectName() == "bandCard"
+    assert card.findChild(QLabel, "bandName") is not None
+    assert card.findChild(QLabel, "bandFreq") is not None
+    assert card.findChild(QLabel, "stateBadge") is not None
+
+
+def test_band_card_shows_dial_frequency_in_mhz(window):
+    band = next(iter(window.band_panel._cards))
+    window.band_panel.update_grid({band: "OPEN"})
+    freq_lbl = window.band_panel._freq_labels[band]
+    assert "MHz" in freq_lbl.text()
+
+
+def test_band_panel_column_reflow_matches_width_buckets(window):
+    """The width->column-count bucketing (1..3 cols) is unchanged from the
+    pre-P4-5 rich-text implementation."""
+    panel = window.band_panel
+    assert panel._columns_for_width(100) == 1
+    assert panel._columns_for_width(300) == 2
+    assert panel._columns_for_width(600) == 3
+
+
+def test_band_panel_relayout_and_reflow_keep_all_cards_populated(window):
+    """P4-5: _relayout/_reflow_text must still work with the QFrame+labels
+    structure -- every card stays in the grid and both child labels keep
+    non-empty text at every column count, exactly as the old single
+    rich-text QLabel did."""
+    panel = window.band_panel
+    panel.update_grid({b: "OPEN" for b in panel._cards})
+    for cols in (1, 2, 3):
+        panel._relayout(cols)
+        panel._reflow_text()
+        assert panel._grid.count() == len(panel._bands)
+        for band in panel._cards:
+            assert panel._freq_labels[band].text() != ""
+            assert panel._name_labels[band].text() != ""
 
 
 # --- Key-metric tiles (Kp / SFI / MUF) --------------------------------------
@@ -604,8 +732,48 @@ def test_key_metric_tiles_mirror_the_grouped_stats_card_values(window):
         assert window._kpi_labels[key].text() == window._labels[key].text()
 
 
+def test_key_metric_tiles_and_stats_card_show_no_data_dash_when_never_loaded(window):
+    """Never-loaded state (SPEC §10/states-sheet.png 'Never updated' panel):
+    flux/muf/luf default to None, so once labels are synced to that state
+    (_startup's 200ms QTimer hasn't fired yet in this fixture, hence the
+    explicit call -- same pattern as the other key-metric tests below), the
+    SFI/MUF tiles and their grouped stats-card rows must show the shared
+    NO_DATA dash, never "n/a"."""
+    from orbitrx.ui.formatting import NONE_TEXT
+
+    assert window.ctrl.state.flux is None
+    assert window.ctrl.state.muf is None and window.ctrl.state.luf is None
+    window._refresh_labels_and_map()
+    assert window._kpi_labels["solar"].text() == NONE_TEXT
+    assert window._kpi_labels["muf"].text() == NONE_TEXT
+    assert window._muf_luf_caption.text() == f"LUF: {NONE_TEXT}"
+    # "sunspot" has a strip_map prefix (its caption is the adjacent name
+    # label, not repeated in the value), "hamqsl" does not -- both still
+    # resolve through NONE_TEXT, never "n/a".
+    assert window._labels["sunspot"].text() == NONE_TEXT
+    assert window._labels["hamqsl"].text() == f"HamQSL: {NONE_TEXT}"
+    assert "n/a" not in window._labels["sunspot"].text()
+
+
+def test_weather_never_loaded_hint_visible_before_first_fetch_then_hidden(window):
+    """The one-line "No data yet" hint (SPEC §10 "Whole section never
+    loaded") is visible by default (the `window` fixture's fetch_weather()
+    stub never sets last_weather_update), and hides again once a refresh
+    actually lands, without changing the key-metric tiles row's layout."""
+    import datetime
+
+    assert window.ctrl.state.last_weather_update is None
+    assert not window._weather_never_loaded_lbl.isHidden()
+
+    window.ctrl.state.flux = 111.0
+    window.ctrl.state.last_weather_update = datetime.datetime.now(datetime.timezone.utc)
+    window._refresh_labels_and_map()
+
+    assert window._weather_never_loaded_lbl.isHidden()
+
+
 def test_muf_tile_shows_only_the_muf_value_with_luf_as_a_small_caption(window):
-    """The MUF tile used to show the full "n/a / LUF: n/a" stats-card string
+    """The MUF tile used to show the full combined MUF/LUF stats-card string
     in big type, overflowing the tile. The big number must be just the MUF
     value; LUF moves to its own small caption. Both tile fields drop the
     " MHz" unit suffix (the tile is only ~65-90px wide once squeezed into a
@@ -639,7 +807,7 @@ def test_no_key_metric_tile_label_text_overflows_its_width(window, width, height
     """Owner fix: a key-metric tile label's text must never be wider than
     the space the tile actually gives it, at either size this app supports.
     Exercises the worst-case values this layout has to accommodate: the
-    default "n/a" (no-data) state, and a realistic longest-reading
+    default no-data (NO_DATA dash) state, and a realistic longest-reading
     value/trend combination for each tile."""
     from PySide6.QtGui import QFontMetrics
 

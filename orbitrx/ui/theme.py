@@ -107,6 +107,17 @@ POOR = "#F47F82"
 POOR_BG = "#342830"
 UNKNOWN = TEXT_TERTIARY
 
+# P4-5/P4-6 (SPEC §10): the one glyph every "no data" value and badge shows,
+# e.g. band-card unknown badges, stats-tile/stats-card values, settings
+# lat/lon spin boxes. Deliberately an en dash, not SPEC §10's own em dash --
+# tests/test_merge_integration.py::test_no_em_dashes_in_ui_strings bans
+# literal U+2014 in orbitrx/ui/*.py, so this is the glyph that satisfies both
+# "never n/a/UNKNOWN" and "no em dash" at once. orbitrx/ui/formatting.py
+# mirrors this exact character in its own NONE_TEXT constant rather than
+# importing it, so that module stays Qt-import-free (see its module
+# docstring) -- see p4-findings.md Round 3 for the full reasoning.
+NO_DATA = "–"
+
 # Map tokens (SPEC 3.3). GREYLINE already exists above with the same hex
 # SPEC specifies, so it is left untouched rather than duplicated.
 MAP_OCEAN = "#0B111A"
@@ -279,6 +290,19 @@ QToolButton#segButton:checked {{
 /* P4-3: QMenuBar.setCornerWidget -- cluster dot + UTC clock (SPEC §6.1/§6.2). */
 QWidget#statusCorner QLabel {{ color: {TEXT_TERTIARY}; font-size: {FONT_CAPTION}px; background: transparent; }}
 QLabel#statusCornerClock {{ font-family: {FONT_MONO}; }}
+/* P4-5: band cards (SPEC §8) -- QFrame#bandCard + 3 child labels, themed
+   entirely through the "state" dynamic property (good|fair|poor|unknown),
+   never a per-card inline styleSheet. bandFreq uses FONT_CAPTION (11px) not
+   SPEC's literal 12px, so it stays inside the app's 4-value type scale
+   (test_qss_only_uses_type_scale_font_sizes). */
+QFrame#bandCard {{ background: {BG_RAISED}; border: 1px solid {BORDER_SUBTLE}; border-radius: 8px; }}
+QLabel#bandName {{ font-size: {FONT_SECTION}px; font-weight: 600; color: {TEXT_PRIMARY}; background: transparent; }}
+QLabel#bandFreq {{ font-family: {FONT_MONO}; font-size: {FONT_CAPTION}px; color: {TEXT_SECONDARY}; background: transparent; }}
+QLabel#stateBadge {{ font-size: {FONT_CAPTION}px; font-weight: 600; border-radius: 4px; padding: 1px 7px; background: transparent; }}
+QLabel#stateBadge[state="good"] {{ color: {GOOD}; background: {GOOD_BG}; }}
+QLabel#stateBadge[state="fair"] {{ color: {FAIR}; background: {FAIR_BG}; }}
+QLabel#stateBadge[state="poor"] {{ color: {POOR}; background: {POOR_BG}; }}
+QLabel#stateBadge[state="unknown"] {{ color: {UNKNOWN}; background: transparent; border: 1px solid {BORDER_DEFAULT}; }}
 QFrame#statsCard {{
     background: {BG_ELEVATED}; border: 1px solid {BORDER}; border-radius: {RADIUS_M}px;
 }}

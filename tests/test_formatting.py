@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime
 
 from orbitrx.ui.formatting import (
+    NONE_TEXT,
     concise_date_offset_formats,
     decimal_hours_to_hhmm,
     format_hour_offset,
@@ -19,9 +20,21 @@ from orbitrx.ui.formatting import (
 )
 
 
-def test_format_value_none_is_n_slash_a():
-    assert format_value(None) == "n/a"
-    assert format_value(None, unit=" MHz") == "n/a"
+def test_none_text_is_the_shared_no_data_en_dash_not_an_em_dash_or_n_slash_a():
+    """P4-6 (SPEC §10): the project bans a literal em dash in orbitrx/ui/*.py
+    (tests/test_merge_integration.py::test_no_em_dashes_in_ui_strings), so the
+    one glyph every missing value shows is an en dash, mirroring
+    orbitrx.ui.theme.NO_DATA's exact character."""
+    from orbitrx.ui.theme import NO_DATA
+
+    assert NONE_TEXT == NO_DATA == "–"
+    assert NONE_TEXT != "n/a"
+    assert "—" not in NONE_TEXT  # em dash, the one SPEC §10 itself uses
+
+
+def test_format_value_none_is_the_no_data_dash():
+    assert format_value(None) == NONE_TEXT
+    assert format_value(None, unit=" MHz") == NONE_TEXT
 
 
 def test_format_value_formats_and_appends_unit():
@@ -33,7 +46,7 @@ def test_decimal_hours_to_hhmm():
     assert decimal_hours_to_hhmm(7.44) == "07:26"
     assert decimal_hours_to_hhmm(0.0) == "00:00"
     assert decimal_hours_to_hhmm(23.999) == "00:00"
-    assert decimal_hours_to_hhmm(None) == "n/a"
+    assert decimal_hours_to_hhmm(None) == NONE_TEXT
 
 
 def test_format_iso_utc_handles_z_suffix():
@@ -46,9 +59,9 @@ def test_format_iso_utc_handles_offset_and_space_separated():
 
 
 def test_format_iso_utc_none_or_dashes():
-    assert format_iso_utc(None) == "n/a"
-    assert format_iso_utc("--") == "n/a"
-    assert format_iso_utc("") == "n/a"
+    assert format_iso_utc(None) == NONE_TEXT
+    assert format_iso_utc("--") == NONE_TEXT
+    assert format_iso_utc("") == NONE_TEXT
 
 
 def test_format_source_label_maps_internal_identifiers():

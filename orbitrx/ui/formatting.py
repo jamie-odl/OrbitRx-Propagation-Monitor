@@ -8,7 +8,10 @@ from __future__ import annotations
 import datetime
 import statistics
 
-NONE_TEXT = "n/a"
+# SPEC §10's one "no data" glyph, an en dash -- mirrors orbitrx.ui.theme.NO_DATA's
+# exact character without importing it, since theme.py pulls in PySide6 and this
+# module is kept Qt-import-free (see module docstring).
+NONE_TEXT = "–"
 
 # M4: fallback "expected weather poll interval" used by insert_gap_breaks when the
 # caller has no better estimate (e.g. no config available). Mirrors a plausible
@@ -40,8 +43,9 @@ def format_value(value, unit: str = "", none_text: str = NONE_TEXT, fmt: str = "
 
 
 def fmt(value, unit: str) -> str:
-    """The one value+unit formatter for every stat row (M5): "n/a" for a missing or
-    non-numeric value (never "n/a <unit>"), else one decimal place plus its unit.
+    """The one value+unit formatter for every stat row (M5): NONE_TEXT for a missing
+    or non-numeric value (never NONE_TEXT glued to a stray unit), else one decimal
+    place plus its unit.
     """
     if value is None or isinstance(value, bool):
         return NONE_TEXT

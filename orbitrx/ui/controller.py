@@ -20,7 +20,9 @@ from orbitrx.hamqsl import fetch_solar_xml, hamqsl_path_muf
 from orbitrx.propagation import band_grid, bands_summary, estimate_muf, flux_trend_arrow
 from orbitrx.state import AppState
 from orbitrx.storage import DataStore
-from orbitrx.ui.formatting import decimal_hours_to_hhmm, fmt, format_iso_utc, format_source_label, format_value
+from orbitrx.ui.formatting import (
+    NONE_TEXT, decimal_hours_to_hhmm, fmt, format_iso_utc, format_source_label, format_value,
+)
 from orbitrx.utils import estimate_location, local_time_at_lon, sun_times
 from orbitrx.weather import fetch_space_weather_data
 from orbitrx.alerts import show_toast
@@ -334,8 +336,8 @@ class OrbitRxController:
     def weather_labels(self) -> dict[str, str]:
         s = self.state
         ss = s.sunspot_observed or s.sunspot_predicted
-        loc = f"You: {s.user_lat:.3f}, {s.user_lon:.3f}" if s.user_lat else "You: n/a"
-        sr_txt = ss_txt = "n/a"
+        loc = f"You: {s.user_lat:.3f}, {s.user_lon:.3f}" if s.user_lat else f"You: {NONE_TEXT}"
+        sr_txt = ss_txt = NONE_TEXT
         if s.user_lat and s.user_lon:
             sr, ssun = sun_times(s.user_lat, s.user_lon, datetime.datetime.now(datetime.timezone.utc))
             if sr:
@@ -349,14 +351,14 @@ class OrbitRxController:
             src = self.coord_source_summary(to_cs)
             src_tag = f" [{src}]" if src else ""
             dx_parts.append(f"{tag}{x['from']}→{to_cs}{src_tag} {x['freq']} MHz")
-        dx = " | ".join(dx_parts) or "n/a"
+        dx = " | ".join(dx_parts) or NONE_TEXT
         nc = get_next_contest()
         a_src = format_source_label(getattr(s, "a_index_source", None))
         a_txt = format_value(s.a_index, fmt="{:g}")
         if a_src:
             a_txt = f"{a_txt} ({a_src})"
         # M5: one formatter everywhere a unit follows a value, so a missing reading
-        # is always a bare "n/a" and never glued to a stray unit like "n/a MHz".
+        # is always a bare NONE_TEXT and never glued to a stray unit.
         path_muf_txt = f"Path MUF: {fmt(s.path_muf, 'MHz')}"
         if s.path_muf_label:
             path_muf_txt += f" → {s.path_muf_label}"
@@ -367,14 +369,14 @@ class OrbitRxController:
             "kp": f"Kp: {s.kp_index:.2f}",
             "kp_forecast": f"Kp Forecast: {s.kp_forecast}",
             "solar": f"Solar Flux: {format_value(s.flux)} {flux_trend}".rstrip(),
-            "sunspot": f"Sunspot: {ss:.1f}" if ss else "Sunspot: n/a",
+            "sunspot": f"Sunspot: {ss:.1f}" if ss else f"Sunspot: {NONE_TEXT}",
             "a_index": f"A-index: {a_txt}",
             "solar_wind": f"Wind: {fmt(s.solar_wind_speed, 'km/s')}  Bz: {fmt(s.bz, 'nT')}",
             "time": f"NOAA data: {format_iso_utc(s.time_utc)}",
             "bands": f"Bands: {s.bands_summary}",
             "muf": f"MUF: {fmt(s.muf, 'MHz')} / LUF: {fmt(s.luf, 'MHz')}",
             "path_muf": path_muf_txt,
-            "hamqsl": f"HamQSL: {s.hamqsl_band_hint or 'n/a'}",
+            "hamqsl": f"HamQSL: {s.hamqsl_band_hint or NONE_TEXT}",
             "sunrise": f"Sunrise UTC: {sr_txt}",
             "sunset": f"Sunset UTC: {ss_txt}",
             "alerts": "Alerts:\n" + ("\n".join(s.alerts[:3]) or "none"),

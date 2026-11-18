@@ -30,7 +30,7 @@ from orbitrx.ui.formatting import (
 )
 from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
 from orbitrx.ui.theme import (
-    BG_ELEVATED, BORDER, CARD_STYLE, CARD_TEXT, ERR, FONT_BODY, MUTED, MUTED_SECONDARY, OK,
+    BG_ELEVATED, BORDER, CARD_STYLE, CARD_TEXT, ERR, FONT_BODY, MUTED, MUTED_SECONDARY, NO_DATA, OK,
     RADIUS_M, SPACE_1, SPACE_2, SPACE_3, apply_theme,
 )
 from orbitrx.ui.toast import ToastManager
@@ -764,9 +764,9 @@ class QtOrbitRxApplication(QMainWindow):
         # grouped cards below at all.
         self._kpi_labels: dict[str, QLabel] = {}
         # The MUF tile's big number is just the MUF value -- the combined
-        # "MUF: n/a / LUF: n/a" string (fine as a small grouped-card row)
-        # overflowed the tile in big type, so LUF gets its own small caption
-        # here instead (set in _refresh_labels_and_map).
+        # "MUF: <NONE_TEXT> / LUF: <NONE_TEXT>" string (fine as a small
+        # grouped-card row) overflowed the tile in big type, so LUF gets its
+        # own small caption here instead (set in _refresh_labels_and_map).
         self._muf_luf_caption: QLabel | None = None
         key_metrics_row = QHBoxLayout()
         key_metrics_row.setSpacing(SPACE_2)
@@ -792,6 +792,19 @@ class QtOrbitRxApplication(QMainWindow):
             self._kpi_labels[key] = value_lbl
             key_metrics_row.addWidget(tile, 1)
         stats_outer.addLayout(key_metrics_row)
+
+        # P4-6 (SPEC §10 "Whole section never loaded"/states-sheet.png): a
+        # single muted line, shown only before the first successful weather
+        # fetch, pointing at the real cause instead of leaving the tiles'
+        # NO_DATA dashes unexplained. Toggled in _refresh_labels_and_map;
+        # visible by default so it is correct even before the first refresh.
+        self._weather_never_loaded_lbl = QLabel(
+            'No data yet. Values appear after the first refresh. <a href="#">Refresh now</a>'
+        )
+        self._weather_never_loaded_lbl.setWordWrap(True)
+        self._weather_never_loaded_lbl.setObjectName("muted")
+        self._weather_never_loaded_lbl.linkActivated.connect(lambda _: self.ctrl.fetch_weather())
+        stats_outer.addWidget(self._weather_never_loaded_lbl)
 
         stats_scroll = QScrollArea()
         stats_scroll.setWidgetResizable(True)
@@ -1410,6 +1423,7 @@ class QtOrbitRxApplication(QMainWindow):
                 elif k in self._kpi_labels:
                     self._kpi_labels[k].setText(v)
         self._update_location_hint_visibility()
+        self._weather_never_loaded_lbl.setVisible(self.ctrl.state.last_weather_update is None)
         self.alerts_list.clear()
         for alert in self.ctrl.state.alerts[:5] or ["No active alerts"]:
             item = QListWidgetItem(humanize_iso_dates(alert))
@@ -1540,7 +1554,7 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _update_location_hint_visibility(self) -> None:
         """M5: path_muf/sunrise/sunset only mean anything once a location is set;
-        otherwise show the single explanatory line instead of three "n/a" rows."""
+        otherwise show the single explanatory line instead of three no-data rows."""
         has_location = self.ctrl.state.user_lat is not None and self.ctrl.state.user_lon is not None
         for key in ("path_muf", "sunrise", "sunset", "location"):
             if key in self._labels:
@@ -1809,14 +1823,14 @@ class QtOrbitRxApplication(QMainWindow):
         fields["home_lat"] = QDoubleSpinBox()
         fields["home_lat"].setRange(-90.0, 90.0)
         fields["home_lat"].setDecimals(4)
-        fields["home_lat"].setSpecialValueText("n/a")
+        fields["home_lat"].setSpecialValueText(NO_DATA)
         fields["home_lat"].setMinimumHeight(30)  # M3: room for both spin arrows
         fields["home_lat"].setValue(float(cfg.get("home_lat") or -90.0) if cfg.get("home_lat") is not None else -90.0)
         self._add_settings_row(station, "Home latitude", fields["home_lat"])
         fields["home_lon"] = QDoubleSpinBox()
         fields["home_lon"].setRange(-180.0, 180.0)
         fields["home_lon"].setDecimals(4)
-        fields["home_lon"].setSpecialValueText("n/a")
+        fields["home_lon"].setSpecialValueText(NO_DATA)
         fields["home_lon"].setMinimumHeight(30)
         fields["home_lon"].setValue(float(cfg.get("home_lon") or -180.0) if cfg.get("home_lon") is not None else -180.0)
         self._add_settings_row(station, "Home longitude", fields["home_lon"])
@@ -1925,14 +1939,14 @@ class QtOrbitRxApplication(QMainWindow):
         fields["target_dx_lat"] = QDoubleSpinBox()
         fields["target_dx_lat"].setRange(-90.0, 90.0)
         fields["target_dx_lat"].setDecimals(4)
-        fields["target_dx_lat"].setSpecialValueText("n/a")
+        fields["target_dx_lat"].setSpecialValueText(NO_DATA)
         fields["target_dx_lat"].setMinimumHeight(30)
         fields["target_dx_lat"].setValue(float(cfg.get("target_dx_lat") or -90.0) if cfg.get("target_dx_lat") is not None else -90.0)
         self._add_settings_row(dxc, "Target latitude", fields["target_dx_lat"])
         fields["target_dx_lon"] = QDoubleSpinBox()
         fields["target_dx_lon"].setRange(-180.0, 180.0)
         fields["target_dx_lon"].setDecimals(4)
-        fields["target_dx_lon"].setSpecialValueText("n/a")
+        fields["target_dx_lon"].setSpecialValueText(NO_DATA)
         fields["target_dx_lon"].setMinimumHeight(30)
         fields["target_dx_lon"].setValue(float(cfg.get("target_dx_lon") or -180.0) if cfg.get("target_dx_lon") is not None else -180.0)
         self._add_settings_row(dxc, "Target longitude", fields["target_dx_lon"])

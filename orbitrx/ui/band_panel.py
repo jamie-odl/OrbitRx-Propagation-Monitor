@@ -1,65 +1,104 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont, QFontMetrics
-from PySide6.QtWidgets import QGridLayout, QLabel, QSizePolicy, QWidget
+from PySide6.QtGui import QFontMetrics
+from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout, QWidget
 
 from orbitrx.propagation import HF_BANDS, suggested_dial_freq
-from orbitrx.ui.theme import (
-    BAD, BORDER, FONT_CAPTION, MUTED, OK, RADIUS_S, SPACE_1, SPACE_2, SURFACE, TEXT, WARN,
-)
+from orbitrx.ui.theme import NO_DATA
 
 # M4: tile minimum width; reflow steps down rather than squeezing unreadably.
 TILE_MIN_WIDTH = 110
 
-# P4: the band label's own font size, used both for the inline HTML style and
-# for measuring how much of a long band name fits -- eliding against the
-# card's default (smaller) font would under-truncate and let the larger
-# rendered text overflow the card, since QLabel never clips rich text to its
-# own rect.
-NAME_FONT_SIZE = 18
+# SPEC §8: band_grid()'s real condition vocabulary (OPEN/FAIR/CLOSED/UNKNOWN,
+# see orbitrx/propagation.py::band_condition) maps onto the card's four
+# visual states. Anything else (defensively) reads as unknown rather than a
+# raw/uppercase word -- never ship a literal "UNKNOWN".
+_CONDITION_TO_STATE = {
+    "OPEN": "good",
+    "FAIR": "fair",
+    "CLOSED": "poor",
+    "UNKNOWN": "unknown",
+}
 
-_STATUS_COLOR = {
-    "OPEN": OK,
-    "GOOD": OK,
-    "FAIR": WARN,
-    "POOR": BAD,
-    "CLOSED": BAD,
-    "UNKNOWN": MUTED,
+# Badge text per state (SPEC §8 table): a word for good/fair/poor, the shared
+# NO_DATA glyph for unknown -- colour is never the only cue and "UNKNOWN" is
+# never shown. SPEC §10 itself specifies an em dash here, but
+# tests/test_merge_integration.py::test_no_em_dashes_in_ui_strings bans literal
+# U+2014 in this package, so NO_DATA's en dash is used instead (see theme.py).
+_STATE_BADGE_TEXT = {
+    "good": "GOOD",
+    "fair": "FAIR",
+    "poor": "POOR",
+    "unknown": NO_DATA,
 }
 
 
+def _condition_to_state(condition: str) -> str:
+    return _CONDITION_TO_STATE.get(condition.upper(), "unknown")
+
+
 class BandPanelWidget(QWidget):
-    """Per-band OPEN/FAIR/CLOSED cards with status disc + type hierarchy (M4)."""
+    """Per-band good/fair/poor/unknown cards (SPEC §8).
+
+    Each card is a QFrame#bandCard holding three child QLabels (bandName,
+    bandFreq, stateBadge). State is communicated through a dynamic "state"
+    property plus unpolish/polish -- never a per-card inline styleSheet --
+    so the cards are themed entirely through theme.QSS.
+    """
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._bands = list(HF_BANDS)
-        self._cards: dict[str, QLabel] = {}
-        self._raw: dict[str, tuple[str, str, str]] = {band: ("", "UNKNOWN", "") for band in self._bands}
+        self._cards: dict[str, QFrame] = {}
+        self._name_labels: dict[str, QLabel] = {}
+        self._freq_labels: dict[str, QLabel] = {}
+        self._badge_labels: dict[str, QLabel] = {}
+        self._raw: dict[str, str] = {band: f"{suggested_dial_freq(band)} MHz" for band in self._bands}
         self._cols = 0
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setSpacing(8)
         for band in self._bands:
-            card = QLabel()
-            card.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-            card.setTextFormat(Qt.TextFormat.RichText)
-            card.setProperty("state", "unknown")
-            self._style_card(card, MUTED)
-            card.setMinimumWidth(TILE_MIN_WIDTH)
-            card.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-            self._cards[band] = card
+            self._build_card(band)
+            self._apply_state(band, "unknown")
         self._relayout(3)
 
-    def _style_card(self, card: QLabel, color: str) -> None:
-        """P4: a coloured left edge (not just a small dot) is the primary
-        state cue; tighter padding + a consistent radius than the old cards."""
-        card.setStyleSheet(
-            f"background: {SURFACE}; border: 1px solid {BORDER}; "
-            f"border-left: 4px solid {color}; border-radius: {RADIUS_S}px; "
-            f"padding: {SPACE_2}px {SPACE_2}px {SPACE_2}px {SPACE_1 + SPACE_2}px; color: {TEXT};"
-        )
+    def _build_card(self, band: str) -> None:
+        card = QFrame()
+        card.setObjectName("bandCard")
+        card.setProperty("state", "unknown")
+        card.setMinimumWidth(TILE_MIN_WIDTH)
+        card.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+        name_lbl = QLabel(band)
+        name_lbl.setObjectName("bandName")
+
+        badge_lbl = QLabel()
+        badge_lbl.setObjectName("stateBadge")
+        badge_lbl.setProperty("state", "unknown")
+        badge_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        freq_lbl = QLabel()
+        freq_lbl.setObjectName("bandFreq")
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(6)
+        top_row.addWidget(name_lbl)
+        top_row.addStretch(1)
+        top_row.addWidget(badge_lbl)
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(4)
+        layout.addLayout(top_row)
+        layout.addWidget(freq_lbl)
+
+        self._cards[band] = card
+        self._name_labels[band] = name_lbl
+        self._freq_labels[band] = freq_lbl
+        self._badge_labels[band] = badge_lbl
 
     def _columns_for_width(self, width: int) -> int:
         return max(1, min(3, width // 120))
@@ -79,42 +118,32 @@ class BandPanelWidget(QWidget):
             row, col = divmod(i, cols)
             self._grid.addWidget(self._cards[band], row, col)
 
+    def _apply_state(self, band: str, state: str) -> None:
+        card = self._cards[band]
+        badge = self._badge_labels[band]
+        card.setProperty("state", state)
+        badge.setProperty("state", state)
+        badge.setText(_STATE_BADGE_TEXT[state])
+        for w in (card, badge):
+            w.style().unpolish(w)
+            w.style().polish(w)
+
     def _reflow_text(self) -> None:
         cols = max(1, self._cols)
         tile_w = max(TILE_MIN_WIDTH, self.width() // cols)
-        avail = max(1, tile_w - 28)
-        for band, card in self._cards.items():
-            name, cond, mhz = self._raw[band]
-            if not name:
-                continue
-            state = cond.upper()
-            color = _STATUS_COLOR.get(state, MUTED)
-            card.setProperty("state", state.lower())
-            self._style_card(card, color)
-            fm = QFontMetrics(card.font())
-            name_font = QFont(card.font())
-            name_font.setPixelSize(NAME_FONT_SIZE)
-            name_font.setWeight(QFont.Weight.Bold)
-            name_fm = QFontMetrics(name_font)
-            name_e = name_fm.elidedText(name, Qt.TextElideMode.ElideRight, avail)
-            cond_e = fm.elidedText(cond, Qt.TextElideMode.ElideRight, avail)
-            mhz_e = fm.elidedText(mhz, Qt.TextElideMode.ElideRight, avail)
-            # P4: a large band label is the primary read; the condition badge
-            # and frequency each get their own line below it (not inline next
-            # to the band name) so neither ever overflows the card's width --
-            # the state colour already reads via the left edge regardless.
-            card.setText(
-                f'<div style="line-height:1.25">'
-                f'<span style="font-size:{NAME_FONT_SIZE}px;font-weight:700;color:{TEXT}">{name_e}</span><br/>'
-                f'<span style="font-size:{FONT_CAPTION}px;font-weight:700;letter-spacing:0.06em;'
-                f'color:{color}">{cond_e}</span><br/>'
-                f'<span style="font-size:{FONT_CAPTION}px;font-weight:400;color:{MUTED}">'
-                f'{mhz_e}</span></div>'
-            )
+        name_avail = max(1, tile_w - 24 - 48)  # card padding minus badge+gap estimate
+        freq_avail = max(1, tile_w - 24)       # card padding only, full-width row
+        for band in self._bands:
+            name_lbl = self._name_labels[band]
+            freq_lbl = self._freq_labels[band]
+            name_fm = QFontMetrics(name_lbl.font())
+            name_lbl.setText(name_fm.elidedText(band, Qt.TextElideMode.ElideRight, name_avail))
+            freq_fm = QFontMetrics(freq_lbl.font())
+            freq_lbl.setText(freq_fm.elidedText(self._raw[band], Qt.TextElideMode.ElideRight, freq_avail))
 
     def update_grid(self, band_grid: dict[str, str]) -> None:
         for band in self._cards:
-            cond = band_grid.get(band, "UNKNOWN")
-            dial = suggested_dial_freq(band)
-            self._raw[band] = (band, cond, f"{dial} MHz")
+            condition = band_grid.get(band, "UNKNOWN")
+            self._apply_state(band, _condition_to_state(condition))
+            self._raw[band] = f"{suggested_dial_freq(band)} MHz"
         self._reflow_text()
