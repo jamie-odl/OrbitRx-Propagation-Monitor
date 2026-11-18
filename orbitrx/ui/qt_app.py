@@ -99,10 +99,12 @@ CAT_TEST_TIMEOUT_S = 5.0
 
 
 def _build_history_figure(rows: list[dict], poll_interval_s: float) -> tuple[Figure, bool]:
-    """Pure matplotlib work (no Qt widgets touched) so _refresh_plot_tab can run
-    it on a worker thread (P1). Returns (figure, has_enough_data); the caller
-    only needs to wrap the figure in a FigureCanvasQTAgg (a QWidget, so that
-    part stays on the UI thread) and add it to the layout."""
+    """Builds the matplotlib Figure for the history plot. matplotlib (incl. its
+    FreeType font cache used by tight_layout) is not thread-safe, so this
+    always runs on the UI thread -- _refresh_plot_tab only runs the sqlite
+    query on a worker thread; this is called back on the UI thread with the
+    query result. Returns (figure, has_enough_data); the caller wraps the
+    figure in a FigureCanvasQTAgg and adds it to the layout."""
     times, kp, flux = [], [], []
     for r in rows:
         times.append(datetime.datetime.fromisoformat(r["ts"]))
@@ -309,6 +311,7 @@ class QtOrbitRxApplication(QMainWindow):
         self._ui = _UiInvoker()
         self._map_load_thread: threading.Thread | None = None
         self._update_check_thread: threading.Thread | None = None
+        self._plot_query_thread: threading.Thread | None = None
         ui = self._ui.wrap
         self.ctrl = OrbitRxController(
             on_status=ui(self._set_status),
@@ -1110,11 +1113,15 @@ class QtOrbitRxApplication(QMainWindow):
         dlg.exec()
 
     def _refresh_plot_tab(self) -> None:
-        # P1: the sqlite query and the matplotlib Figure build (both potentially
-        # slow on a long date range) run on a worker thread; only the cheap
-        # FigureCanvasQTAgg wrap + layout swap below touches Qt widgets. A
-        # generation counter drops a result superseded by a newer Refresh/date
-        # change before it ever reaches the UI.
+        # P1/regression: only the sqlite query (potentially slow on a long date
+        # range) runs on a worker thread. matplotlib is not thread-safe -- its
+        # FreeType font cache can crash if two threads touch it at once, or if
+        # a worker builds a Figure while the UI thread is doing anything else
+        # with matplotlib (e.g. test teardown's plt.close("all")) -- so the
+        # Figure build (_build_history_figure, including tight_layout) always
+        # runs on the UI thread below, never on the worker. A generation
+        # counter drops a result superseded by a newer Refresh/date change
+        # before it ever reaches the UI.
         if not PLOT_QT:
             self.plot_placeholder.setText("matplotlib Qt backend required")
             return
@@ -1130,7 +1137,7 @@ class QtOrbitRxApplication(QMainWindow):
         self.plot_placeholder.setText("Loading…")
         self.plot_container.addWidget(self.plot_placeholder)
 
-        on_done = self._ui.wrap(lambda payload: self._on_plot_tab_ready(gen, payload))
+        on_done = self._ui.wrap(lambda payload: self._on_plot_tab_ready(gen, poll_interval_s, payload))
 
         def worker() -> None:
             try:
@@ -1141,12 +1148,12 @@ class QtOrbitRxApplication(QMainWindow):
             if not rows:
                 on_done(("empty", None))
                 return
-            on_done(("ok", _build_history_figure(rows, poll_interval_s)))
+            on_done(("rows", rows))
 
         self._plot_query_thread = threading.Thread(target=worker, daemon=True, name="history-query")
         self._plot_query_thread.start()
 
-    def _on_plot_tab_ready(self, gen: int, payload: tuple) -> None:
+    def _on_plot_tab_ready(self, gen: int, poll_interval_s: float, payload: tuple) -> None:
         self._plot_last_handled_gen = gen
         if gen != getattr(self, "_plot_request_gen", gen):
             return  # a newer Refresh/date change already superseded this result
@@ -1157,7 +1164,9 @@ class QtOrbitRxApplication(QMainWindow):
         if kind == "empty":
             self.plot_placeholder.setText("No data for this date range")
             return
-        fig, has_enough_data = data
+        # Builds the Figure (incl. tight_layout, which touches the FreeType
+        # font cache) on the UI thread -- matplotlib is never used off it.
+        fig, has_enough_data = _build_history_figure(data, poll_interval_s)
         while self.plot_container.count():
             item = self.plot_container.takeAt(0)
             if item.widget() is not None and item.widget() is not self.plot_placeholder:
@@ -1957,17 +1966,24 @@ def quiet_capture_shutdown(app, win, stage_log: Path | None) -> None:
     if win is None:
         _stage(stage_log, "webengine-not-created")
         return
-    # F7: drop queued map-load callbacks and wait for the worker so a later
-    # QApplication teardown cannot stall on an off-thread QImage / pending slot.
+    # F7: drop queued map-load/history-plot callbacks and wait for the workers
+    # so a later QApplication teardown cannot stall on an off-thread QImage /
+    # pending slot, and so no stale worker is still running (touching
+    # matplotlib, in the history-query case) once this returns.
     invoker = getattr(win, "_ui", None)
     if invoker is not None:
         try:
             invoker.call.disconnect()
         except Exception:
             pass
-    thread = getattr(win, "_map_load_thread", None)
-    if thread is not None and thread.is_alive():
-        thread.join(timeout=2.0)
+    for name in ("_map_load_thread", "_plot_query_thread"):
+        thread = getattr(win, name, None)
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+    map_widget = getattr(win, "map_widget", None)
+    join_rebuild = getattr(map_widget, "join_rebuild_thread", None)
+    if join_rebuild is not None:
+        join_rebuild(timeout=2.0)
     for name in ("_timer", "_cluster_pulse_timer"):
         timer = getattr(win, name, None)
         if timer is not None:
@@ -2015,6 +2031,13 @@ def _join_worker_threads(win, stage_log: Path | None) -> None:
     map_thread = getattr(win, "_map_load_thread", None) if win is not None else None
     if map_thread is not None and map_thread.is_alive():
         map_thread.join(timeout=2.0)
+    plot_thread = getattr(win, "_plot_query_thread", None) if win is not None else None
+    if plot_thread is not None and plot_thread.is_alive():
+        plot_thread.join(timeout=2.0)
+    map_widget = getattr(win, "map_widget", None) if win is not None else None
+    join_rebuild = getattr(map_widget, "join_rebuild_thread", None)
+    if join_rebuild is not None:
+        join_rebuild(timeout=2.0)
     stragglers = sorted(t.name for t in threading.enumerate() if t is not threading.main_thread())
     if stragglers:
         _stage(stage_log, f"threads-still-alive:{','.join(stragglers)}")

@@ -399,3 +399,80 @@ def test_two_readings_seconds_apart_show_not_enough_data(window, monkeypatch):  
     canvas = window.plot_container.itemAt(0).widget()
     texts = [t.get_text() for ax in canvas.figure.get_axes() for t in ax.texts]
     assert "Not enough data yet" in texts
+
+
+def test_rapid_refreshes_overlapping_a_map_rebuild_do_not_crash_and_latest_wins(window, monkeypatch):
+    """Regression for a CI segfault: a history-query worker thread building the
+    matplotlib Figure (tight_layout -> FreeType) overlapped a map-rebuild
+    worker's PIL compositing, and matplotlib is not thread-safe across
+    threads. The fix moves the Figure build onto the UI thread entirely, so
+    even many overlapping history refreshes plus a concurrent map rebuild
+    must never crash -- and the generation counter must still mean only the
+    *last* refresh's rows ever reach the plot.
+
+    The five earlier queries are held open with a threading.Event (rather
+    than relying on sleep timing) so they are deterministically still
+    in-flight -- genuinely concurrent, not just started close together --
+    when the sixth (latest) query already resolves and its result is
+    checked; only then are the stale ones released, to confirm the
+    generation check drops them regardless of arrival order.
+    """
+    import threading
+
+    from PySide6.QtCore import QDate
+    from PySide6.QtWidgets import QApplication
+
+    FINAL_DAY = 6
+    release_stale = threading.Event()
+
+    def fake_query(q):
+        day = int(q.rsplit("-", 1)[-1])
+        if day != FINAL_DAY:
+            release_stale.wait(timeout=5.0)
+            kp = float(day)
+        else:
+            kp = 99.0
+        return [
+            {"ts": f"2026-11-{day:02d}T20:00:00+00:00", "kp": kp, "flux": 100.0 + kp},
+            {"ts": f"2026-11-{day:02d}T20:10:00+00:00", "kp": kp, "flux": 100.0 + kp},
+        ]
+
+    monkeypatch.setattr(window.ctrl.store, "query_propagation", fake_query)
+    if getattr(window, "_compact", False):
+        window._compact_tabs.setCurrentWidget(window._side_pane)
+    window.tabs.setCurrentIndex(1)
+
+    # A map rebuild (PIL compositing on its own worker thread) in flight at
+    # the same time as a burst of history refreshes -- the same "two
+    # off-UI-thread workers running at once" shape that crashed in CI.
+    window._refresh_map()
+    history_threads = []
+    for day in range(1, FINAL_DAY + 1):
+        window.hist_date.setDate(QDate(2026, 11, day))
+        window._refresh_plot_tab()
+        history_threads.append(window._plot_query_thread)
+
+    # The sixth (latest) request does not wait on release_stale, so this
+    # settles quickly even though the first five are still blocked.
+    _refresh_and_wait(window, timeout=5.0)
+    assert window._plot_last_handled_gen == window._plot_request_gen
+
+    canvas = window.plot_container.itemAt(0).widget()
+    assert canvas is not None
+    kp_line = canvas.figure.get_axes()[0].get_lines()[0]
+    assert list(kp_line.get_ydata()) == [99.0, 99.0]
+
+    # Release the five stale, still-in-flight queries and let their results
+    # arrive; the generation check must drop every one of them.
+    release_stale.set()
+    app = QApplication.instance()
+    for thread in history_threads:
+        thread.join(timeout=5.0)
+        assert not thread.is_alive()
+    for _ in range(10):
+        app.processEvents()
+    assert window.map_widget.join_rebuild_thread(timeout=5.0) is True
+
+    canvas = window.plot_container.itemAt(0).widget()
+    kp_line = canvas.figure.get_axes()[0].get_lines()[0]
+    assert list(kp_line.get_ydata()) == [99.0, 99.0]

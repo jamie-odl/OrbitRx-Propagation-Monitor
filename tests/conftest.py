@@ -73,6 +73,41 @@ def _destroy_leftover_qt_windows() -> None:
     except Exception:
         return
 
+    def _join_background_threads(win, app) -> None:
+        """Join every worker thread this window may have started before it is
+        closed/deleted. Without this, a stale worker from one test (e.g. the
+        history-query thread, or the one-shot map-load thread every window
+        starts in __init__) can still be running when the next test's window
+        starts a new one, or when this fixture's own plt.close("all") below
+        touches matplotlib on the main thread -- matplotlib is not
+        thread-safe, so an overlap there is a FreeType/Agg segfault risk, not
+        just a slow test."""
+        for name in ("_map_load_thread", "_update_check_thread", "_plot_query_thread"):
+            thread = getattr(win, name, None)
+            if thread is not None and thread.is_alive():
+                try:
+                    thread.join(timeout=2.0)
+                except Exception:
+                    pass
+        map_widget = getattr(win, "map_widget", None)
+        join_rebuild = getattr(map_widget, "join_rebuild_thread", None)
+        if join_rebuild is not None:
+            try:
+                join_rebuild(timeout=2.0)
+            except Exception:
+                pass
+        if app is not None:
+            try:
+                app.processEvents()
+            except Exception:
+                pass
+        ctrl = getattr(win, "ctrl", None)
+        if ctrl is not None:
+            try:
+                ctrl.join_background_threads(timeout=2.0)
+            except Exception:
+                pass
+
     def _stop_window(win) -> None:
         for name in (
             "_timer",
@@ -107,6 +142,7 @@ def _destroy_leftover_qt_windows() -> None:
                 ctrl.stop()
             except Exception:
                 pass
+        _join_background_threads(win, app)
         try:
             win.close()
         except Exception:

@@ -93,6 +93,9 @@ class PropagationMapWidget(QWidget):
         self._rebuild_running = False
         self._pending_rebuild: tuple[int, tuple] | None = None
         self._rebuild_generation = 0
+        # Exposed so callers (tests, shutdown teardown) can join the latest
+        # rebuild worker before tearing down this widget or its renderer.
+        self._rebuild_thread: threading.Thread | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -262,7 +265,34 @@ class PropagationMapWidget(QWidget):
             base_qimage = _pil_to_qimage(scene.base_rgba) if need_base else None
             deliver((scene, overlay_qimage, base_qimage))
 
-        threading.Thread(target=worker, daemon=True, name="map-rebuild").start()
+        self._rebuild_thread = threading.Thread(target=worker, daemon=True, name="map-rebuild")
+        self._rebuild_thread.start()
+
+    def join_rebuild_thread(self, timeout: float = 2.0) -> bool:
+        """Blocks until no rebuild worker is in flight, or `timeout` elapses.
+        Must be called on the UI thread: a finished worker's result is only
+        delivered (clearing _rebuild_running, and possibly starting a new
+        worker for a coalesced pending request) via a queued call that needs
+        this thread's event loop pumped, so this pumps processEvents() while
+        waiting rather than blocking the loop out. Returns True once idle,
+        False if still rebuilding when the timeout elapsed."""
+        import time
+
+        from PySide6.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        deadline = time.monotonic() + timeout
+        while self._rebuild_running or (self._rebuild_thread is not None and self._rebuild_thread.is_alive()):
+            if time.monotonic() > deadline:
+                return False
+            thread = self._rebuild_thread
+            if thread is not None and thread.is_alive():
+                thread.join(timeout=0.05)
+            if app is not None:
+                app.processEvents()
+            else:
+                time.sleep(0.01)
+        return True
 
     def _on_scene_built(self, gen: int, args: tuple, result: tuple) -> None:
         snapshot, _spots, _coordinates, vectors_only, _layers = args
