@@ -543,7 +543,10 @@ class PropagationMapWidget(QWidget):
         offset = snapshot.slider_offset_hours
         now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=offset)
         extra = f"  ({format_hour_offset(offset)})" if offset else ""
-        meta = f"Greyline @ {format_map_hud_datetime(now)}{extra}"
+        # SPEC §6.2/§12 callout 1: "Greyline · <date> <time> UTC" -- this
+        # caption now drives the map header (G3), not just the in-map legend
+        # and status bar, so its separator matches the mockup exactly.
+        meta = f"Greyline · {format_map_hud_datetime(now)}{extra}"
         self.hud.setText("")  # gestures live on the help chip; meta under the title
         self.hud.hide()
         self._greyline_meta_text = meta

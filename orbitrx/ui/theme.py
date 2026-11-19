@@ -287,6 +287,12 @@ QScrollBar::handle:horizontal {{
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 QLabel#muted, QLabel#bannerHint {{ color: {TEXT_MUTED}; font-size: {FONT_CAPTION}px; }}
 QLabel#panelTitle {{ color: {TEXT}; font-size: {FONT_SECTION}px; font-weight: 600; }}
+/* G3/SPEC §6.2/§12 callout 1: the map header's real greyline caption
+   ("Greyline · <date> <time> UTC"), mono and secondary -- replaces the old
+   bold panelTitle styling that used to carry the static "Map" text here. */
+QLabel#headerGreyline {{ font-family: {FONT_MONO}; color: {TEXT_SECONDARY}; background: transparent; }}
+/* G3/SPEC §6.1/§11: the cluster combo's leading status dot. */
+QLabel#clusterComboDot {{ background: transparent; }}
 QLabel#sectionLabel {{
     color: {MUTED}; font-size: {FONT_CAPTION}px; font-weight: 600;
 }}
@@ -361,13 +367,6 @@ QLabel#statusCornerSummary {{ font-size: {FONT_CAPTION}px; background: transpare
    frequency moves to the chip's tooltip instead of a second text row. */
 QLabel#bandChipDot {{ font-size: {FONT_CAPTION}px; background: transparent; }}
 QLabel#bandChipWord {{ font-size: {FONT_CAPTION}px; font-weight: 600; background: transparent; }}
-QToolButton#sidePanelToggle {{
-    color: {MUTED}; border: 1px solid {BORDER}; border-radius: {RADIUS_M}px;
-    padding: 4px 10px; background: transparent; font-size: 13px;
-}}
-QToolButton#sidePanelToggle:checked {{
-    color: {TEXT}; background: {ACCENT_SOFT}; border-color: {ACCENT};
-}}
 /* P4-4: Map/Bands/Log segmented control in the map header, replacing the
    removed mainToolbar row (SPEC §6.1/§14 "viewSwitch"). New BG_RAISED/
    BORDER_SUBTLE/BG_HOVER/BORDER_DEFAULT tokens from P4-1, radius 6 (controls). */

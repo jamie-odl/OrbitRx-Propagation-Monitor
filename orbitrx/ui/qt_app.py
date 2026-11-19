@@ -230,18 +230,41 @@ class _ReflowGrid(QWidget):
         self._grid = QGridLayout(self)
         self._grid.setSpacing(spacing)
         self._grid.setContentsMargins(0, 0, 0, 0)
+        # Qt's default SizeConstraint auto-floors a *top-level* widget's
+        # resize() at its layout's current minimum -- irrelevant in the real
+        # app (this is always embedded in a parent layout, which governs its
+        # size instead), but it defeats a standalone top-level usage (e.g. a
+        # test) ever actually narrowing below whatever column-width floor the
+        # previous _relayout() happened to pin.
+        self._grid.setSizeConstraint(QGridLayout.SizeConstraint.SetNoConstraint)
         self._cols = 0
         self._prefer_full_row = False
         self._relayout(self._columns_for_width(len(widgets) * self._min_item_width))
 
+    def _row_major_col_mins(self, cols: int) -> list[int]:
+        """Each column's real minimum width for a row-major (divmod(i, cols))
+        placement -- the same assignment _relayout() uses -- rather than
+        assuming every column is as wide as the single widest item. Toggle
+        groups like Layers (Greyline/Night/DX/Aurora/Grid) hold items of very
+        different label lengths, so that uniform assumption reserved far more
+        width than a real row actually needs and under-packed columns."""
+        mins = [0] * cols
+        for i, w in enumerate(self._widgets):
+            col = i % cols
+            mins[col] = max(mins[col], w.sizeHint().width(), w.minimumSizeHint().width())
+        return mins
+
     def _columns_for_width(self, width: int) -> int:
         n = len(self._widgets) or 1
         spacing = self._grid.spacing()
-        fit = max(
-            self._min_cols,
-            min(self._max_cols, (width + spacing) // (self._min_item_width + spacing)),
-        )
-        cols = max(1, min(n, fit))
+        upper = max(self._min_cols, min(self._max_cols, n))
+        cols = self._min_cols
+        for candidate in range(upper, self._min_cols - 1, -1):
+            mins = self._row_major_col_mins(candidate)
+            total = sum(mins) + spacing * (candidate - 1)
+            if total <= width:
+                cols = candidate
+                break
         # V12 tune 2: avoid an orphan last-row chip (e.g. Heatmap alone under Greyline).
         if cols < n:
             while cols > self._min_cols:
@@ -258,9 +281,15 @@ class _ReflowGrid(QWidget):
             self._relayout(cols)
 
     def natural_width(self) -> int:
-        """Width needed to show every item in a single row."""
-        n = len(self._widgets) or 1
-        return n * self._min_item_width + (n - 1) * self._grid.spacing()
+        """Width needed to show every item in a single row -- the real sum of
+        each item's own width, not every item reserving the widest one's
+        width (see _row_major_col_mins), so a request for "everyone on one
+        row" doesn't overshoot what the row actually needs and get squeezed
+        by a sibling layout below that real need."""
+        if not self._widgets:
+            return self._min_item_width
+        widths = [max(w.sizeHint().width(), w.minimumSizeHint().width()) for w in self._widgets]
+        return sum(widths) + (len(widths) - 1) * self._grid.spacing()
 
     def set_prefer_full_row(self, enabled: bool) -> None:
         """Tell sizeHint() to always ask for natural_width() (every item on
@@ -306,11 +335,23 @@ class _ReflowGrid(QWidget):
 
         n = len(self._widgets) or 1
         cols = max(1, min(n, self._min_cols))
-        rows = -(-n // cols)
         spacing = self._grid.spacing()
         row_height = max([w.sizeHint().height() for w in self._widgets], default=0)
         width = cols * self._min_item_width + (cols - 1) * spacing
-        height = rows * row_height + (rows - 1) * spacing
+        # Height uses the column count *actually rendered right now*
+        # (self._cols), not this same min-cols floor -- Qt always expands
+        # sizeHint() to at least minimumSizeHint() in each dimension
+        # independently, so a minimumSizeHint() tall enough for the
+        # worst-case (1-column, every item stacked) squeeze forced every
+        # *current*, wider-and-shorter arrangement's effective height up to
+        # that same worst case too, even while comfortably rendering far
+        # fewer rows. The width floor still protects the real squeeze case;
+        # resizeEvent()/_columns_for_width() still shrinks to min_cols (and
+        # this minimum's width) if the ancestor ever actually hands over
+        # only that much room.
+        current_cols = max(1, min(n, self._cols or n))
+        current_rows = -(-n // current_cols)
+        height = current_rows * row_height + (current_rows - 1) * spacing
         return QSize(width, height)
 
     def _relayout(self, cols: int) -> None:
@@ -340,6 +381,14 @@ class _ReflowGrid(QWidget):
         # for, squeezing the real column(s) well below their own minimum.
         for col in range(self._max_cols):
             self._grid.setColumnMinimumWidth(col, col_mins[col] if col < cols else 0)
+        # A column-count change moves this widget's own sizeHint (fewer
+        # columns means a taller, narrower hint; more means shorter and
+        # wider) -- updateGeometry() invalidates the ancestor layouts'
+        # cached sizeHint so a wrapper like _JoinedToggleGroup (a plain
+        # QHBoxLayout around just this grid) actually re-queries it instead
+        # of reporting a stale hint left over from the column count this
+        # grid last had when that ancestor layout was built/activated.
+        self.updateGeometry()
         if self._on_relayout is not None:
             self._on_relayout()
 
@@ -430,6 +479,7 @@ class _ElidedLabel(QLabel):
         self._full_text = text
         self.setToolTip(text)
         self._reelide()
+        self.updateGeometry()
 
     def minimumSizeHint(self):
         """Width 0 (not the full/current text's width) so a layout under
@@ -439,6 +489,24 @@ class _ElidedLabel(QLabel):
         from PySide6.QtCore import QSize
 
         return QSize(0, super().minimumSizeHint().height())
+
+    def sizeHint(self):
+        """The *full* (un-elided) text's natural width, not the currently
+        -displayed (already-elided) text's -- QLabel's own sizeHint() reads
+        the live text, which here is a self-reinforcing trap: once narrowed
+        once, the elided text is short, so sizeHint() asks for little, so a
+        sibling-stretch layout (e.g. the map header, G3) never hands it back
+        the room its real content needs. minimumSizeHint() above still stays
+        0, so a genuine squeeze (narrow window, wide fonts) still shrinks
+        this first, same as before -- only the "how much do I want when
+        there's room" answer changes."""
+        from PySide6.QtCore import QSize
+
+        text = getattr(self, "_full_text", "")
+        if not text:
+            return super().sizeHint()
+        width = self.fontMetrics().horizontalAdvance(text)
+        return QSize(width, super().sizeHint().height())
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -676,10 +744,6 @@ class _UiInvoker(QObject):
 
 
 class QtOrbitRxApplication(QMainWindow):
-    # Side-panel collapse button glyphs (see _set_side_panel_visible).
-    _SIDE_PANEL_COLLAPSE_GLYPH = ">>"
-    _SIDE_PANEL_EXPAND_GLYPH = "<<"
-
     # Round 6 (SPEC §11): the control strip's two joined toggle groups.
     # Spots stays inline at every width ("At 683 ... Spots stay inline");
     # Layers is the one that collapses into #layersMenuButton.
@@ -878,8 +942,15 @@ class QtOrbitRxApplication(QMainWindow):
         # font metrics: a long enough error string could already force this
         # row arbitrarily wide. setFullText() keeps the untruncated string
         # reachable via tooltip.
+        # SPEC §6.2/§12 callout 1: "Greyline · <date> <time> UTC" in mono,
+        # driven by the map's own real greyline_meta_changed signal below --
+        # never the static "Map"/"Loading map..." placeholder this replaced
+        # (see _load_map/_on_map_loaded, which used to overwrite this with
+        # literal "Map" text on every load). _ElidedLabel still elides (and
+        # keeps the untruncated string in its tooltip) if the header is ever
+        # squeezed narrower than the caption needs.
         self.banner = _ElidedLabel()
-        self.banner.setObjectName("panelTitle")
+        self.banner.setObjectName("headerGreyline")
         self.banner.setWordWrap(False)
         self.banner.setFullText("Loading map...")
         header_left_layout.addWidget(self.banner)
@@ -890,7 +961,14 @@ class QtOrbitRxApplication(QMainWindow):
         header_right_layout.setContentsMargins(0, 0, 0, 0)
         header_right_layout.setSpacing(SPACE_2)
         header_right_layout.addStretch(1)
-        header_right_layout.addWidget(QLabel("Cluster:"))
+        header_right_layout.addWidget(QLabel("Cluster"))
+        # SPEC §6.1/§11 "Cluster combo with a status dot": a small dot
+        # ahead of the combo, synced to the real cluster_status in
+        # _render_cluster_label -- same connection-state source the corner
+        # widget's dot and the status bar's label already use.
+        self._cluster_dot_lbl = QLabel("●")
+        self._cluster_dot_lbl.setObjectName("clusterComboDot")
+        header_right_layout.addWidget(self._cluster_dot_lbl)
         self.cluster_combo = QComboBox()
         self.cluster_combo.setMaximumWidth(260)
         # Round 9: without this, QComboBox's default AdjustToContentsOnFirstShow
@@ -908,20 +986,10 @@ class QtOrbitRxApplication(QMainWindow):
         self._populate_cluster_combo()
         self.cluster_combo.currentIndexChanged.connect(self._cluster_node_changed)
         header_right_layout.addWidget(self.cluster_combo)
-        self._side_panel_toggle_btn = QToolButton()
-        self._side_panel_toggle_btn.setObjectName("sidePanelToggle")
-        self._side_panel_toggle_btn.setCheckable(True)
-        self._side_panel_toggle_btn.setChecked(True)
-        self._side_panel_toggle_btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        # Plain ASCII, not a unicode chevron glyph: this has to render on every
-        # offscreen/CI font (Windows + Ubuntu runners), not just ones with a
-        # symbol-font fallback. ">>" (visible) = "click to collapse towards the
-        # edge"; "<<" (hidden) = "click to bring it back" -- flips in
-        # _set_side_panel_visible so it always matches the current state.
-        self._side_panel_toggle_btn.setText(self._SIDE_PANEL_COLLAPSE_GLYPH)
-        self._side_panel_toggle_btn.setToolTip("Show/hide the side panel (Ctrl+B)")
-        self._side_panel_toggle_btn.toggled.connect(self._set_side_panel_visible)
-        header_right_layout.addWidget(self._side_panel_toggle_btn)
+        # SPEC §6.2/§12 callout 1 + G3: the unlabelled ">>"/"<<" collapse
+        # button that used to sit here is gone -- Ctrl+B and the View menu's
+        # "Show side panel" action (both wired to the same
+        # _set_side_panel_visible handler) are the only entry points now.
         self._map_help = QToolButton()
         self._map_help.setText("?")
         self._map_help.setObjectName("helpChip")
@@ -964,6 +1032,10 @@ class QtOrbitRxApplication(QMainWindow):
         self.map_widget.spot_clicked.connect(self._tune_from_map)
         if hasattr(self.map_widget, "greyline_meta_changed"):
             self.map_widget.greyline_meta_changed.connect(self._status_subtitle_lbl.setFullText)
+            # G3/SPEC §6.2: the header caption shows this same real caption
+            # now, not the static "Map"/"Loading map..." text _load_map()
+            # used to overwrite it with.
+            self.map_widget.greyline_meta_changed.connect(self.banner.setFullText)
         self.map_widget.map_clicked.connect(self._on_map_click)
         # P4-8 (SPEC §7): "QFrame#mapFrame has a 1px BORDER_SUBTLE border,
         # radius 8, and a MAP_OCEAN background" -- wraps the graphics view so
@@ -1129,7 +1201,18 @@ class QtOrbitRxApplication(QMainWindow):
         map_tab_layout.setSpacing(SPACE_1)
         map_tab_layout.addWidget(map_pane, stretch=1)
         map_tab_layout.addWidget(self._map_controls)
+        # SPEC §6.2/§8: one row of 6 band cards under the map, below the
+        # control strip, spanning the map column at the 1280 width this
+        # round targets -- not the side panel's 2x3 grid. _enter_/
+        # _exit_compact_mode move it back into the side panel (its pre-P5
+        # position) below COMPACT_WIDTH_BELOW: the compact band-chips-under-
+        # the-map row is its own gap (G10, a later round), and at 683 there
+        # isn't vertical room under the map for both the map and this row
+        # without shrinking the map below its own dominance floor.
+        self.band_panel = BandPanelWidget()
+        map_tab_layout.addWidget(self.band_panel)
         self._map_tab = map_tab
+        self._map_tab_layout = map_tab_layout
 
         right_scroll = QScrollArea()
         right_scroll.setWidgetResizable(True)
@@ -1142,6 +1225,7 @@ class QtOrbitRxApplication(QMainWindow):
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(SPACE_2, SPACE_2, SPACE_2, SPACE_2)
         right_layout.setSpacing(SPACE_2)
+        self._right_layout = right_layout
 
         right_panel.setMinimumWidth(0)
         # P4-3: the panel's old "Last updated: ..." / "Cluster: ..." header
@@ -1149,9 +1233,6 @@ class QtOrbitRxApplication(QMainWindow):
         # and cluster status in the status bar, cluster also in the menu-bar
         # corner widget), so repeating them here was pure duplication
         # (SPEC §1 #4, §6.1 "Removed: the panel's top status lines").
-
-        self.band_panel = BandPanelWidget()
-        right_layout.addWidget(self.band_panel)
 
         self.tabs = QTabWidget()
         stats_tab = QWidget()
@@ -1700,16 +1781,16 @@ class QtOrbitRxApplication(QMainWindow):
         self._status_rig_lbl.setText(f'<span style="color:{color}">●</span> Rig: {detail}')
 
     def _set_side_panel_visible(self, visible: bool) -> None:
-        """Shared handler for the header's collapse button and the View
-        menu's "Show side panel" action/Ctrl+B (P4; Round 6/SPEC §13 "W<820:
-        side panel hidden ... Ctrl+B opens it"): in the wide/splitter layout
-        this hides/shows the pane directly; in compact mode (where the side
-        pane is one of _compact_tabs' two pages rather than a splitter
-        child) it instead switches the visible tab, so Ctrl+B / the header
-        button still do something useful instead of being disabled outright.
+        """Handler for the View menu's "Show side panel" action/Ctrl+B (P4;
+        Round 6/SPEC §13 "W<820: side panel hidden ... Ctrl+B opens it"; G3:
+        the header's own ">>"/"<<" collapse button these used to also sync is
+        gone, so Ctrl+B/the menu action are the only entry points now): in
+        the wide/splitter layout this hides/shows the pane directly; in
+        compact mode (where the side pane is one of _compact_tabs' two pages
+        rather than a splitter child) it instead switches the visible tab.
         Defensively tolerant of running before the widgets it syncs exist yet
         (QAction.setChecked during _build_actions can fire this once, before
-        the header button or splitter are built)."""
+        the splitter is built)."""
         self._side_panel_visible = visible
         side_pane = getattr(self, "_side_pane", None)
         if side_pane is not None:
@@ -1719,27 +1800,25 @@ class QtOrbitRxApplication(QMainWindow):
                     compact_tabs.setCurrentWidget(side_pane if visible else self._map_tab)
             else:
                 side_pane.setVisible(visible)
-        toggle_btn = getattr(self, "_side_panel_toggle_btn", None)
-        if toggle_btn is not None:
-            toggle_btn.setText(
-                self._SIDE_PANEL_COLLAPSE_GLYPH if visible else self._SIDE_PANEL_EXPAND_GLYPH
-            )
-        for widget in (
-            toggle_btn,
-            getattr(self, "_actions", {}).get("ShowSidePanel"),
-        ):
-            if widget is not None and widget.isChecked() != visible:
-                widget.blockSignals(True)
-                widget.setChecked(visible)
-                widget.blockSignals(False)
+        action = getattr(self, "_actions", {}).get("ShowSidePanel")
+        if action is not None and action.isChecked() != visible:
+            action.blockSignals(True)
+            action.setChecked(visible)
+            action.blockSignals(False)
 
     def _focus_panel(self, which: str) -> None:
         """Focus/raise Map, Bands or Log, in both wide (splitter) and compact
-        (tab) layouts (P2A)."""
+        (tab) layouts (P2A). In the wide layout, band_panel lives under the
+        map (SPEC §6.2/§8) so it's reached the same way "map" is; in compact
+        mode it moves back into the side panel (see _enter_compact_mode), so
+        there it's reached the same way "log" is instead."""
         if which == "map":
             if self._compact:
                 self._compact_tabs.setCurrentWidget(self._map_tab)
             self.map_widget.setFocus()
+            return
+        if which == "bands" and not self._compact:
+            self.band_panel.setFocus()
             return
         if self._compact:
             self._compact_tabs.setCurrentWidget(self._side_pane)
@@ -1806,7 +1885,6 @@ class QtOrbitRxApplication(QMainWindow):
         swap in the real basemap once a daemon thread finishes loading it."""
         from orbitrx.paths import ensure_map_image
 
-        self.banner.setText("Map")
         self._status_subtitle_lbl.setFullText("loading...")
         self._map_label = "Map · loading"
         self.renderer.set_base_map(None)
@@ -1841,7 +1919,6 @@ class QtOrbitRxApplication(QMainWindow):
         self.map_widget.set_base_map_from_qimage(qimage)
         # M1: never print the asset filename in the UI.
         self._map_label = "Map · offline basemap"
-        self.banner.setText("Map")
         self._status_subtitle_lbl.setFullText("")
 
     def _on_map_load_failed(self, exc: Exception) -> None:
@@ -2349,12 +2426,18 @@ class QtOrbitRxApplication(QMainWindow):
             text = f'<span style="color:{dot_color}">●</span> Cluster: live'
             self._labels["cluster"].setText(f'<span style="color:{dot_color}">●</span> Cluster: connected')
         else:
+            dot_color = FAIR if status == "connecting" else MUTED
             text = f"Cluster: {status}"
             self._labels["cluster"].setText(text)
         if hasattr(self, "_status_cluster_lbl"):
             self._status_cluster_lbl.setText(text)
         if hasattr(self, "_corner_cluster_lbl"):
             self._corner_cluster_lbl.setText(text)
+        # G3/SPEC §6.1/§11: the header's cluster combo leads with a status
+        # dot in the same real cluster_status colour as the corner/status-bar
+        # text above, not a static glyph.
+        if hasattr(self, "_cluster_dot_lbl"):
+            self._cluster_dot_lbl.setStyleSheet(f"color: {dot_color};")
         # P4-8 (SPEC §10): the map's own "Cluster disconnected" pill, driven
         # by the same real cluster_status the corner/status-bar labels use --
         # "disconnected" (never started, or deliberately dropped) and
@@ -3046,6 +3129,14 @@ class QtOrbitRxApplication(QMainWindow):
         central_layout = self.centralWidget().layout()
         central_layout.removeWidget(self._splitter)
         self._splitter.hide()
+        # G1 is scoped to the 1280 layout; at compact widths there isn't
+        # vertical room under the map for both the map and a band-card row
+        # without shrinking the map below its own dominance floor (SPEC
+        # §6.1 principle #1), so band_panel moves back to its pre-P5 spot
+        # in the side panel (reachable via the Conditions tab) until the
+        # compact band-chips-under-the-map row (G10) is its own round.
+        self._map_tab_layout.removeWidget(self.band_panel)
+        self._right_layout.insertWidget(0, self.band_panel)
         # Round 6 (SPEC §13 "W<820: side panel hidden (drawer via Ctrl+B)"):
         # the side pane is reachable via its own "Conditions" tab, and
         # Ctrl+B/the header toggle button switch to it instead of being
@@ -3068,6 +3159,8 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _exit_compact_mode(self) -> None:
         self._compact = False
+        self._right_layout.removeWidget(self.band_panel)
+        self._map_tab_layout.addWidget(self.band_panel)
         central_layout = self.centralWidget().layout()
         central_layout.removeWidget(self._compact_tabs)
         self._compact_tabs.hide()

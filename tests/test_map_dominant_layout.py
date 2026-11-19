@@ -309,13 +309,16 @@ def test_windows_ci_regression_compact_startup_then_resize_to_wide(window):
 # --- Side panel collapse: button, menu action, Ctrl+B -----------------------
 
 
-def test_side_panel_toggle_button_hides_and_shows_the_side_pane(window):
+def test_show_side_panel_action_hides_and_shows_the_side_pane(window):
+    """G3: the header's unlabelled ">>"/"<<" collapse button is gone -- Ctrl+B
+    and the View menu's "Show side panel" action (same QAction) are the only
+    entry points now."""
     window.resize(1280, 800)
     window._update_compact_mode()
     _wait_until(lambda: window._splitter.width() > 0)
     assert window._side_pane.isVisible()
 
-    window._side_panel_toggle_btn.setChecked(False)
+    window._actions["ShowSidePanel"].setChecked(False)
     _wait_until(lambda: not window._side_pane.isVisible())
     assert window._side_panel_visible is False
     # The map pane takes over the full width once the side panel is hidden
@@ -323,39 +326,18 @@ def test_side_panel_toggle_button_hides_and_shows_the_side_pane(window):
     _wait_until(lambda: window._map_tab.width() == window._splitter.width())
     assert window._map_tab.width() == window._splitter.width()
 
-    window._side_panel_toggle_btn.setChecked(True)
+    window._actions["ShowSidePanel"].setChecked(True)
     _wait_until(lambda: window._side_pane.isVisible())
     assert window._side_pane.isVisible()
 
 
-def test_side_panel_toggle_button_has_a_visible_glyph_that_flips_with_state(window):
-    """The button is QToolButton with ToolButtonTextOnly and no icon -- it must
-    carry real text so offscreen/CI renders show a glyph, not an empty filled
-    square (there is no font-independent way to verify the drawn pixels here,
-    only that non-empty, state-tracking text is set)."""
-    btn = window._side_panel_toggle_btn
-    assert btn.isChecked() is True
-    assert btn.text().strip() != ""
-    collapsed_glyph = btn.text()
-
-    btn.setChecked(False)
-    assert btn.text().strip() != ""
-    assert btn.text() != collapsed_glyph
-    assert "Ctrl+B" in btn.toolTip()
-
-    btn.setChecked(True)
-    assert btn.text() == collapsed_glyph
-
-
 @pytest.mark.parametrize("width,height", [(1280, 800), (683, 485)])
 def test_no_visible_button_has_both_empty_text_and_a_null_icon(window, width, height):
-    """Owner-reported bug: a blank, unlabelled square button sat between the
-    Cluster picker and the '?' help chip -- that was _side_panel_toggle_btn,
-    a QToolButton with ToolButtonTextOnly and (at the time) no text set, so
-    nothing rendered. Now that it carries a real ">>"/"<<" glyph (see
-    test_side_panel_toggle_button_has_a_visible_glyph_that_flips_with_state),
-    no visible button anywhere in the main window should be blank: every one
-    must have non-empty text, a real icon, or both."""
+    """Owner-reported bug: a blank, unlabelled square button (the old
+    _side_panel_toggle_btn, since removed -- G3) sat between the Cluster
+    picker and the '?' help chip. No visible button anywhere in the main
+    window should be blank: every one must have non-empty text, a real
+    icon, or both."""
     from PySide6.QtWidgets import QAbstractButton
 
     window.resize(width, height)
@@ -383,41 +365,25 @@ def test_ctrl_b_toggles_the_side_panel_in_wide_layout(window):
     QTest.keyClick(window, Qt.Key.Key_B, Qt.KeyboardModifier.ControlModifier)
     assert not window._side_pane.isVisible()
     assert window._actions["ShowSidePanel"].isChecked() is False
-    assert window._side_panel_toggle_btn.isChecked() is False
 
     QTest.keyClick(window, Qt.Key.Key_B, Qt.KeyboardModifier.ControlModifier)
     assert window._side_pane.isVisible()
     assert window._actions["ShowSidePanel"].isChecked() is True
-    assert window._side_panel_toggle_btn.isChecked() is True
 
 
-def test_menu_action_and_header_button_stay_in_sync(window):
-    window.resize(1280, 800)
-    window._update_compact_mode()
-
-    window._actions["ShowSidePanel"].setChecked(False)
-    assert window._side_panel_toggle_btn.isChecked() is False
-    assert not window._side_pane.isVisible()
-
-    window._side_panel_toggle_btn.setChecked(True)
-    assert window._actions["ShowSidePanel"].isChecked() is True
-    assert window._side_pane.isVisible()
-
-
-def test_side_panel_toggle_stays_enabled_in_compact_mode_and_switches_tabs(window):
+def test_side_panel_action_stays_enabled_in_compact_mode_and_switches_tabs(window):
     """Round 6 (SPEC §13 "W<820: side panel hidden ... Ctrl+B opens it"):
-    the toggle/action used to be disabled outright in compact mode; now they
-    stay reachable and instead flip _compact_tabs between its Map and
+    the action used to be disabled outright in compact mode; now it stays
+    reachable and instead flips _compact_tabs between its Map and
     Conditions pages, so Ctrl+B still does something useful at every width."""
     window.resize(1280, 800)
     window._update_compact_mode()
-    window._side_panel_toggle_btn.setChecked(False)  # collapse while wide
+    window._actions["ShowSidePanel"].setChecked(False)  # collapse while wide
     assert window._side_panel_visible is False
 
     window.resize(600, 500)
     window._update_compact_mode()
     assert window._compact
-    assert window._side_panel_toggle_btn.isEnabled()
     assert window._actions["ShowSidePanel"].isEnabled()
     # Starts on the Map tab: the wide-mode collapsed state carried over.
     assert window._compact_tabs.currentWidget() is window._map_tab
@@ -432,7 +398,6 @@ def test_side_panel_toggle_stays_enabled_in_compact_mode_and_switches_tabs(windo
     window.resize(1280, 800)
     window._update_compact_mode()
     assert not window._compact
-    assert window._side_panel_toggle_btn.isEnabled()
     assert window._actions["ShowSidePanel"].isEnabled()
     # The collapsed state from before compact mode is restored.
     assert not window._side_pane.isVisible()
@@ -806,12 +771,13 @@ def test_band_card_shows_dial_frequency_in_mhz(window):
 
 
 def test_band_panel_column_reflow_matches_width_buckets(window):
-    """The width->column-count bucketing (1..3 cols) is unchanged from the
-    pre-P4-5 rich-text implementation."""
+    """The width->column-count bucketing now goes up to 6 (SPEC §6.2/§8:
+    one row of 6 cards spanning the full map column), up from the 3-column
+    cap the cards had while they lived in the narrow side panel."""
     panel = window.band_panel
     assert panel._columns_for_width(100) == 1
     assert panel._columns_for_width(300) == 2
-    assert panel._columns_for_width(600) == 3
+    assert panel._columns_for_width(944) == 6
 
 
 def test_band_panel_relayout_and_reflow_keep_all_cards_populated(window):
@@ -821,7 +787,7 @@ def test_band_panel_relayout_and_reflow_keep_all_cards_populated(window):
     rich-text QLabel did."""
     panel = window.band_panel
     panel.update_grid({b: "OPEN" for b in panel._cards})
-    for cols in (1, 2, 3):
+    for cols in (1, 2, 3, 6):
         panel._relayout(cols)
         panel._reflow_text()
         assert panel._grid.count() == len(panel._bands)

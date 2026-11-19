@@ -128,6 +128,10 @@ def test_ctrl_1_switches_compact_tabs_to_map(window):
 
 
 def test_ctrl_2_switches_compact_tabs_to_side_pane_and_focuses_bands(window):
+    """Band cards live under the map at the wide/1280 width (SPEC §6.2/§8),
+    but move back into the side panel in compact mode (G10, the compact
+    band-chips-under-the-map treatment, is a later round) -- so Ctrl+2/
+    "Bands" still switches to the Conditions tab here, same as before."""
     window.resize(600, 500)
     window._update_compact_mode()
     assert window._compact

@@ -145,7 +145,10 @@ class BandPanelWidget(QWidget):
         self._pages[band] = pages
 
     def _columns_for_width(self, width: int) -> int:
-        return max(1, min(3, width // 120))
+        # SPEC §6.2/§8: one row of 6 under the full map column (~944px at
+        # 1280x800) -- up from a 3-column cap inherited from when these
+        # cards lived in the narrow (~300px) side panel.
+        return max(1, min(6, width // 120))
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
