@@ -107,6 +107,68 @@ def pump(app, seconds: float) -> None:
         time.sleep(0.005)
 
 
+def pump_until(app, predicate, timeout: float = 3.0, interval: float = 0.01) -> bool:
+    """Poll `predicate()` while pumping the event loop, for up to `timeout`
+    seconds -- for waiting on a real async result (a worker thread flipping a
+    state flag) instead of a fixed sleep that's either too slow or flaky
+    under load. Returns whether `predicate()` was true before the deadline."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        app.processEvents()
+        time.sleep(interval)
+    return predicate()
+
+
+def drive_weather_fetch_failure(app, ctrl, timeout: float = 3.0) -> bool:
+    """Drives OrbitRxController.fetch_weather() down its real network-failure
+    path -- used by tools/ui_screenshots.py to capture the genuine SPEC §10
+    "no usable data"/"stale" states instead of faking widget text. Monkeypatches
+    `fetch_space_weather_data` (as imported into orbitrx.ui.controller) to
+    raise, and disables `offline_fixture()` for the duration of the
+    `fetch_weather()` call only -- both patches, plus a forced
+    `offline_cache_enabled=False` on this controller's config, are restored
+    before returning so nothing else in the process keeps seeing them. Must
+    never open the network: the real `fetch_space_weather_data` is never
+    called.
+
+    `ctrl.fetch_weather` must already resolve to the real method (callers
+    that disabled it process-wide via stub_controller_network(stub_weather=True)
+    need to rebind it on this one controller instance first). Returns whether
+    the failure was actually applied (`weather_fetch_in_progress` false and
+    `weather_last_fetch_ok` false) before `timeout` elapses."""
+    import orbitrx.ui.controller as controller_mod
+
+    orig_fetch = controller_mod.fetch_space_weather_data
+    orig_offline_fixture = controller_mod.offline_fixture
+    had_cache_key = "offline_cache_enabled" in ctrl.cfg.data
+    orig_cache_flag = ctrl.cfg.data.get("offline_cache_enabled")
+
+    def _raise_unreachable(*_args, **_kwargs):
+        raise ConnectionError("source unreachable")
+
+    controller_mod.fetch_space_weather_data = _raise_unreachable
+    ctrl.cfg.data["offline_cache_enabled"] = False
+    try:
+        controller_mod.offline_fixture = lambda: False
+        try:
+            ctrl.fetch_weather()
+        finally:
+            controller_mod.offline_fixture = orig_offline_fixture
+        return pump_until(
+            app,
+            lambda: not ctrl.state.weather_fetch_in_progress and not ctrl.state.weather_last_fetch_ok,
+            timeout=timeout,
+        )
+    finally:
+        controller_mod.fetch_space_weather_data = orig_fetch
+        if had_cache_key:
+            ctrl.cfg.data["offline_cache_enabled"] = orig_cache_flag
+        else:
+            ctrl.cfg.data.pop("offline_cache_enabled", None)
+
+
 def teardown_window(app, win) -> None:
     """Stop background work and drop the window, tolerating a missing/renamed
     quiet_capture_shutdown by falling back to the same steps by hand."""

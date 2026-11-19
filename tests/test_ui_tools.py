@@ -25,6 +25,13 @@ def restore_cwd():
     os.chdir(cwd)
 
 
+def _png_size(path: Path) -> tuple[int, int]:
+    from PIL import Image
+
+    with Image.open(path) as img:
+        return img.size
+
+
 def test_ui_screenshots_writes_pngs_and_exits_cleanly(tmp_path, restore_cwd):
     from tools import ui_screenshots
 
@@ -38,6 +45,21 @@ def test_ui_screenshots_writes_pngs_and_exits_cleanly(tmp_path, restore_cwd):
     assert any(p.name.startswith("settings_") for p in pngs)
     for p in pngs:
         assert p.stat().st_size > 0
+
+    # SPEC §10/§15 state sheet: state_empty/state_nodata/state_stale at every
+    # SIZES entry, plus the 683-only Ctrl+B drawer, each exactly the
+    # requested window size (not a crop/scale of it).
+    for label, width, height in ui_screenshots.SIZES:
+        for prefix in ("state_empty_", "state_nodata_", "state_stale_"):
+            path = out_dir / f"{prefix}{label}.png"
+            assert path.exists(), f"missing {path.name}"
+            assert _png_size(path) == (width, height)
+
+    drawer_path = out_dir / "drawer_683x485.png"
+    assert drawer_path.exists()
+    assert _png_size(drawer_path) == (683, 485)
+    # 1280x800 has no side-panel drawer (it's never in compact mode).
+    assert not (out_dir / "drawer_1280x800.png").exists()
 
 
 def test_ui_screenshots_scale_option_adds_150pct_suffixed_files(tmp_path, restore_cwd):
@@ -58,6 +80,20 @@ def test_ui_screenshots_scale_option_adds_150pct_suffixed_files(tmp_path, restor
     assert any(name.startswith("settings_") for name in scaled)
     for p in out_dir.glob("*_150pct.png"):
         assert p.stat().st_size > 0
+
+    # Every scaled state/drawer file must come out the same device-pixel size
+    # as its sibling main_<label>_150pct.png -- whatever that rounds to under
+    # Qt's own high-DPI handling, not a formula this test has to guess.
+    for label, _width, _height in ui_screenshots.SIZES:
+        expected = _png_size(out_dir / f"main_{label}_150pct.png")
+        for prefix in ("state_empty_", "state_nodata_", "state_stale_"):
+            path = out_dir / f"{prefix}{label}_150pct.png"
+            assert path.exists(), f"missing {path.name}"
+            assert _png_size(path) == expected
+
+    drawer_path = out_dir / "drawer_683x485_150pct.png"
+    assert drawer_path.exists()
+    assert _png_size(drawer_path) == _png_size(out_dir / "main_683x485_150pct.png")
 
 
 def test_ui_timing_runs_one_fast_pass_and_exits_cleanly(tmp_path, restore_cwd):
