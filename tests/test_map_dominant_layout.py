@@ -27,6 +27,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
 
 from PySide6.QtCore import QRect, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtTest import QTest
 
 # A deliberately roomy available-desktop geometry: every size these tests
@@ -375,7 +376,11 @@ def test_side_panel_action_stays_enabled_in_compact_mode_and_switches_tabs(windo
     """Round 6 (SPEC §13 "W<820: side panel hidden ... Ctrl+B opens it"):
     the action used to be disabled outright in compact mode; now it stays
     reachable and instead flips _compact_tabs between its Map and
-    Conditions pages, so Ctrl+B still does something useful at every width."""
+    Conditions pages, so Ctrl+B still does something useful at every width.
+    G8: _compact_tabs' own tab bar is hidden (it used to render a second,
+    duplicate "Map | Conditions" row above the real Map/Bands/Log segmented
+    control), but it is still the real underlying page-switcher Ctrl+B/the
+    View menu/Esc drive."""
     window.resize(1280, 800)
     window._update_compact_mode()
     window._actions["ShowSidePanel"].setChecked(False)  # collapse while wide
@@ -405,9 +410,10 @@ def test_side_panel_action_stays_enabled_in_compact_mode_and_switches_tabs(windo
 
 def test_ctrl_b_shows_and_esc_closes_the_side_panel_in_compact_mode(window):
     """Round 6 (SPEC §13/§15 "683: ... Ctrl+B opens the drawer, and Esc
-    closes it"): not a floating overlay (the tab bar itself stays visible),
-    but the same real outcome -- one keypress reveals the panel content,
-    Esc puts the map back."""
+    closes it"): not a floating overlay, but the same real outcome -- one
+    keypress reveals the panel content, Esc puts the map back. G8: the
+    underlying _compact_tabs' own tab bar is hidden, so this is reached only
+    via Ctrl+B/the View menu/Esc, never a second clickable tab row."""
     _resize_and_settle(window, 683, 485)
     assert window._compact
     # The side panel defaults to visible (never collapsed in this test),
@@ -470,13 +476,24 @@ def test_control_strip_uses_single_row_when_the_map_pane_is_wide(window):
     assert window._map_controls._single_row is True
 
 
-def test_control_strip_stacks_when_the_pane_is_narrow(window):
+def test_control_strip_forces_single_row_in_compact_mode(window):
+    """G11 (SPEC §11 "At 683"): compact mode already shrinks every piece of
+    this strip (Layers collapses to a menu button, the Spots label is
+    dropped, sliders shrink to SLIDER_WIDTH_COMPACT) specifically so it fits
+    one row -- unlike the plain width-vs-_SINGLE_ROW_MIN_WIDTH comparison
+    this used to fall back on (that threshold is tuned for the *wide*
+    layout's full-size content and would needlessly stack compact content
+    too), _MapControlStrip.set_force_single_row() makes compact mode use one
+    row regardless of the pane's absolute width."""
     window.resize(667, 441)
     window._update_compact_mode()
+    assert window._compact
     assert window._map_controls.width() < window._map_controls._SINGLE_ROW_MIN_WIDTH
-    assert window._map_controls._single_row is False
+    assert window._map_controls._single_row is True
     # Nothing clipped: every chip and both sliders stay within the strip.
     for chip in window._layer_checks.values():
+        if not chip.isVisible():
+            continue
         right = chip.mapTo(window, chip.rect().topRight()).x()
         assert right <= window.width()
     for slider in (window.time_slider, window.replay_slider):
@@ -1050,3 +1067,87 @@ def test_tile_and_row_geometry_is_identical_empty_vs_populated(window):
 
     for before, after, widget in zip(empty_geoms, populated_geoms, tracked):
         assert before[1] == after[1] and before[3] == after[3], (widget.objectName(), before, after)
+
+
+# --- P5-r3 G8-G11: 683x485 compact layout fidelity --------------------------
+
+
+def test_no_duplicate_tab_row_at_compact_width(window):
+    """G8: the only visible navigation at 683 is the map header's own
+    Map/Bands/Log segmented control -- _compact_tabs still exists and still
+    switches pages (Ctrl+B/the View menu/Esc all drive it), but its own tab
+    bar must never render a second "Map | Conditions" row above it."""
+    _resize_and_settle(window, 683, 485)
+    assert window._compact
+    assert window._compact_tabs.tabBar().isVisible() is False
+    assert window._compact_tabs.isVisible()
+    for key in ("Map", "Bands", "Log"):
+        assert window._seg_buttons[key].isVisible()
+
+
+def test_band_chip_row_has_6_chips_in_one_row_at_compact_width(window):
+    """G10: one row of 6 compact band chips under the map, same anatomy
+    (name + dot + state word) the full-size cards use, reusing the real
+    BandPanelWidget rather than a second model."""
+    _resize_and_settle(window, 683, 485)
+    assert window._compact
+    assert window.band_panel.is_compact()
+    assert window.band_panel.isVisible()
+    assert window._map_tab_layout.indexOf(window.band_panel) != -1, (
+        "band_panel must stay under the map, not move into the Conditions drawer"
+    )
+
+    cards = list(window.band_panel._cards.values())
+    assert len(cards) == 6
+    rows = {card.mapTo(window, card.rect().topLeft()).y() for card in cards}
+    assert len(rows) == 1, ("expected a single row", rows)
+
+
+def test_compact_controls_fit_within_window_width_with_live_not_clipped(window):
+    """G11: Layers menu button, joined Live|Heat, Offset slider and Replay
+    slider all sit in one row at 683, and nothing -- in particular the
+    "Live" replay value label -- extends past the window's right edge."""
+    _resize_and_settle(window, 683, 485)
+    assert window._compact
+    assert window._map_controls._single_row is True
+    assert not window._spots_label.isVisible()
+
+    controls = [
+        window._layers_menu_btn,
+        window._spots_group,
+        window.time_slider, window.lbl_slider,
+        window.replay_slider, window.lbl_replay,
+    ]
+    for widget in controls:
+        assert widget.isVisible()
+        right = widget.mapTo(window, widget.rect().topRight()).x()
+        assert right <= window.width(), (widget.objectName() or widget, right, window.width())
+    assert window.lbl_replay.text() == "Live"
+
+
+def test_map_frame_has_no_non_ocean_side_bars_at_compact_width(window):
+    """G9: no dark letterbox bars left/right of the map at 683 -- every
+    pixel along the map frame's inner edge columns must read as the ocean
+    colour token (or something the night veil/graticule only darkens
+    slightly), never a visually distinct matte bar."""
+    from orbitrx.ui.theme import MAP_OCEAN
+
+    _resize_and_settle(window, 683, 485)
+    assert window._compact
+
+    ocean = QColor(MAP_OCEAN)
+    pixmap = window._map_frame.grab()
+    image = pixmap.toImage()
+    width, height = image.width(), image.height()
+    assert width > 20 and height > 20
+
+    tolerance = 40  # night veil/greyline shading, not a distinct letterbox colour
+    for x in (2, width - 3):
+        for y in (height // 4, height // 2, 3 * height // 4):
+            colour = image.pixelColor(x, y)
+            diff = (
+                abs(colour.red() - ocean.red())
+                + abs(colour.green() - ocean.green())
+                + abs(colour.blue() - ocean.blue())
+            )
+            assert diff <= tolerance, (x, y, colour.getRgb(), ocean.getRgb(), diff)

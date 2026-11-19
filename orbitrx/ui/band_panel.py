@@ -147,8 +147,14 @@ class BandPanelWidget(QWidget):
     def _columns_for_width(self, width: int) -> int:
         # SPEC §6.2/§8: one row of 6 under the full map column (~944px at
         # 1280x800) -- up from a 3-column cap inherited from when these
-        # cards lived in the narrow (~300px) side panel.
-        return max(1, min(6, width // 120))
+        # cards lived in the narrow (~300px) side panel. G10: the compact
+        # variant's cards are far narrower (~104x30, SPEC §8 "Compact
+        # variant") than the full cards' 120px floor, so the same divisor
+        # would wrap 6 chips onto two rows under the ~635px map column a
+        # 683-wide window leaves; using the compact card's own floor keeps
+        # them on SPEC's single row down to that width.
+        min_w = 104 if self._compact else 120
+        return max(1, min(6, width // min_w))
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
@@ -198,6 +204,10 @@ class BandPanelWidget(QWidget):
                 card.setMinimumHeight(0)
                 card.setMaximumHeight(16777215)
                 card.setToolTip("")
+        # G10: _columns_for_width()'s own floor depends on self._compact, so
+        # a toggle here can change the right column count even when the
+        # widget's width hasn't -- resizeEvent() alone wouldn't catch that.
+        self._relayout(self._columns_for_width(self.width()))
         self._reflow_text()
 
     def is_compact(self) -> bool:

@@ -576,6 +576,7 @@ class _MapControlStrip(QWidget):
         self._stack.addWidget(self._row_page)
         self._stack.addWidget(self._col_page)
         self._single_row: bool | None = None
+        self._force_single_row: bool | None = None
         self._apply_layout(False)
 
     def _apply_layout(self, single_row: bool) -> None:
@@ -608,7 +609,28 @@ class _MapControlStrip(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._apply_layout(self.width() >= self._single_row_min_width)
+        self._recompute_layout()
+
+    def _recompute_layout(self) -> None:
+        if self._force_single_row is not None:
+            self._apply_layout(self._force_single_row)
+        else:
+            self._apply_layout(self.width() >= self._single_row_min_width)
+
+    def set_force_single_row(self, forced: bool | None) -> None:
+        """G11: at compact widths every piece of this strip's content
+        (Layers collapsed to a menu button, the Spots label dropped, sliders
+        shrunk to SLIDER_WIDTH_COMPACT) is already sized to fit one row well
+        under this strip's wide-layout _SINGLE_ROW_MIN_WIDTH threshold -- but
+        the map column itself is also far narrower there, so the plain
+        width-vs-threshold comparison in _recompute_layout() would still
+        pick the two-row fallback. Bypasses that comparison outright while
+        compact (forced=True) and restores the normal resize-driven
+        behaviour (which still protects G2's 1280 one-row layout, unchanged)
+        once compact mode exits (forced=None)."""
+        if self._force_single_row != forced:
+            self._force_single_row = forced
+            self._recompute_layout()
 
     def minimumSizeHint(self):
         """Round 8: the floor this strip can actually be squeezed to is the
@@ -1090,6 +1112,7 @@ class QtOrbitRxApplication(QMainWindow):
 
         spots_label = QLabel("Spots")
         spots_label.setObjectName("groupLabel")
+        self._spots_label = spots_label
         self._spots_group = _JoinedToggleGroup(
             [self._layer_checks[k] for k, _ in self._SPOTS_GROUP_ITEMS]
         )
@@ -1554,6 +1577,15 @@ class QtOrbitRxApplication(QMainWindow):
 
         self._compact_tabs = QTabWidget()
         self._compact_tabs.setObjectName("compactTabs")
+        # G8: this QTabWidget is only ever driven programmatically (Ctrl+B,
+        # the View menu, Esc, and the map header's own Map/Bands/Log
+        # segmented control via _focus_panel) -- its own tab bar duplicated
+        # that segmented control as a second, clickable "Map | Conditions"
+        # row at compact widths. Hiding the bar keeps every existing
+        # setCurrentWidget()-based entry point (and every test asserting
+        # against it) working unchanged while leaving just the one real nav
+        # control visible, per mockup-683x485.png.
+        self._compact_tabs.tabBar().setVisible(False)
         self._compact_tabs.hide()
 
         outer.addWidget(self._splitter)
@@ -2357,14 +2389,19 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _apply_layers_compact(self, compact: bool) -> None:
         """SPEC §11 "At 683": the Layers label+group swap for the
-        #layersMenuButton; Spots (built separately in _build_ui) is never
-        touched here -- it "stay[s] inline" at every width."""
+        #layersMenuButton; Spots (built separately in _build_ui) stays
+        inline at every width, but G11 drops its own "Spots" caption label
+        at compact widths (per mockup-683x485.png's bottom row, which shows
+        the bare Live|Heat group with no leading word) -- the label
+        otherwise had nowhere to sit once the row is squeezed to fit Layers,
+        Live|Heat and both sliders in one line."""
         if getattr(self, "_layers_compact", None) == compact:
             return
         self._layers_compact = compact
         self._layers_label.setVisible(not compact)
         self._layers_group.setVisible(not compact)
         self._layers_menu_btn.setVisible(compact)
+        self._spots_label.setVisible(not compact)
         if compact:
             self._update_layers_menu_badge()
 
@@ -3141,9 +3178,25 @@ class QtOrbitRxApplication(QMainWindow):
                 self._apply_time_popover(False)
             elif width < self._TIME_POPOVER_BELOW:
                 self._apply_time_popover(True)
+        # G11: Layers/Spots/sliders are all already shrunk to compact sizing
+        # above, so the whole strip fits one row -- force it rather than
+        # falling back to the wide layout's two-row stack (see
+        # _MapControlStrip.set_force_single_row's own docstring).
+        if hasattr(self, "_map_controls"):
+            self._map_controls.set_force_single_row(True if self._compact else None)
         self._update_control_strip_corner_summary()
         self._update_band_panel_compact()
         self._update_compact_chrome()
+        # band_panel's compact toggle just above can change its own fixed
+        # height (SPEC §8 "Compact variant"), which in turn changes how much
+        # room map_tab_layout's stretch=1 map_pane gets -- QWidget normally
+        # defers that recalculation to the next event-loop turn (a
+        # LayoutRequest event), but callers that read map_widget.height()
+        # right after this method returns (no processEvents in between, e.g.
+        # tests/test_map_dominant_layout.py's dominance assertions) need it
+        # resolved synchronously.
+        if hasattr(self, "_map_tab_layout"):
+            self._map_tab_layout.activate()
 
     def _on_splitter_moved_by_user(self, pos: int, index: int) -> None:
         """QSplitter.setSizes() never emits splitterMoved (only an actual
@@ -3180,14 +3233,12 @@ class QtOrbitRxApplication(QMainWindow):
         central_layout = self.centralWidget().layout()
         central_layout.removeWidget(self._splitter)
         self._splitter.hide()
-        # G1 is scoped to the 1280 layout; at compact widths there isn't
-        # vertical room under the map for both the map and a band-card row
-        # without shrinking the map below its own dominance floor (SPEC
-        # §6.1 principle #1), so band_panel moves back to its pre-P5 spot
-        # in the side panel (reachable via the Conditions tab) until the
-        # compact band-chips-under-the-map row (G10) is its own round.
-        self._map_tab_layout.removeWidget(self.band_panel)
-        self._right_layout.insertWidget(0, self.band_panel)
+        # G10: band_panel stays under the map at every width -- it used to
+        # move into the side panel here, but BandPanelWidget.set_compact()
+        # (driven by _update_band_panel_compact() below) already renders the
+        # SPEC §8 "compact variant" (name + dot + state word, ~104x30) one-
+        # row chip strip that belongs under the map per mockup-683x485.png,
+        # not inside the Conditions drawer.
         # Round 6 (SPEC §13 "W<820: side panel hidden (drawer via Ctrl+B)"):
         # the side pane is reachable via its own "Conditions" tab, and
         # Ctrl+B/the header toggle button switch to it instead of being
@@ -3210,8 +3261,6 @@ class QtOrbitRxApplication(QMainWindow):
 
     def _exit_compact_mode(self) -> None:
         self._compact = False
-        self._right_layout.removeWidget(self.band_panel)
-        self._map_tab_layout.addWidget(self.band_panel)
         central_layout = self.centralWidget().layout()
         central_layout.removeWidget(self._compact_tabs)
         self._compact_tabs.hide()
