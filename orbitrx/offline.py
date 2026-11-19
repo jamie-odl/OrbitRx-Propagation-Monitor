@@ -15,7 +15,10 @@ FIXTURE_WEATHER = {
     "sunspot_observed": 80,
     "sunspot_predicted": 80,
     "time_utc": "00:00",
-    "kp_forecast": "2",
+    # P5-r8: one decimal, matching the live NOAA kp_forecast parse (weather.py)
+    # and the kp tile's own "{:.1f}" -- a bare "2" here read inconsistently
+    # next to "Kp: 2.0" (SPEC §10 item 2).
+    "kp_forecast": "2.0",
     "alerts": [],
     "solar_forecast": "fixture",
 }

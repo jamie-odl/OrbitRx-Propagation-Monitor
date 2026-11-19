@@ -306,7 +306,24 @@ def capture_size(
 
     if real_fetch_weather is not None:
         written.extend(_capture_nodata_state(app, out_dir, label, width, height, suffix, real_fetch_weather))
-        written.extend(_capture_stale_state(app, out_dir, label, width, height, suffix, real_fetch_weather))
+        # P5-r8b: _capture_stale_state is the one capture that does a real
+        # DataStore write (win.ctrl._apply_weather(FIXTURE_WEATHER, ...) ->
+        # log_propagation) -- on disk, into the one on-disk orbitrx.db that
+        # every capture in this process shares via a single chdir in
+        # _run_all_captures. Left in the shared dir, those rows then leaked
+        # into every later capture's Kp sparkline query (the next size's
+        # state_empty_*, and this size's own drawer_683x485), which rendered
+        # as real-but-wrong Kp history bars under a "Never updated" state --
+        # the exact bug this module's own docstring promises can't happen.
+        # Routing the stale write through its own throwaway work dir, then
+        # returning to the shared one, keeps that promise.
+        stale_work_dir = harness.make_work_dir()
+        previous_work_dir = Path.cwd()
+        os.chdir(stale_work_dir)
+        try:
+            written.extend(_capture_stale_state(app, out_dir, label, width, height, suffix, real_fetch_weather))
+        finally:
+            os.chdir(previous_work_dir)
     else:
         print(
             "warning: OrbitRxController.fetch_weather unavailable; skipping state_nodata/state_stale captures",

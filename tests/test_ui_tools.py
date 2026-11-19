@@ -82,6 +82,40 @@ def test_ui_screenshots_writes_pngs_and_exits_cleanly(tmp_path, restore_cwd):
     assert not (out_dir / "drawer_1280x800.png").exists()
 
 
+def _has_pixel_color(path: Path, hex_color: str) -> bool:
+    from PIL import Image
+
+    target = tuple(int(hex_color.lstrip("#")[i : i + 2], 16) for i in (0, 2, 4))
+    with Image.open(path) as img:
+        return target in set(img.convert("RGB").getdata())
+
+
+def test_ui_screenshots_state_empty_and_drawer_never_show_leaked_sparkline_bars(tmp_path, restore_cwd):
+    """P5-r8b regression: _capture_stale_state is the one capture per size
+    that does a real DataStore write (win.ctrl._apply_weather(FIXTURE_WEATHER)
+    -> log_propagation), and every capture in one run used to share a single
+    on-disk orbitrx.db (one chdir in _run_all_captures for the whole process).
+    Those rows leaked into any later capture's Kp sparkline query -- the next
+    size's state_empty_*, and this size's own drawer_683x485 -- rendering as
+    real Kp history bars under a "Never updated" state, even though this
+    module's own docstring promises one state's fixture data can never leak
+    into another's capture. 1280x800 runs (and its stale write) before
+    683x485 in SIZES, so state_empty_683x485/drawer_683x485 are exactly where
+    the leak showed up."""
+    from orbitrx.ui.theme import SPARK_BAR
+    from tools import ui_screenshots
+
+    out_dir = tmp_path / "shots"
+    code = ui_screenshots.main(["--out", str(out_dir)])
+    assert code == 0
+
+    for name in ("state_empty_683x485.png", "drawer_683x485.png"):
+        assert not _has_pixel_color(out_dir / name, SPARK_BAR), (
+            f"{name} shows a sparkline bar-fill pixel in a state with no "
+            "real Kp history for this session"
+        )
+
+
 def test_ui_screenshots_scale_option_adds_150pct_suffixed_files(tmp_path, restore_cwd):
     """--scale re-runs the same captures in a subprocess with QT_SCALE_FACTOR
     set (Qt only reads it at QGuiApplication construction time, so this can't

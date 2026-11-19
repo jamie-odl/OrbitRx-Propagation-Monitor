@@ -1841,20 +1841,24 @@ class QtOrbitRxApplication(QMainWindow):
         """Permanent status bar widgets (P2B): rig/CAT, DX cluster, last-refresh
         time and location source, so system health is visible without opening
         any dialog. Driven entirely by existing controller callbacks/signals
-        via _UiInvoker -- nothing here polls serial/network on the UI thread."""
+        via _UiInvoker -- nothing here polls serial/network on the UI thread.
+
+        P5-r8 (regression fix): Rig/Location used to live in QStatusBar's
+        "normal" region (addWidget) -- Qt's own showMessage() unconditionally
+        *hides* every normal-region widget for the duration of the temporary
+        message (confirmed: QLabel.isVisible() goes False while a message is
+        showing), which is exactly why the weather-error status text used to
+        blank out Rig/Location (SPEC §6.2 requires both always visible). All
+        three fields are now addPermanentWidget -- the one region showMessage
+        never touches -- so they stay visible through any transient message,
+        not just the weather-error case this round was scoped to fix."""
         bar = self.statusBar()
         bar.setSizeGripEnabled(False)
 
-        def make_left(object_name: str, text: str) -> QLabel:
-            # Non-permanent widgets occupy QStatusBar's stretchy left region
-            # (SPEC §6.2: "[○ Rig: not tested] [Location: not set] ...").
-            lbl = QLabel(text)
-            lbl.setObjectName(object_name)
-            lbl.setTextFormat(Qt.TextFormat.RichText)
-            bar.addWidget(lbl)
-            return lbl
-
-        def make_right(object_name: str, text: str) -> QLabel:
+        def make_permanent(object_name: str, text: str) -> QLabel:
+            # SPEC §6.2: "[○ Rig: not tested] [Location: not set] ... [Next
+            # refresh 13:47:57]" -- all three are permanent widgets so none
+            # of them can ever be displaced by QStatusBar.showMessage().
             lbl = QLabel(text)
             lbl.setObjectName(object_name)
             lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -1865,9 +1869,9 @@ class QtOrbitRxApplication(QMainWindow):
         # gone from here -- both are real duplicates now that the map header
         # shows the greyline caption directly (G3) and the menu-bar corner
         # shows cluster state with a coloured dot (G5).
-        self._status_rig_lbl = make_left("statusRig", f'<span style="color:{MUTED}">●</span> Rig: not tested')
-        self._status_location_lbl = make_left("statusLocation", "Location: not set")
-        self._status_refresh_lbl = make_right("statusRefresh", "Next refresh --:--:--")
+        self._status_rig_lbl = make_permanent("statusRig", f'<span style="color:{MUTED}">●</span> Rig: not tested')
+        self._status_location_lbl = make_permanent("statusLocation", "Location: not set")
+        self._status_refresh_lbl = make_permanent("statusRefresh", "Next refresh --:--:--")
 
     def _set_rig_status(self, ok: bool, detail: str) -> None:
         """Updates the status bar's rig/CAT indicator. Driven by Test CAT
@@ -2147,7 +2151,11 @@ class QtOrbitRxApplication(QMainWindow):
         same way states-sheet.png's "Never updated" panel does."""
         s = self.ctrl.state
         loaded = s.last_weather_update is not None
-        self._kpi_labels["sfi"].setText(format_value(s.flux, fmt="{:.1f}") if loaded else NO_DATA)
+        # P5-r8: "{:g}" (not "{:.1f}") -- SPEC §9's sample "SFI 142" is a bare
+        # integer, and a whole-number flux reading (e.g. the 120.0 offline
+        # fixture) must never show as "120.0" noise; a genuinely fractional
+        # reading (e.g. 123.4) still prints its decimal untouched.
+        self._kpi_labels["sfi"].setText(format_value(s.flux, fmt="{:g}") if loaded else NO_DATA)
         # SPEC §9's tile has no room for the trend arrow/word the old grouped
         # "SPACE WEATHER" row showed next to flux -- rather than dropping that
         # real information outright, it survives as the tile's tooltip.
@@ -2178,7 +2186,7 @@ class QtOrbitRxApplication(QMainWindow):
         'SFI 142 Kp 3.0 A 12'."""
         s = self.ctrl.state
         loaded = s.last_weather_update is not None
-        sfi = format_value(s.flux, fmt="{:.1f}") if loaded else NO_DATA
+        sfi = format_value(s.flux, fmt="{:g}") if loaded else NO_DATA  # P5-r8: see _refresh_key_tiles
         kp = format_value(s.kp_index, fmt="{:.1f}") if loaded else NO_DATA
         a_index = format_value(s.a_index, fmt="{:g}") if loaded else NO_DATA
 

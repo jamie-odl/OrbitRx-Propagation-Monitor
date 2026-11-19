@@ -1160,6 +1160,23 @@ def test_sfi_tile_shows_only_the_flux_number_with_trend_in_tooltip(window):
     assert window._kpi_labels["sfi"].toolTip() == "Trend: ↓ (falling)"
 
 
+@pytest.mark.parametrize("fetch_ok", [True, False])
+def test_sfi_tile_never_shows_trailing_point_zero_for_a_whole_number(window, fetch_ok):
+    """P5-r8/SPEC §10 sample "SFI 142" is a bare integer -- a whole-number
+    flux reading (e.g. the offline fixture's 120.0) must never render as
+    "120.0" noise, in the ok state or the stale (fetch_ok=False) state
+    alike, while a genuinely fractional reading keeps its decimal (covered
+    by test_sfi_tile_shows_only_the_flux_number_with_trend_in_tooltip)."""
+    import datetime
+
+    window.ctrl.state.flux = 120.0
+    window.ctrl.state.last_weather_update = datetime.datetime.now(datetime.timezone.utc)
+    window.ctrl.state.weather_last_fetch_ok = fetch_ok
+    window._refresh_labels_and_map()
+
+    assert window._kpi_labels["sfi"].text() == "120"
+
+
 @pytest.mark.parametrize("width,height", [(1280, 800), (683, 485)])
 def test_no_key_metric_tile_label_text_overflows_its_width(window, width, height):
     """Owner fix: a key-metric tile label's text must never be wider than

@@ -238,7 +238,12 @@ class OrbitRxController:
                 data = self.store.load_weather_cache() if self.cfg.get("offline_cache_enabled") else None
                 offline = True
                 if not data:
-                    self._on_status(f"Weather error: {e}")
+                    # P5-r8: this used to also go to _on_status (the status
+                    # bar) -- removed, since the status bar's Rig/Location/
+                    # Next refresh widgets must always stay visible (SPEC
+                    # §6.2) and a weather error already has its one real home
+                    # in #stateBanner (_update_weather_state_banner) plus,
+                    # for the first failure in an episode, this toast.
                     if was_ok:
                         self._on_error(f"Weather update failed: {e}")
                     self.state.weather_fetch_in_progress = False
@@ -261,7 +266,8 @@ class OrbitRxController:
                 self._apply_weather(data, offline)
             except Exception:
                 self.log.exception("Applying weather data failed")
-                self._on_status("Space weather update failed, see logs/orbitrx.log")
+                # P5-r8: toast instead of the status bar -- see the note above.
+                self._on_error("Space weather update failed, see logs/orbitrx.log")
             finally:
                 self.state.weather_fetch_in_progress = False
 
@@ -329,8 +335,11 @@ class OrbitRxController:
         )
         self.state.alert_excellent_last = el
         self.state.alert_storm_last = sl
-        if offline:
-            self._on_status("Offline: NOAA unreachable, showing cached space weather")
+        # P5-r8: this used to also go to _on_status (the status bar) on
+        # every single retry while offline -- removed as a status-bar-text
+        # duplicate of the persistent #stateBanner "Stale · last OK ...
+        # retrying" state (_update_weather_state_banner), which already
+        # covers this continuously without spamming a toast every interval.
         self._on_weather()
 
     def _path_target(self) -> tuple[float, float, str]:
@@ -406,10 +415,17 @@ class OrbitRxController:
         # no previous reading to compare against (flux_trend is only "" in that case).
         flux_trend = s.flux_trend or ("→ (steady)" if s.flux is not None else "")
         return {
-            "kp": f"Kp: {s.kp_index:.2f}",
+            # P5-r8: one decimal, matching the kp tile ({:.1f}) and the
+            # kp_forecast values below -- this used to be {:.2f} ("Kp: 2.00"),
+            # the exact precision mismatch SPEC §10 bans.
+            "kp": f"Kp: {s.kp_index:.1f}",
             "kp_forecast": f"Kp Forecast: {s.kp_forecast}",
             "solar": f"Solar Flux: {format_value(s.flux)} {flux_trend}".rstrip(),
-            "sunspot": f"Sunspot: {ss:.1f}" if ss else f"Sunspot: {NONE_TEXT}",
+            # P5-r8: "{:g}" not "{:.1f}" -- a real sunspot number is always a
+            # whole count (NOAA observed/predicted), so forcing one decimal
+            # produced "80.0" noise on every refresh; {:g} drops the trailing
+            # zero while still printing a genuinely fractional value as-is.
+            "sunspot": f"Sunspot: {ss:g}" if ss else f"Sunspot: {NONE_TEXT}",
             "a_index": f"A-index: {a_txt}",
             # P4-7/SPEC §9: the old combined "Wind: x  Bz: y" cell becomes two
             # separate rows, each through the same fmt() value+unit helper.

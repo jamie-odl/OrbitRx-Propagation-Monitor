@@ -110,6 +110,32 @@ def test_sparkline_bars_at_or_above_kp_4_use_fair_colour():
     chart.grab()  # forces a real paintEvent without raising
 
 
+def test_sparkline_chart_paints_no_bars_when_empty():
+    """P5-r8/SPEC §10: an empty-history chart must not paint anything that
+    reads as data -- only the dashed Kp=4 reference line, never a bar fill
+    (grey placeholder bars included). Scans the actual rendered pixels
+    rather than just `_values`, so a future paintEvent change that draws
+    *some* fallback bar shape trips this even if it reuses neither bar
+    colour token literally."""
+    from PySide6.QtGui import QColor
+
+    from orbitrx.ui.qt_app import _KpSparklineChart
+    from orbitrx.ui.theme import FAIR, SPARK_BAR
+
+    chart = _KpSparklineChart()
+    chart.set_values([])
+    chart.resize(100, 36)
+    image = chart.grab().toImage()
+
+    bar_colors = {QColor(FAIR).rgb(), QColor(SPARK_BAR).rgb()}
+    found = {
+        image.pixelColor(x, y).rgb()
+        for x in range(image.width())
+        for y in range(image.height())
+    }
+    assert not (found & bar_colors), "empty sparkline painted a bar-fill colour"
+
+
 def test_sparkline_query_does_not_run_on_the_gui_thread(window):
     seen_threads = []
     real_query = window.ctrl.store.query_propagation

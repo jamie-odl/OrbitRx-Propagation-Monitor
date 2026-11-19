@@ -282,6 +282,24 @@ def test_solar_flux_trend_word_shown_whenever_a_value_exists(tmp_path, monkeypat
     assert ctrl.weather_labels()["solar"] == f"Solar Flux: {NONE_TEXT}"
 
 
+def test_sunspot_number_never_shows_trailing_point_zero(tmp_path, monkeypatch):  # P5-r8
+    """SPEC §10: a real NOAA sunspot number is always a whole count -- this
+    used to be forced to one decimal ("Sunspot: 80.0"), the exact ".0" noise
+    banned for stale/last-good values. Applies in every state (not just
+    stale), since _apply_weather feeds this the same way on a live success."""
+    monkeypatch.chdir(tmp_path)
+    from orbitrx.ui.controller import OrbitRxController
+    ctrl = OrbitRxController()
+
+    ctrl.state.sunspot_observed = 80
+    ctrl.state.sunspot_predicted = None
+    assert ctrl.weather_labels()["sunspot"] == "Sunspot: 80"
+
+    ctrl.state.sunspot_observed = None
+    ctrl.state.sunspot_predicted = 118.5
+    assert ctrl.weather_labels()["sunspot"] == "Sunspot: 118.5"
+
+
 def test_path_muf_label_has_no_unit_when_missing(tmp_path, monkeypatch): # S2
     monkeypatch.chdir(tmp_path)
     from orbitrx.ui.controller import OrbitRxController

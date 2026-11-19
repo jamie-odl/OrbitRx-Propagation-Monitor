@@ -148,3 +148,89 @@ def test_status_bar_fits_without_horizontal_scrollbar(window, width, height):
         if area.horizontalScrollBar().isVisible()
     ]
     assert offenders == []
+
+
+# ---------------------------------------------------------------------------
+# P5-r8 regression: QStatusBar.showMessage() hides any widget living in its
+# "normal" (addWidget) region for the duration of the message -- Rig/
+# Location used to live there, so the weather-error status text blanked both
+# out (SPEC §6.2 requires them permanently visible in every state). Fixed by
+# making all three status-bar fields addPermanentWidget, the one region
+# showMessage never touches.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("width,height", [(1280, 800), (683, 485)])
+def test_rig_and_location_survive_any_transient_status_message(window, width, height):
+    window.resize(width, height)
+    window._update_compact_mode()
+
+    window._set_status("Weather error: source unreachable")
+
+    assert window._status_rig_lbl.isVisible()
+    assert window._status_rig_lbl.text().strip() != ""
+    assert window._status_location_lbl.isVisible()
+    assert window._status_location_lbl.text().strip() != ""
+    assert window._status_refresh_lbl.isVisible()
+
+
+@pytest.mark.parametrize("width,height", [(1280, 800), (683, 485)])
+def test_rig_location_visible_and_no_weather_text_in_nodata_state(window, width, height):
+    """G12 no-data state (attempted + failed + never loaded)."""
+    window.resize(width, height)
+    window._update_compact_mode()
+
+    window.ctrl.state.weather_last_fetch_ok = False
+    window._refresh_labels_and_map()
+
+    assert window._status_rig_lbl.isVisible()
+    assert window._status_rig_lbl.text().strip() != ""
+    assert window._status_location_lbl.isVisible()
+    assert window._status_location_lbl.text().strip() != ""
+    assert "weather" not in window.statusBar().currentMessage().lower()
+    assert "error" not in window.statusBar().currentMessage().lower()
+
+
+@pytest.mark.parametrize("width,height", [(1280, 800), (683, 485)])
+def test_rig_location_visible_and_no_weather_text_in_stale_state(window, width, height):
+    """G12 stale state (attempted + failed + a last-good snapshot exists)."""
+    import datetime
+
+    window.resize(width, height)
+    window._update_compact_mode()
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    window.ctrl.state.last_weather_update = now
+    window.ctrl.state.last_weather_success_update = now
+    window.ctrl.state.weather_last_fetch_ok = False
+    window._refresh_labels_and_map()
+
+    assert window._status_rig_lbl.isVisible()
+    assert window._status_rig_lbl.text().strip() != ""
+    assert window._status_location_lbl.isVisible()
+    assert window._status_location_lbl.text().strip() != ""
+    assert "weather" not in window.statusBar().currentMessage().lower()
+    assert "error" not in window.statusBar().currentMessage().lower()
+
+
+def test_weather_fetch_failure_never_puts_error_text_in_status_bar(tmp_path, monkeypatch):
+    """Drives the real controller failure path (not a hand-simulated
+    showMessage call) to lock in that a weather fetch failure never reaches
+    the status bar at all -- its one home is #stateBanner/the corner state/
+    a toast (see _update_weather_state_banner, _on_error)."""
+    monkeypatch.chdir(tmp_path)
+    from orbitrx.ui.controller import OrbitRxController
+    import orbitrx.ui.controller as controller_mod
+
+    statuses = []
+    ctrl = OrbitRxController(on_status=statuses.append, on_error=lambda _m: None)
+    ctrl.cfg.data["offline_cache_enabled"] = False
+    monkeypatch.setattr(
+        controller_mod, "fetch_space_weather_data",
+        lambda: (_ for _ in ()).throw(RuntimeError("NOAA down")),
+    )
+
+    ctrl.fetch_weather()
+    ctrl._weather_thread.join(timeout=5)
+
+    assert not statuses, f"weather failure reached the status bar: {statuses}"
