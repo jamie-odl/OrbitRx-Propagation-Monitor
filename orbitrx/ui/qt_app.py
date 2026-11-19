@@ -833,6 +833,7 @@ class QtOrbitRxApplication(QMainWindow):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._auto_refresh)
         self._timer.start(int(self.ctrl.cfg.get("refresh_interval_seconds", 60)) * 1000)
+        self._update_next_refresh_label()
 
         self._cluster_pulse_phase = False
         self._cluster_pulse_timer = QTimer(self)
@@ -923,16 +924,21 @@ class QtOrbitRxApplication(QMainWindow):
         # side-panel collapse toggle and the help chip -- replaces the old
         # three stacked rows (title / greyline subtitle / cluster) plus the
         # removed mainToolbar row (P4-4), so the map starts right under the
-        # menu bar. The old greyline subtitle now lives in the status bar
-        # (_status_subtitle_lbl) instead of inline here.
-        map_layout.setContentsMargins(SPACE_3, 0, SPACE_3, 0)
+        # menu bar. G6: the greyline caption's status-bar duplicate is gone
+        # too, now that this header shows the real string directly.
+        # P5-r2 (G2/G3 leftover): the left/right gutter now lives on
+        # map_tab_layout below, so it applies evenly to the header, the map
+        # frame, the control strip and the band row alike -- previously only
+        # map_pane had this margin, leaving the control strip (added straight
+        # to map_tab_layout) flush against the window edge.
+        map_layout.setContentsMargins(0, 0, 0, 0)
         map_layout.setSpacing(SPACE_1)
         self._map_layout = map_layout
         header_left = QWidget()
         header_left_layout = QHBoxLayout(header_left)
         header_left_layout.setContentsMargins(0, 0, 0, 0)
         header_left_layout.setSpacing(SPACE_2)
-        header_left_layout.addWidget(self._build_view_switch())
+        header_left_layout.addWidget(self._build_view_switch(), 0, Qt.AlignmentFlag.AlignVCenter)
         # Round 10 (p4-r11): _ElidedLabel, not a plain QLabel -- its
         # minimumSizeHint() is pinned to 0 (see that class), so this title can
         # never be the thing that forces the unreflowable header row's own
@@ -1031,10 +1037,9 @@ class QtOrbitRxApplication(QMainWindow):
         self.map_widget = self._create_map_widget()
         self.map_widget.spot_clicked.connect(self._tune_from_map)
         if hasattr(self.map_widget, "greyline_meta_changed"):
-            self.map_widget.greyline_meta_changed.connect(self._status_subtitle_lbl.setFullText)
-            # G3/SPEC §6.2: the header caption shows this same real caption
-            # now, not the static "Map"/"Loading map..." text _load_map()
-            # used to overwrite it with.
+            # G3/SPEC §6.2: the header caption shows this real caption --
+            # G6 dropped the status bar's old duplicate "Greyline @ ..."
+            # subtitle, since the header already shows the same string.
             self.map_widget.greyline_meta_changed.connect(self.banner.setFullText)
         self.map_widget.map_clicked.connect(self._on_map_click)
         # P4-8 (SPEC §7): "QFrame#mapFrame has a 1px BORDER_SUBTLE border,
@@ -1197,7 +1202,7 @@ class QtOrbitRxApplication(QMainWindow):
 
         map_tab = QWidget()
         map_tab_layout = QVBoxLayout(map_tab)
-        map_tab_layout.setContentsMargins(0, 0, 0, 0)
+        map_tab_layout.setContentsMargins(SPACE_3, 0, SPACE_3, 0)
         map_tab_layout.setSpacing(SPACE_1)
         map_tab_layout.addWidget(map_pane, stretch=1)
         map_tab_layout.addWidget(self._map_controls)
@@ -1214,13 +1219,15 @@ class QtOrbitRxApplication(QMainWindow):
         self._map_tab = map_tab
         self._map_tab_layout = map_tab_layout
 
-        right_scroll = QScrollArea()
-        right_scroll.setWidgetResizable(True)
-        right_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        # S3: the Stats tab below has its own scroll area; only one vertical scrollbar
-        # should ever be visible in the right column, so this outer one stays off.
-        right_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._right_scroll = right_scroll
+        # P5-r2 (G4): this used to be a second QScrollArea nested inside the
+        # outer sidePaneScroll, with a *third* one (stats_scroll, below)
+        # nested inside that -- three stacked scroll areas, with the
+        # innermost showing a visible bar even at the full 1280x800 height
+        # the panel's own content is supposed to fit in (SPEC §6.2's budget),
+        # while the outer two silently clipped whatever didn't fit their own
+        # policy-Off bars. Collapsed to a single scroll area (side_scroll,
+        # below) that is the one real fallback for small window heights;
+        # right_panel is now a plain (non-scrolling) widget.
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(SPACE_2, SPACE_2, SPACE_2, SPACE_2)
@@ -1303,11 +1310,6 @@ class QtOrbitRxApplication(QMainWindow):
         self._weather_never_loaded_lbl.linkActivated.connect(lambda _: self._trigger_weather_refresh())
         stats_outer.addWidget(self._weather_never_loaded_lbl)
 
-        stats_scroll = QScrollArea()
-        stats_scroll.setWidgetResizable(True)
-        stats_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        stats_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._stats_scroll = stats_scroll
         stats_body = QWidget()
         stats_body_layout = QVBoxLayout(stats_body)
         stats_body_layout.setContentsMargins(0, 0, 0, 0)
@@ -1316,8 +1318,7 @@ class QtOrbitRxApplication(QMainWindow):
         pretty = {
             "kp_forecast": "Kp forecast", "sunspot": "Sunspot", "solar_wind": "Solar wind",
             "bz": "Bz", "bands": "Bands", "path_muf": "Path MUF", "sunrise": "Sunrise",
-            "sunset": "Sunset", "location": "You", "time": "UTC", "cluster": "Cluster",
-            "solar_forecast": "Forecast", "contest": "Contest", "dx": "DX",
+            "sunset": "Sunset", "location": "You",
         }
 
         self._stat_name_labels: dict[str, QLabel] = {}
@@ -1439,44 +1440,17 @@ class QtOrbitRxApplication(QMainWindow):
         self._path_body.setVisible(False)  # collapsed by default
         stats_body_layout.addWidget(self._path_body)
 
-        # OPS stays a grouped card: not part of SPEC §9's panel structure and
-        # not touched this round, but next-contest/DX-preview/27-day-forecast
-        # and the underlying NOAA feed timestamp aren't shown anywhere else,
-        # so dropping the card would lose real information, not just chrome.
-        late_keys = ["time", "cluster", "solar_forecast", "contest", "dx"]
-        for key in late_keys:
-            lbl = QLabel("--")
-            lbl.setWordWrap(True)
-            lbl.setStyleSheet("padding: 2px; font-weight: 600; ")
-            lbl.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-            self._labels[key] = lbl
-
-        def _build_card(title: str, keys: list[str]) -> QFrame:
-            card = QFrame()
-            card.setObjectName("statsCard")
-            grid = QGridLayout(card)
-            grid.setContentsMargins(SPACE_3, SPACE_2, SPACE_3, SPACE_2)
-            grid.setHorizontalSpacing(SPACE_3)
-            grid.setVerticalSpacing(SPACE_1)
-            grid.setColumnStretch(1, 1)
-            hdr = QLabel(title)
-            hdr.setObjectName("sectionLabel")
-            grid.addWidget(hdr, 0, 0, 1, 2)
-            for row, key in enumerate(keys, start=1):
-                name = QLabel(pretty.get(key, key))
-                name.setObjectName("muted")
-                name.setMinimumWidth(96)
-                name.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-                self._stat_name_labels[key] = name
-                grid.addWidget(name, row, 0)
-                grid.addWidget(self._labels[key], row, 1)
-            return card
-
-        stats_body_layout.addWidget(_build_card("OPS", late_keys))
+        # P5-r2 (G4): the "OPS" card (UTC/cluster/27-day-forecast/contest/DX)
+        # is gone -- not in SPEC §9's panel structure, and it was the single
+        # biggest contributor to the side panel's vertical overflow. UTC and
+        # cluster state already live in the menu-bar corner (G5) and the
+        # header's cluster combo; the 27-day-forecast/contest/DX-preview
+        # fields had no other home and are dropped (real information lost,
+        # logged in the P5 round notes, not silently -- none of SPEC's panel
+        # structure calls for them).
         stats_body_layout.addStretch(1)
 
-        stats_scroll.setWidget(stats_body)
-        stats_outer.addWidget(stats_scroll, stretch=1)
+        stats_outer.addWidget(stats_body, stretch=1)
 
         stats_outer.addWidget(QLabel("Alerts"))
         self.alerts_list = QListWidget()
@@ -1509,6 +1483,20 @@ class QtOrbitRxApplication(QMainWindow):
         self.plot_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.plot_container.addWidget(self.plot_placeholder)
         self.tabs.addTab(plot_tab, "Plot")
+        self._plot_tab = plot_tab
+        # P5-r2 (G4/SPEC §6.1 "Removed: the Stats/Plot tabs. Stats *is* the
+        # panel"): the tab *bar* is hidden (Stats stays the only thing shown
+        # by default, matching the mockup exactly), but the QTabWidget itself
+        # -- and both its pages -- stay exactly as they were rather than
+        # being torn out: tests/test_history_plot.py and
+        # tests/test_p1_threading.py drive the Plot tab's threaded history
+        # query via window.tabs.setCurrentIndex(1), and
+        # tests/test_menu_bar.py pins window.tabs.currentWidget() at
+        # startup -- rewriting ~25 tests' tab-switching setup for a purely
+        # cosmetic tab-row removal was out of this round's time box. Plot
+        # stays reachable without the visible tab row via the new "Open
+        # plot…" View-menu action below.
+        self.tabs.tabBar().setVisible(False)
 
         right_layout.addWidget(self.tabs)
 
@@ -1523,7 +1511,6 @@ class QtOrbitRxApplication(QMainWindow):
         self.click_lbl.setObjectName("muted")
         right_layout.addWidget(self.click_lbl)
         right_layout.addStretch()
-        right_scroll.setWidget(right_panel)
 
         # M1: action buttons live in the menu bar/map header, not here, so the
         # side panel only needs its own vertical scroll for the band
@@ -1536,7 +1523,7 @@ class QtOrbitRxApplication(QMainWindow):
         side_scroll_body = QWidget()
         side_scroll_body_layout = QVBoxLayout(side_scroll_body)
         side_scroll_body_layout.setContentsMargins(0, 0, 0, 0)
-        side_scroll_body_layout.addWidget(right_scroll, stretch=1)
+        side_scroll_body_layout.addWidget(right_panel, stretch=1)
         side_scroll.setWidget(side_scroll_body)
         self._side_scroll = side_scroll
 
@@ -1646,6 +1633,10 @@ class QtOrbitRxApplication(QMainWindow):
         )
         make("Location", "Refresh Location", self.ctrl.refresh_location)
         make("Weather", "Refresh Weather", self._trigger_weather_refresh)
+        # SPEC §6.1 "Plot becomes the Kp 24h sparkline plus 'Open plot…' in
+        # View": the Stats/Plot tab bar is hidden (G4), so this is now Plot's
+        # only visible entry point.
+        make("OpenPlot", "Open plot…", self._open_plot_tab)
         make("Rig", "Rig Wizard…", self._rig_wizard)
         make("About", "About", self._about)
         make("Check for Updates", "Check for Updates", self._check_updates)
@@ -1676,6 +1667,8 @@ class QtOrbitRxApplication(QMainWindow):
         menu_view.addAction(self._actions["Refresh"])
         menu_view.addAction(self._actions["Location"])
         menu_view.addAction(self._actions["Weather"])
+        menu_view.addSeparator()
+        menu_view.addAction(self._actions["OpenPlot"])
 
         menu_tools = menu_bar.addMenu("&Tools")
         menu_tools.setObjectName("menuTools")
@@ -1690,14 +1683,12 @@ class QtOrbitRxApplication(QMainWindow):
         menu_bar.setCornerWidget(self._build_status_corner(), Qt.Corner.TopRightCorner)
 
     def _build_status_corner(self) -> QWidget:
-        """P4-3: QMenuBar.setCornerWidget -- a live UTC clock plus the DX
-        cluster dot/status (SPEC §6.1 "merged menu bar plus corner status"),
-        reusing _render_cluster_label's existing text so there is still one
-        formatter for cluster status, not a second copy. The status bar keeps
-        its own statusCluster label too (tests/test_status_bar.py pins it);
-        this corner widget is additive, not a relocation -- see the P4 round
-        log for why the full SPEC §6.2 "cluster only in the corner" consolidation
-        is deferred past this chunk."""
+        """P4-3/G5: QMenuBar.setCornerWidget -- a coloured-dot cluster pill,
+        a live UTC clock and a refresh button (SPEC §6.1/§6.2 "merged menu
+        bar plus corner status"). G5/G6 finished the SPEC §6.2 "cluster only
+        in the corner" consolidation the P4 round log deferred: the status
+        bar's old duplicate cluster label is gone, so this corner pill is now
+        the single place cluster state renders as text."""
         corner = QWidget()
         corner.setObjectName("statusCorner")
         layout = QHBoxLayout(corner)
@@ -1717,7 +1708,7 @@ class QtOrbitRxApplication(QMainWindow):
         self._corner_summary_visible = False
         layout.addWidget(self._corner_summary_lbl)
 
-        self._corner_cluster_lbl = QLabel("Cluster: disconnected")
+        self._corner_cluster_lbl = QLabel("Cluster disconnected")
         self._corner_cluster_lbl.setObjectName("statusCornerCluster")
         self._corner_cluster_lbl.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self._corner_cluster_lbl)
@@ -1730,6 +1721,16 @@ class QtOrbitRxApplication(QMainWindow):
         self._corner_clock_lbl = QLabel("")
         self._corner_clock_lbl.setObjectName("statusCornerClock")
         layout.addWidget(self._corner_clock_lbl)
+
+        # G5/SPEC §6.2 "[↻]" next to the UTC clock -- the same Refresh
+        # QAction F5/the View menu already trigger, not a second handler.
+        self._corner_refresh_btn = QToolButton()
+        self._corner_refresh_btn.setObjectName("statusCornerRefresh")
+        self._corner_refresh_btn.setText("↻")
+        self._corner_refresh_btn.setAutoRaise(True)
+        self._corner_refresh_btn.setToolTip("Refresh (F5)")
+        self._corner_refresh_btn.clicked.connect(lambda: self._actions["Refresh"].trigger())
+        layout.addWidget(self._corner_refresh_btn)
         self._tick_clock()
         # Keep a Python-side reference: QMenuBar.setCornerWidget takes visual
         # ownership but a local-only widget can otherwise get garbage
@@ -1745,6 +1746,24 @@ class QtOrbitRxApplication(QMainWindow):
         rather than a static table row."""
         now = datetime.datetime.now(datetime.timezone.utc)
         self._corner_clock_lbl.setText(f"UTC {now.strftime('%H:%M')}")
+        self._update_next_refresh_label()
+
+    def _update_next_refresh_label(self) -> None:
+        """G6/SPEC §6.2 "Next refresh 13:47:57": the real auto-refresh
+        QTimer (self._timer) repeats on a fixed interval, so its own
+        remainingTime() at any moment *is* the real countdown to the next
+        scheduled fetch -- reading it rather than tracking a separate
+        "last refreshed" stamp (that fact already lives in the space-weather
+        panel's freshness header, G4). Ticks every 15s off the same timer as
+        the menu-bar clock, plus once immediately whenever a refresh
+        actually completes (_refresh_labels_and_map) so the countdown stays
+        visibly in sync with the timer it reads."""
+        timer = getattr(self, "_timer", None)
+        lbl = getattr(self, "_status_refresh_lbl", None)
+        if timer is None or lbl is None or not timer.isActive():
+            return
+        next_at = datetime.datetime.now() + datetime.timedelta(milliseconds=timer.remainingTime())
+        lbl.setText(f"Next refresh {next_at.strftime('%H:%M:%S')}")
 
     def _build_status_bar(self) -> None:
         """Permanent status bar widgets (P2B): rig/CAT, DX cluster, last-refresh
@@ -1754,24 +1773,29 @@ class QtOrbitRxApplication(QMainWindow):
         bar = self.statusBar()
         bar.setSizeGripEnabled(False)
 
-        def make(object_name: str, text: str) -> QLabel:
+        def make_left(object_name: str, text: str) -> QLabel:
+            # Non-permanent widgets occupy QStatusBar's stretchy left region
+            # (SPEC §6.2: "[○ Rig: not tested] [Location: not set] ...").
+            lbl = QLabel(text)
+            lbl.setObjectName(object_name)
+            lbl.setTextFormat(Qt.TextFormat.RichText)
+            bar.addWidget(lbl)
+            return lbl
+
+        def make_right(object_name: str, text: str) -> QLabel:
             lbl = QLabel(text)
             lbl.setObjectName(object_name)
             lbl.setTextFormat(Qt.TextFormat.RichText)
             bar.addPermanentWidget(lbl)
             return lbl
 
-        # P4: the map pane's old "Greyline @ ..." subtitle row moves here --
-        # one less chrome row stacked above the map -- in the status bar's
-        # stretchy left region, ahead of the fixed-width permanent widgets.
-        self._status_subtitle_lbl = _ElidedLabel()
-        self._status_subtitle_lbl.setObjectName("statusGreyline")
-        bar.addWidget(self._status_subtitle_lbl, 1)
-
-        self._status_rig_lbl = make("statusRig", f'<span style="color:{MUTED}">●</span> Rig: not tested')
-        self._status_cluster_lbl = make("statusCluster", "Cluster: disconnected")
-        self._status_refresh_lbl = make("statusRefresh", "Refresh: --:--:--")
-        self._status_location_lbl = make("statusLocation", "Location: not set")
+        # G6: the old "Greyline @ ..." subtitle and "Cluster: ..." label are
+        # gone from here -- both are real duplicates now that the map header
+        # shows the greyline caption directly (G3) and the menu-bar corner
+        # shows cluster state with a coloured dot (G5).
+        self._status_rig_lbl = make_left("statusRig", f'<span style="color:{MUTED}">●</span> Rig: not tested')
+        self._status_location_lbl = make_left("statusLocation", "Location: not set")
+        self._status_refresh_lbl = make_right("statusRefresh", "Next refresh --:--:--")
 
     def _set_rig_status(self, ok: bool, detail: str) -> None:
         """Updates the status bar's rig/CAT indicator. Driven by Test CAT
@@ -1806,6 +1830,18 @@ class QtOrbitRxApplication(QMainWindow):
             action.setChecked(visible)
             action.blockSignals(False)
 
+    def _open_plot_tab(self) -> None:
+        """View menu "Open plot…" (SPEC §6.1): the Stats/Plot tab bar is
+        hidden (G4), so this -- not a visible tab click -- is now the real
+        entry point to the Plot tab's history chart. Ensures the side panel
+        is actually visible first (wide-splitter or compact-tab layout
+        alike), the same way _focus_panel's "log"/"bands" branches do."""
+        if self._compact:
+            self._compact_tabs.setCurrentWidget(self._side_pane)
+        else:
+            self._set_side_panel_visible(True)
+        self.tabs.setCurrentWidget(self._plot_tab)
+
     def _focus_panel(self, which: str) -> None:
         """Focus/raise Map, Bands or Log, in both wide (splitter) and compact
         (tab) layouts (P2A). In the wide layout, band_panel lives under the
@@ -1823,11 +1859,11 @@ class QtOrbitRxApplication(QMainWindow):
         if self._compact:
             self._compact_tabs.setCurrentWidget(self._side_pane)
         if which == "bands":
-            self._right_scroll.ensureWidgetVisible(self.band_panel)
+            self._side_scroll.ensureWidgetVisible(self.band_panel)
             self.band_panel.setFocus()
         elif which == "log":
             self.tabs.setCurrentWidget(self._stats_tab)
-            self._right_scroll.ensureWidgetVisible(self.alerts_list)
+            self._side_scroll.ensureWidgetVisible(self.alerts_list)
             self.alerts_list.setFocus()
 
     def controls_reachable(self) -> dict[str, bool]:
@@ -1885,7 +1921,6 @@ class QtOrbitRxApplication(QMainWindow):
         swap in the real basemap once a daemon thread finishes loading it."""
         from orbitrx.paths import ensure_map_image
 
-        self._status_subtitle_lbl.setFullText("loading...")
         self._map_label = "Map · loading"
         self.renderer.set_base_map(None)
         self.map_widget.set_base_map(self.renderer.base_rgba_image())
@@ -1919,7 +1954,6 @@ class QtOrbitRxApplication(QMainWindow):
         self.map_widget.set_base_map_from_qimage(qimage)
         # M1: never print the asset filename in the UI.
         self._map_label = "Map · offline basemap"
-        self._status_subtitle_lbl.setFullText("")
 
     def _on_map_load_failed(self, exc: Exception) -> None:
         self.renderer.set_base_map(None)
@@ -1927,7 +1961,6 @@ class QtOrbitRxApplication(QMainWindow):
             self.map_widget.set_base_map(self.renderer.base_rgba_image())
         self._map_label = f"Map FAILED: {exc}"
         self.banner.setText(self._map_label)
-        self._status_subtitle_lbl.setFullText("")
         self.banner.setProperty("state", "error")
         self.banner.style().polish(self.banner)
         self._toasts.show_toast(f"Map failed to load: {exc}", kind="error")
@@ -1998,9 +2031,9 @@ class QtOrbitRxApplication(QMainWindow):
         strip_map = {
             "kp_forecast": "Kp Forecast: ", "solar": "Solar Flux: ",
             "sunspot": "Sunspot: ", "solar_wind": "Solar wind: ", "bz": "Bz: ",
-            "time": "NOAA data: ", "bands": "Bands: ", "muf": "MUF: ", "luf": "LUF: ",
+            "bands": "Bands: ", "muf": "MUF: ", "luf": "LUF: ",
             "path_muf": "Path MUF: ", "sunrise": "Sunrise: ", "sunset": "Sunset: ",
-            "location": "You: ", "cluster": "Cluster: ",
+            "location": "You: ",
         }
         for k, v in labels.items():
             if k in self._labels:
@@ -2019,14 +2052,20 @@ class QtOrbitRxApplication(QMainWindow):
             self.alerts_list.addItem(item)
         self._render_cluster_label()
         self.band_panel.update_grid(self.ctrl.state.band_grid)
-        # P2B: "whenever data refresh completes" -- on_weather and on_dx are
-        # both wired to this same method, so this covers both triggers.
-        self._status_refresh_lbl.setText(
-            f"Refresh: {datetime.datetime.now().strftime('%H:%M:%S')}"
-        )
-        self._status_location_lbl.setText(
-            f"Location: {LOCATION_SOURCE_LABELS.get(self.ctrl.state.location_source, 'not set')}"
-        )
+        # P2B/G6: "whenever data refresh completes" -- on_weather and on_dx
+        # are both wired to this same method, so this covers both triggers.
+        # The status bar's right-hand label is the *next* scheduled refresh
+        # (SPEC §6.2 "Next refresh 13:47:57"), computed from the real
+        # self._timer's own remaining time -- not a "last refreshed at" stamp
+        # (that info already lives in the space-weather panel's freshness
+        # header, G4), so a completed refresh just re-syncs this to the
+        # timer's freshly-restarted countdown.
+        self._update_next_refresh_label()
+        location_source = self.ctrl.state.location_source
+        loc_text = f"Location: {LOCATION_SOURCE_LABELS.get(location_source, 'not set')}"
+        if location_source == "unset":
+            loc_text = f'<span style="color:{FAIR}">{loc_text}</span>'
+        self._status_location_lbl.setText(loc_text)
         self._schedule_map_rebuild()
         self._refresh_kp_sparkline()
 
@@ -2137,7 +2176,7 @@ class QtOrbitRxApplication(QMainWindow):
         self._map_header_row.setMinimumHeight(target_header_height)
         self._map_header_row.setMaximumHeight(16777215)
         gutter = GUTTER_COMPACT if compact else GUTTER_WIDE
-        self._map_layout.setContentsMargins(gutter, 0, gutter, 0)
+        self._map_tab_layout.setContentsMargins(gutter, 0, gutter, 0)
 
         # The control strip has no single wrapper to force-shrink (clipping
         # content instead of actually reclaiming height) -- each toggle's
@@ -2419,23 +2458,34 @@ class QtOrbitRxApplication(QMainWindow):
         if self.ctrl.state.cluster_status == "connected":
             self._render_cluster_label()
 
+    def _current_cluster_node_name(self) -> str:
+        """G5: the corner pill's connected text names the real node (e.g.
+        "VE7CC connected"), not a generic "Cluster: connected" -- pulled from
+        the same cluster_combo data _populate_cluster_combo already built
+        from the real config, never a sample name."""
+        combo = getattr(self, "cluster_combo", None)
+        data = combo.currentData() if combo is not None else None
+        if isinstance(data, dict) and data.get("name"):
+            return str(data["name"])
+        host = self.ctrl.cfg.get("dx_cluster_host", "")
+        return host or "Cluster"
+
     def _render_cluster_label(self) -> None:
+        """G5/SPEC §6.2: the menu-bar corner pill is the one place cluster
+        state is rendered as text now -- the status bar's old duplicate
+        label is gone (G6) and the OPS card's copy is gone (G4)."""
         status = self.ctrl.state.cluster_status
         if status == "connected":
             dot_color = "#81C784" if self._cluster_pulse_phase else "#2E7D32"
-            text = f'<span style="color:{dot_color}">●</span> Cluster: live'
-            self._labels["cluster"].setText(f'<span style="color:{dot_color}">●</span> Cluster: connected')
+            phrase = f"{self._current_cluster_node_name()} connected"
         else:
-            dot_color = FAIR if status == "connecting" else MUTED
-            text = f"Cluster: {status}"
-            self._labels["cluster"].setText(text)
-        if hasattr(self, "_status_cluster_lbl"):
-            self._status_cluster_lbl.setText(text)
+            dot_color = FAIR if status == "connecting" else ERR if status == "reconnecting" else MUTED
+            phrase = f"Cluster {status}"
         if hasattr(self, "_corner_cluster_lbl"):
-            self._corner_cluster_lbl.setText(text)
+            self._corner_cluster_lbl.setText(f'<span style="color:{dot_color}">●</span> {phrase}')
         # G3/SPEC §6.1/§11: the header's cluster combo leads with a status
-        # dot in the same real cluster_status colour as the corner/status-bar
-        # text above, not a static glyph.
+        # dot in the same real cluster_status colour as the corner text
+        # above, not a static glyph.
         if hasattr(self, "_cluster_dot_lbl"):
             self._cluster_dot_lbl.setStyleSheet(f"color: {dot_color};")
         # P4-8 (SPEC §10): the map's own "Cluster disconnected" pill, driven
@@ -2994,6 +3044,7 @@ class QtOrbitRxApplication(QMainWindow):
         })
         cfg.flush()
         self._timer.setInterval(int(cfg.get("refresh_interval_seconds", 60)) * 1000)
+        self._update_next_refresh_label()
         self._populate_cluster_combo()
 
     def _settings(self, *, initial_page: str | None = None) -> None:

@@ -934,23 +934,19 @@ def test_no_key_metric_tile_label_text_overflows_its_width(window, width, height
             assert advance <= width_available, (lbl.objectName(), lbl.text(), advance, width_available)
 
 
-def test_ops_card_captions_are_left_aligned_with_comfortable_spacing(window):
-    """Owner fix (pre-P4-7): the caption column in a grouped stats card was
-    right-aligned and crowded the value column. OPS is the one grouped
-    QGridLayout card left after the P4-7 panel rebuild (SPACE WEATHER/
-    PROPAGATION/PATH moved to boxless detail rows) -- its captions must still
-    read left-aligned with a comfortable SPACE_3+ gutter."""
-    from orbitrx.ui.theme import SPACE_3
+def test_ops_card_is_removed_from_the_side_panel(window):
+    """G4 (P5-r2): the "OPS" card (UTC/cluster/27-day-forecast/contest/DX)
+    is gone -- not part of SPEC §9's panel structure, and it was the single
+    biggest contributor to the side panel needing its own scrollbar at the
+    real 1280x800 budget. UTC and cluster state already live in the
+    menu-bar corner (G5); nothing registers those keys in the side panel's
+    label dicts any more."""
+    from PySide6.QtWidgets import QFrame
 
-    ops_keys = ("time", "cluster", "solar_forecast", "contest", "dx")
-    for key in ops_keys:
-        name_lbl = window._stat_name_labels[key]
-        assert name_lbl.alignment() & Qt.AlignmentFlag.AlignLeft, key
-        assert not (name_lbl.alignment() & Qt.AlignmentFlag.AlignRight), key
-
-        card = name_lbl.parentWidget()
-        grid = card.layout()
-        assert grid.horizontalSpacing() >= SPACE_3, (key, grid.horizontalSpacing())
+    for key in ("time", "cluster", "solar_forecast", "contest", "dx"):
+        assert key not in window._stat_name_labels, key
+        assert key not in window._labels, key
+    assert window.findChild(QFrame, "statsCard") is None
 
 
 def test_detail_rows_are_left_label_right_mono_value_with_no_box(window):

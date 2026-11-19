@@ -288,15 +288,18 @@ def test_spin_box_border_spans_full_field_width_with_buttons_inside(window): # M
 
 def test_cluster_live_indicator_in_menu_bar_corner(window):
     """P4-3: the panel-header cluster indicator was deleted as a duplicate of
-    the status bar (tests/test_status_bar.py) and the menu-bar corner widget
-    now carries it instead -- see _build_status_corner/_render_cluster_label."""
+    the status bar, and G5/G6 (P5-r2) later deleted the status bar's own
+    cluster label too -- the menu-bar corner widget is now the single place
+    cluster state renders as text, as "<real node name> connected" or
+    "Cluster <status>" per SPEC §6.2 -- see
+    _build_status_corner/_render_cluster_label."""
     window.ctrl.state.cluster_status = "connected"
     window._render_cluster_label()
-    assert "Cluster: live" in window._corner_cluster_lbl.text()
+    assert "connected" in window._corner_cluster_lbl.text()
     assert "●" in window._corner_cluster_lbl.text()
     window.ctrl.state.cluster_status = "disconnected"
     window._render_cluster_label()
-    assert window._corner_cluster_lbl.text() == "Cluster: disconnected"
+    assert "Cluster disconnected" in window._corner_cluster_lbl.text()
 
 
 def test_spinbox_text_inset_matches_line_edit(window):  # M3

@@ -226,10 +226,22 @@ def test_no_visible_qlabel_renders_below_caption_minimum(tmp_path, monkeypatch):
     app.processEvents()
 
 
-def test_right_column_has_only_one_vertical_scrollbar(tmp_path, monkeypatch): # S3
+def test_side_panel_has_only_one_vertical_scrollbar_shown_only_when_needed(tmp_path, monkeypatch): # S3/G4
+    """P5-r2 (G4): the side panel used to nest three QScrollAreas (an outer
+    sidePaneScroll, a middle one with its vertical bar forced off, and an
+    inner one around just the Stats tab) -- the innermost showed a visible
+    bar even at the real 1280x800 budget the panel's own content (space
+    weather incl. Kp sparkline/detail rows, propagation MUF/LUF/Bands, Path)
+    is supposed to fit inside without one, while the outer two's bars being
+    off just silently clipped whatever else didn't fit. Collapsed to a
+    single scroll area (_side_scroll) that stays hidden at the real budget
+    and is the one fallback for genuinely short windows."""
     monkeypatch.chdir(tmp_path)
-    from PySide6.QtCore import Qt
+    from PySide6.QtCore import QRect
     from PySide6.QtWidgets import QApplication
+    import orbitrx.ui.window_fit as window_fit
+
+    monkeypatch.setattr(window_fit, "_available_geometry", lambda widget: QRect(0, 0, 1920, 1200))
 
     import orbitrx.spots.service as svc
     monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
@@ -242,11 +254,19 @@ def test_right_column_has_only_one_vertical_scrollbar(tmp_path, monkeypatch): # 
     app = QApplication.instance() or QApplication([])
     from orbitrx.ui.qt_app import QtOrbitRxApplication
     win = QtOrbitRxApplication()
+    win.resize(1280, 800)
     win.show()
-    app.processEvents()
+    _pump(app, 0.5)
 
-    assert win._right_scroll.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
-    assert win._stats_scroll.verticalScrollBarPolicy() != Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert not win._side_scroll.verticalScrollBar().isVisible(), (
+        "side panel needs a scrollbar at the real 1280x800 budget"
+    )
+
+    # A genuinely short window is the one case the scroll area exists for.
+    win.resize(1280, 340)
+    win._update_compact_mode()
+    _pump(app, 0.5)
+    assert win._side_scroll.verticalScrollBar().isVisible()
 
     win.ctrl.stop()
     win.deleteLater()

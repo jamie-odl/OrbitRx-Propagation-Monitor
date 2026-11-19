@@ -1,7 +1,10 @@
-"""P2B: a QStatusBar carrying rig/CAT state, DX cluster state, last-refresh
-time and location source, driven entirely by existing controller
-callbacks/signals via the _UiInvoker pattern -- never by polling
-serial/network on the UI thread."""
+"""P2B: a QStatusBar carrying rig/CAT state, next-refresh time and location
+source, driven entirely by existing controller callbacks/signals via the
+_UiInvoker pattern -- never by polling serial/network on the UI thread.
+
+G6 (P5-r2) dropped the status bar's cluster label: cluster state now renders
+only in the menu-bar corner pill (tests/test_menu_bar.py), since showing it
+in both places was a literal text duplicate."""
 
 from __future__ import annotations
 
@@ -14,7 +17,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
 
-STATUS_OBJECT_NAMES = ["statusRig", "statusCluster", "statusRefresh", "statusLocation"]
+STATUS_OBJECT_NAMES = ["statusRig", "statusRefresh", "statusLocation"]
 
 
 def _pump(app, seconds: float) -> None:
@@ -71,19 +74,23 @@ def test_rig_status_updates_on_cat_failure(window):
     "status,expect_substring",
     [
         ("connecting", "connecting"),
-        ("connected", "live"),  # the live-pulse wording, same as cluster_live_lbl
+        ("connected", "connected"),  # "<real node name> connected", SPEC §6.2
         ("reconnecting", "reconnecting"),
         ("disconnected", "disconnected"),
     ],
 )
-def test_cluster_status_bar_widget_tracks_callback(window, status, expect_substring):
+def test_cluster_corner_widget_tracks_callback(window, status, expect_substring):
+    """G5/G6: cluster state now renders only in the menu-bar corner pill."""
     window._set_cluster(status)
-    assert expect_substring in window._status_cluster_lbl.text()
+    assert expect_substring in window._corner_cluster_lbl.text()
 
 
-def test_last_refresh_updates_to_local_hhmmss_on_refresh(window):
+def test_next_refresh_label_shows_real_scheduler_hhmmss_on_refresh(window):
+    """G6/SPEC §6.2 "Next refresh 13:47:57": computed from the real
+    self._timer's remainingTime(), not a "last refreshed" stamp."""
     window._refresh_labels_and_map()
     text = window._status_refresh_lbl.text()
+    assert text.startswith("Next refresh"), text
     assert re.search(r"\d{2}:\d{2}:\d{2}", text), text
 
 
@@ -101,6 +108,19 @@ def test_location_source_reflects_controller_state(window):
     assert "not set" in window._status_location_lbl.text()
 
 
+def test_location_not_set_uses_fair_amber_colour(window):
+    """SPEC §6.2 "Location: not set (FAIR colour, clickable)"."""
+    from orbitrx.ui.theme import FAIR
+
+    window.ctrl.state.location_source = "unset"
+    window._refresh_labels_and_map()
+    assert FAIR in window._status_location_lbl.text()
+
+    window.ctrl.state.location_source = "manual"
+    window._refresh_labels_and_map()
+    assert FAIR not in window._status_location_lbl.text()
+
+
 def test_on_dx_callback_also_updates_refresh_time(window):
     """on_weather and on_dx are wired to the same _refresh_labels_and_map, so
     a DX-triggered refresh updates the status bar's refresh time too. on_dx
@@ -108,10 +128,10 @@ def test_on_dx_callback_also_updates_refresh_time(window):
     callback, so this must pump the event loop once to see it land."""
     from PySide6.QtWidgets import QApplication
 
-    window._status_refresh_lbl.setText("Refresh: --:--:--")
+    window._status_refresh_lbl.setText("Next refresh --:--:--")
     window.ctrl._on_dx()
     QApplication.instance().processEvents()
-    assert window._status_refresh_lbl.text() != "Refresh: --:--:--"
+    assert window._status_refresh_lbl.text() != "Next refresh --:--:--"
 
 
 @pytest.mark.parametrize("width,height", [(1400, 820), (683, 485)])

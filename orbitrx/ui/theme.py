@@ -381,9 +381,14 @@ QToolButton#segButton:hover {{ color: {TEXT_PRIMARY}; background: {BG_HOVER}; }}
 QToolButton#segButton:checked {{
     color: {TEXT_PRIMARY}; background: {BG_HOVER}; border: 1px solid {BORDER_DEFAULT}; font-weight: 600;
 }}
-/* P4-3: QMenuBar.setCornerWidget -- cluster dot + UTC clock (SPEC §6.1/§6.2). */
+/* P4-3/G5: QMenuBar.setCornerWidget -- cluster dot, UTC clock, refresh
+   button (SPEC §6.1/§6.2). */
 QWidget#statusCorner QLabel {{ color: {TEXT_TERTIARY}; font-size: {FONT_CAPTION}px; background: transparent; }}
 QLabel#statusCornerClock {{ font-family: {FONT_MONO}; }}
+QToolButton#statusCornerRefresh {{
+    color: {TEXT_TERTIARY}; border: none; background: transparent; padding: 0px 4px;
+}}
+QToolButton#statusCornerRefresh:hover {{ color: {TEXT_PRIMARY}; }}
 /* P4-8: the frame wrapping PropagationMapWidget (SPEC §7) -- a MAP_OCEAN
    background so the never-letterbox padding added by _fit_scene_rect() is
    ocean-coloured rather than pure black even before the view's own
@@ -402,9 +407,6 @@ QLabel#stateBadge[state="good"] {{ color: {GOOD}; background: {GOOD_BG}; }}
 QLabel#stateBadge[state="fair"] {{ color: {FAIR}; background: {FAIR_BG}; }}
 QLabel#stateBadge[state="poor"] {{ color: {POOR}; background: {POOR_BG}; }}
 QLabel#stateBadge[state="unknown"] {{ color: {UNKNOWN}; background: transparent; border: 1px solid {BORDER_DEFAULT}; }}
-QFrame#statsCard {{
-    background: {BG_ELEVATED}; border: 1px solid {BORDER}; border-radius: {RADIUS_M}px;
-}}
 QFrame#keyMetricTile {{
     background: {BG_ELEVATED}; border: 1px solid {BORDER}; border-radius: {RADIUS_M}px;
 }}

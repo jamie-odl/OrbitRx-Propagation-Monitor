@@ -109,6 +109,46 @@ def test_latitude_crop_stays_within_budget(tmp_path, monkeypatch, width, height)
         app.processEvents()
 
 
+@pytest.mark.parametrize("width,height", [(1280, 800), (683, 485)])
+def test_fit_uses_equal_degrees_per_pixel_on_both_axes(tmp_path, monkeypatch, width, height):
+    """G7 (P5-r2): the world must never be stretched non-uniformly -- the
+    fit has to scale longitude and latitude by the same real-world
+    degrees-per-screen-pixel, not just the same raw view-transform scale
+    (m11==m22, already covered by test_ui_smoke.py's letterbox test). The
+    basemap's own scene-space degrees-per-pixel are equal on both axes
+    (360deg over a 1200px-wide render vs 180deg over a 600px-tall one, both
+    0.3deg/scene-px -- see MapRenderer(width=1200, height=600) in
+    qt_app.py), so a uniform view-transform zoom (m11==m22) necessarily
+    carries that through to equal degrees-per-screen-pixel; this test
+    verifies that end-to-end result directly, in real degrees, rather than
+    trusting the transform-matrix equality alone."""
+    app, win = _build_window(tmp_path, monkeypatch, width, height)
+    try:
+        view = win.map_widget.view
+        vp = view.viewport()
+        cx, cy = vp.width() // 2, vp.height() // 2
+        probe_px = 100
+
+        left_scene = view.mapToScene(cx - probe_px, cy)
+        right_scene = view.mapToScene(cx + probe_px, cy)
+        top_scene = view.mapToScene(cx, max(0, cy - probe_px))
+        bottom_scene = view.mapToScene(cx, cy + probe_px)
+
+        _, lon_left = win.renderer.map_to_world(left_scene.x(), left_scene.y())
+        _, lon_right = win.renderer.map_to_world(right_scene.x(), right_scene.y())
+        lat_top, _ = win.renderer.map_to_world(top_scene.x(), top_scene.y())
+        lat_bottom, _ = win.renderer.map_to_world(bottom_scene.x(), bottom_scene.y())
+
+        deg_per_px_x = (lon_right - lon_left) / (2 * probe_px)
+        deg_per_px_y = (lat_top - lat_bottom) / (2 * probe_px)
+
+        assert deg_per_px_x == pytest.approx(deg_per_px_y, rel=0.02), (deg_per_px_x, deg_per_px_y)
+    finally:
+        win.ctrl.stop()
+        win.deleteLater()
+        app.processEvents()
+
+
 @pytest.mark.parametrize("map_probe_size", ["1280x800", "683x485"])
 def test_full_longitude_stays_on_screen_at_150pct(tmp_path, map_probe_size):
     """150% device-pixel-ratio analogue of test_full_longitude_stays_on_screen,
