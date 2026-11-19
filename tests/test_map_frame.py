@@ -12,6 +12,14 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6.QtWidgets")
 
+# Round 10 (p4-r11): reused here so test_map_tab_leaves_room_for_side_panel_
+# under_wide_fonts_at_1000 below is a deterministic (Linux-safe) companion to
+# the windows-latest-only test_legend_swaps_to_caption_below_compact_width --
+# both `large_avail` (wide_font_window's own dependency) and `wide_font_window`
+# itself need to be visible as fixtures in *this* module for pytest to resolve
+# them, not just imported as plain names.
+from tests.test_map_dominant_layout import large_avail, wide_font_window  # noqa: F401
+
 
 def _resize_window_and_settle(win, app, width, height, timeout_s=2.0):
     """resize() the top-level window and pump the event loop until it has
@@ -91,13 +99,20 @@ def test_legend_names_greyline_night_and_dx_spot_at_full_width(tmp_path, monkeyp
 def test_legend_swaps_to_caption_below_compact_width(tmp_path, monkeypatch):
     from orbitrx.ui.map_widget import LEGEND_COMPACT_WIDTH
 
+    from tests.test_map_dominant_layout import _full_map_column_diag
+
     app, win = _build_window(tmp_path, monkeypatch)
     try:
         # Still above the side-panel/compact-mode breakpoint (COMPACT_WIDTH_
         # BELOW=900), but narrow enough that the map column itself (window
         # width minus the ~300px side panel) drops below LEGEND_COMPACT_WIDTH.
         _resize_window_and_settle(win, app, 1000, 700)
-        assert win.map_widget.width() < LEGEND_COMPACT_WIDTH
+        # Round 10 (p4-r11): the full geometry breakdown goes into the
+        # assertion message itself -- a prior windows-latest-only failure
+        # here (908px, then 850px across two rounds of blind guesses) gave
+        # no way to see *which* map-column child was too wide without a
+        # third CI round just to add this.
+        assert win.map_widget.width() < LEGEND_COMPACT_WIDTH, _full_map_column_diag(win)
         assert not win.map_widget._legend_lbl.isVisible()
         # The caption only becomes visible once a real greyline meta string
         # has been computed (i.e. after the first scene build) -- never a
@@ -109,6 +124,33 @@ def test_legend_swaps_to_caption_below_compact_width(tmp_path, monkeypatch):
         win.ctrl.stop()
         win.deleteLater()
         app.processEvents()
+
+
+def test_map_tab_leaves_room_for_side_panel_under_wide_fonts_at_1000(wide_font_window):
+    """Deterministic (Linux-safe) companion to
+    test_legend_swaps_to_caption_below_compact_width above: that test is
+    windows-latest-only (it depends on Segoe UI's own, unstretched metrics
+    being bulkier than Linux's default font at the same point size), so it
+    gives no local repro signal. This reuses the existing wide_font_window
+    QFont.setStretch fixture (already proven to reproduce the *shape* of
+    that bug for the control strip and cluster combo in earlier rounds) to
+    pin the same invariant the windows-latest test wants: at 1000x700, the
+    map column's own minimumSizeHint() must leave room for the side panel's
+    normal >=260px share, which is exactly what drives the legend into
+    caption mode instead of staying full-width."""
+    from PySide6.QtWidgets import QApplication
+
+    from orbitrx.ui.map_widget import LEGEND_COMPACT_WIDTH
+    from tests.test_map_dominant_layout import _full_map_column_diag
+
+    window = wide_font_window
+    app = QApplication.instance()
+    _resize_window_and_settle(window, app, 1000, 700)
+    assert window._map_tab.minimumSizeHint().width() + 260 <= window._splitter.width(), (
+        _full_map_column_diag(window)
+    )
+    assert window.map_widget.width() < LEGEND_COMPACT_WIDTH, _full_map_column_diag(window)
+    assert not window.map_widget._legend_lbl.isVisible()
 
 
 def test_cluster_pill_hidden_when_connected(tmp_path, monkeypatch):

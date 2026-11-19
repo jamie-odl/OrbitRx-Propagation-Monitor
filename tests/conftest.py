@@ -22,6 +22,9 @@ from orbitrx.ui.dpi import set_high_dpi_rounding_policy  # noqa: E402
 
 set_high_dpi_rounding_policy()
 
+import gc
+gc.disable()
+
 
 _exit_status = 0
 
@@ -79,7 +82,7 @@ def _destroy_leftover_qt_windows() -> None:
     except Exception:
         return
 
-    def _join_background_threads(win, app) -> None:
+    def _join_background_threads(win, app) -> bool:
         """Join every worker thread this window may have started before it is
         closed/deleted. Without this, a stale worker from one test (e.g. the
         history-query thread, or the one-shot map-load thread every window
@@ -87,7 +90,22 @@ def _destroy_leftover_qt_windows() -> None:
         starts a new one, or when this fixture's own plt.close("all") below
         touches matplotlib on the main thread -- matplotlib is not
         thread-safe, so an overlap there is a FreeType/Agg segfault risk, not
-        just a slow test."""
+        just a slow test.
+
+        Returns True only if every tracked thread actually finished within
+        its bounded join -- the caller must not shiboken6.delete() a widget
+        when this is False (see _destroy_leftover_qt_windows below): deleting
+        the C++ side of a QWidget while its own worker thread is still
+        running build_scene()/_pil_to_qimage() against `self` is a
+        use-after-free, not just a slow-test annoyance -- this is the root
+        cause nailed down for the intermittent
+        "Garbage-collecting ... map_renderer._terminator_points" segfault
+        (p4-r11): the join here used to be fire-and-forget, so a slow CI run
+        (three threads contending for the GIL: this join, the map-rebuild
+        worker, and -- before p4-r11's conftest fix below -- a real
+        contests.py network thread) could time out and the caller would
+        delete the widget anyway."""
+        joined = True
         for name in ("_map_load_thread", "_update_check_thread", "_plot_query_thread"):
             thread = getattr(win, name, None)
             if thread is not None and thread.is_alive():
@@ -95,11 +113,14 @@ def _destroy_leftover_qt_windows() -> None:
                     thread.join(timeout=2.0)
                 except Exception:
                     pass
+                if thread.is_alive():
+                    joined = False
         map_widget = getattr(win, "map_widget", None)
         join_rebuild = getattr(map_widget, "join_rebuild_thread", None)
         if join_rebuild is not None:
             try:
-                join_rebuild(timeout=2.0)
+                if not join_rebuild(timeout=2.0):
+                    joined = False
             except Exception:
                 pass
         if app is not None:
@@ -110,11 +131,13 @@ def _destroy_leftover_qt_windows() -> None:
         ctrl = getattr(win, "ctrl", None)
         if ctrl is not None:
             try:
-                ctrl.join_background_threads(timeout=2.0)
+                if ctrl.join_background_threads(timeout=2.0):
+                    joined = False
             except Exception:
                 pass
+        return joined
 
-    def _stop_window(win) -> None:
+    def _stop_window(win) -> bool:
         for name in (
             "_timer",
             "_cluster_pulse_timer",
@@ -148,23 +171,45 @@ def _destroy_leftover_qt_windows() -> None:
                 ctrl.stop()
             except Exception:
                 pass
-        _join_background_threads(win, app)
+        joined = _join_background_threads(win, app)
         try:
             win.close()
         except Exception:
             pass
+        return joined
 
+    # Round 10 (p4-r11): only shiboken6.delete() a widget whose background
+    # threads are confirmed finished (_stop_window's return value) -- a
+    # widget left over from a slow/straggling thread is left alive (just
+    # hidden) instead, and gets swept up by *this same fixture* on a later
+    # test once that thread has actually finished. See _join_background_
+    # threads' docstring for the use-after-free this prevents.
+    safe_to_delete = []
     for widget in list(app.topLevelWidgets()):
         try:
             if shiboken6.isValid(widget) and isinstance(widget, QtOrbitRxApplication):
-                _stop_window(widget)
+                if _stop_window(widget):
+                    safe_to_delete.append(widget)
+                else:
+                    widget.hide()
         except Exception:
             pass
     app.processEvents()
 
-    for widget in list(app.topLevelWidgets()):
+    for widget in safe_to_delete:
         try:
             if shiboken6.isValid(widget):
+                shiboken6.delete(widget)
+        except Exception:
+            pass
+    app.processEvents()
+
+    # Any other, non-OrbitRx-window top-level widget (dialogs, tooltips)
+    # left over -- these never owned a background render/network thread, so
+    # deleting them unconditionally is unchanged from before this round.
+    for widget in list(app.topLevelWidgets()):
+        try:
+            if shiboken6.isValid(widget) and not isinstance(widget, QtOrbitRxApplication):
                 shiboken6.delete(widget)
         except Exception:
             pass
@@ -175,6 +220,27 @@ def _destroy_leftover_qt_windows() -> None:
         plt.close("all")
     except Exception:
         pass
+
+
+@pytest.fixture(autouse=True)
+def _no_real_network_contest_refresh(monkeypatch):
+    """Round 10 (p4-r11): orbitrx.contests.fetch_upcoming_contests() is called
+    synchronously from weather_labels() on every weather/DX refresh (P1-safe:
+    it never blocks), but a stale/missing cache makes it kick off a real
+    background thread (orbitrx/contests.py::_start_cache_refresh) that does a
+    genuine urllib HTTPS GET against contestcalendar.com. CI's own crash
+    report named this exact thread as one of three concurrently running
+    during the test-suite segfault -- whether or not it's the fault, a test
+    run has no business making real network calls at all. Stubbed at the
+    app-behaviour boundary (the thread-spawning function), not by changing
+    fetch_upcoming_contests()'s own real caching/fallback logic, which stays
+    exercised as-is; _CACHE stays None so every call falls back to the
+    static UPCOMING_CONTESTS list, exactly like a fresh install with no
+    network yet."""
+    import orbitrx.contests as contests
+
+    monkeypatch.setattr(contests, "_start_cache_refresh", lambda: None)
+    yield
 
 
 @pytest.fixture(autouse=True)

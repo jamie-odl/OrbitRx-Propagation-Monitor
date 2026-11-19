@@ -470,10 +470,25 @@ class _MapControlStrip(QWidget):
     # this (compact mode, a narrow window) they stack instead.
     _SINGLE_ROW_MIN_WIDTH = 820
 
-    def __init__(self, chips: QWidget, sliders: QWidget, parent=None) -> None:
+    def __init__(
+        self, chips: QWidget, sliders: QWidget, parent=None,
+        single_row_min_width: int | None = None,
+    ) -> None:
         super().__init__(parent)
         self._chips = chips
         self._sliders = sliders
+        # Round 10 (p4-r11): the header-row reuse of this class has much
+        # narrower single-row content than the chips+sliders strip's fixed
+        # 820px -- at a plain 683px compact window (no font stress at all)
+        # the header's own view-switch/title/cluster/toggle/help content
+        # fits a single row well under 820px, so forcing the *shared* 820px
+        # threshold on it stacked it needlessly there, eating extra height
+        # from the map (test_map_dominates_compact_window_height_at_683x485
+        # caught this). An explicit override keeps the chips+sliders strip's
+        # existing, already-tuned threshold untouched.
+        self._single_row_min_width = (
+            single_row_min_width if single_row_min_width is not None else self._SINGLE_ROW_MIN_WIDTH
+        )
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -525,7 +540,7 @@ class _MapControlStrip(QWidget):
 
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
-        self._apply_layout(self.width() >= self._SINGLE_ROW_MIN_WIDTH)
+        self._apply_layout(self.width() >= self._single_row_min_width)
 
     def minimumSizeHint(self):
         """Round 8: the floor this strip can actually be squeezed to is the
@@ -849,15 +864,33 @@ class QtOrbitRxApplication(QMainWindow):
         map_layout.setContentsMargins(SPACE_3, 0, SPACE_3, 0)
         map_layout.setSpacing(SPACE_1)
         self._map_layout = map_layout
-        header_row = QHBoxLayout()
-        header_row.setSpacing(SPACE_2)
-        header_row.addWidget(self._build_view_switch())
-        self.banner = QLabel("Loading map...")
+        header_left = QWidget()
+        header_left_layout = QHBoxLayout(header_left)
+        header_left_layout.setContentsMargins(0, 0, 0, 0)
+        header_left_layout.setSpacing(SPACE_2)
+        header_left_layout.addWidget(self._build_view_switch())
+        # Round 10 (p4-r11): _ElidedLabel, not a plain QLabel -- its
+        # minimumSizeHint() is pinned to 0 (see that class), so this title can
+        # never be the thing that forces the unreflowable header row's own
+        # minimum width past the map column's budget. Load-failure text
+        # (_on_map_load_failed) interpolates a real, unbounded exception
+        # message here, which was a genuine latent bug independent of any CI
+        # font metrics: a long enough error string could already force this
+        # row arbitrarily wide. setFullText() keeps the untruncated string
+        # reachable via tooltip.
+        self.banner = _ElidedLabel()
         self.banner.setObjectName("panelTitle")
         self.banner.setWordWrap(False)
-        header_row.addWidget(self.banner)
-        header_row.addStretch(1)
-        header_row.addWidget(QLabel("Cluster:"))
+        self.banner.setFullText("Loading map...")
+        header_left_layout.addWidget(self.banner)
+        header_left_layout.addStretch(1)
+
+        header_right = QWidget()
+        header_right_layout = QHBoxLayout(header_right)
+        header_right_layout.setContentsMargins(0, 0, 0, 0)
+        header_right_layout.setSpacing(SPACE_2)
+        header_right_layout.addStretch(1)
+        header_right_layout.addWidget(QLabel("Cluster:"))
         self.cluster_combo = QComboBox()
         self.cluster_combo.setMaximumWidth(260)
         # Round 9: without this, QComboBox's default AdjustToContentsOnFirstShow
@@ -874,7 +907,7 @@ class QtOrbitRxApplication(QMainWindow):
         self.cluster_combo.setMinimumContentsLength(10)
         self._populate_cluster_combo()
         self.cluster_combo.currentIndexChanged.connect(self._cluster_node_changed)
-        header_row.addWidget(self.cluster_combo)
+        header_right_layout.addWidget(self.cluster_combo)
         self._side_panel_toggle_btn = QToolButton()
         self._side_panel_toggle_btn.setObjectName("sidePanelToggle")
         self._side_panel_toggle_btn.setCheckable(True)
@@ -888,7 +921,7 @@ class QtOrbitRxApplication(QMainWindow):
         self._side_panel_toggle_btn.setText(self._SIDE_PANEL_COLLAPSE_GLYPH)
         self._side_panel_toggle_btn.setToolTip("Show/hide the side panel (Ctrl+B)")
         self._side_panel_toggle_btn.toggled.connect(self._set_side_panel_visible)
-        header_row.addWidget(self._side_panel_toggle_btn)
+        header_right_layout.addWidget(self._side_panel_toggle_btn)
         self._map_help = QToolButton()
         self._map_help.setText("?")
         self._map_help.setObjectName("helpChip")
@@ -896,12 +929,35 @@ class QtOrbitRxApplication(QMainWindow):
             "Scroll to zoom · Right-drag to pan · Double-click to reset · Click a spot to tune"
         )
         self._map_help.setAutoRaise(True)
-        header_row.addWidget(self._map_help)
+        header_right_layout.addWidget(self._map_help)
         # Round 6 (SPEC §5/§13 "the map header 36/32"): wrapped in its own
         # QWidget (rather than added as a bare QHBoxLayout) so
         # _update_compact_chrome can cap its height directly.
-        self._map_header_row = QWidget()
-        self._map_header_row.setLayout(header_row)
+        # Round 10 (p4-r11): this used to be one flat, unreflowable QHBoxLayout
+        # -- its minimum width was the *sum* of every item (view switch, title,
+        # "Cluster:" label, combo, side-panel toggle, help chip), which under
+        # Windows' bulkier Segoe UI metrics could exceed the map column's
+        # budget and crush the side panel even though every individual item
+        # was already font-independently bounded. Reusing _MapControlStrip's
+        # single-row/stacked-pair mechanism (same 820px breakpoint the control
+        # strip and the in-map legend already use) gives this row the same
+        # guarantee: its minimumSizeHint() is always the *stacked* (two-row)
+        # floor -- max(header_left, header_right), not their sum -- so it can
+        # never be the thing that forces the map column wider than the side
+        # panel's share can afford.
+        # The header's own content needs far less width in one row than the
+        # chips+sliders strip's shared 820px floor -- deriving this threshold
+        # from the two halves' real sizeHint() widths (same "size off the
+        # real font metrics, not a fixed guess" rule _ReflowGrid already
+        # follows) means a plain 683px compact window still gets a genuine
+        # single-row header, while a font-stressed ~1000px window still
+        # stacks once its *own* content actually needs to.
+        header_single_row_width = (
+            header_left.sizeHint().width() + header_right.sizeHint().width() + SPACE_3
+        )
+        self._map_header_row = _MapControlStrip(
+            header_left, header_right, single_row_min_width=header_single_row_width
+        )
         map_layout.addWidget(self._map_header_row)
 
         self.map_widget = self._create_map_widget()
@@ -1992,13 +2048,17 @@ class QtOrbitRxApplication(QMainWindow):
 
         self.menuBar().setFixedHeight(MENU_BAR_HEIGHT_COMPACT if compact else MENU_BAR_HEIGHT)
         self.statusBar().setFixedHeight(STATUS_BAR_HEIGHT_COMPACT if compact else STATUS_BAR_HEIGHT)
-        # The header row's own wrapper is forced to its target height
+        # The header row's own wrapper is floored at its target height
         # directly -- its children (segButton/combo/help chip) already fit
         # comfortably inside 32px, so there's no need to also shrink their
         # own min-height/padding the way the control-strip toggles below do.
-        self._map_header_row.setFixedHeight(
-            MAP_HEADER_HEIGHT_COMPACT if compact else MAP_HEADER_HEIGHT
-        )
+        # Round 10 (p4-r11): a floor via setMinimumHeight, not setFixedHeight
+        # -- this row can now stack onto two lines under width pressure (see
+        # its _MapControlStrip wrapping above), and a hard Fixed height would
+        # clip that second line instead of letting the row grow to fit it.
+        target_header_height = MAP_HEADER_HEIGHT_COMPACT if compact else MAP_HEADER_HEIGHT
+        self._map_header_row.setMinimumHeight(target_header_height)
+        self._map_header_row.setMaximumHeight(16777215)
         gutter = GUTTER_COMPACT if compact else GUTTER_WIDE
         self._map_layout.setContentsMargins(gutter, 0, gutter, 0)
 
@@ -3060,6 +3120,26 @@ class QtOrbitRxApplication(QMainWindow):
                 2000,
             )
 
+    def event(self, event) -> bool:
+        # Round 10 (p4-r11): catches deleteLater()-driven teardown too, not
+        # just an explicit close() -- most of this suite's own tests tear
+        # their window down via `win.deleteLater(); app.processEvents()`
+        # directly (bypassing closeEvent entirely), and deleteLater()'s
+        # actual C++ destruction happens when Qt delivers this
+        # DeferredDelete event, not at the deleteLater() call itself. Without
+        # this, that destruction could run while map_widget's own rebuild
+        # worker thread is still inside build_scene()/_pil_to_qimage()
+        # against `self` -- a real use-after-free, root-caused from the
+        # intermittent "Garbage-collecting ... map_renderer._terminator_
+        # points" segfault this round fixes. Bounded, not indefinite, for
+        # the same reason closeEvent's join is bounded.
+        if event.type() == QEvent.Type.DeferredDelete:
+            map_widget = getattr(self, "map_widget", None)
+            join_rebuild = getattr(map_widget, "join_rebuild_thread", None)
+            if join_rebuild is not None:
+                join_rebuild(timeout=2.0)
+        return super().event(event)
+
     def closeEvent(self, event) -> None:
         if self._tray and self._tray.isVisible() and self.ctrl.cfg.get("minimize_to_tray", True):
             event.ignore()
@@ -3075,6 +3155,15 @@ class QtOrbitRxApplication(QMainWindow):
         self.ctrl.cfg.set("window_geometry", f"{self.width()}x{self.height()}")
         self.ctrl.cfg.flush()  # P1: nothing from a batched set_many() is lost on close
         self.ctrl.stop()
+        # Round 10 (p4-r11): bounded join of the map's own render worker --
+        # without this, closing the window while a rebuild is in flight could
+        # delete this widget (and its renderer/pixmap state) out from under
+        # that still-running thread once Qt/Python actually frees it, a
+        # use-after-free rather than a merely slow close. Bounded, not
+        # indefinite: a genuinely stuck worker must never hang app shutdown.
+        join_rebuild = getattr(self.map_widget, "join_rebuild_thread", None)
+        if join_rebuild is not None:
+            join_rebuild(timeout=2.0)
         super().closeEvent(event)
 
     def run(self) -> None:

@@ -64,12 +64,84 @@ def _wait_until(predicate, timeout_s: float = 2.0, step_ms: int = 20, diag=None)
     assert predicate(), message
 
 
+def _wh(widget, label: str) -> str:
+    """One widget's width()/minimumSizeHint().width()/sizeHint().width(), or
+    a plain "<missing>" marker -- used to build the per-child breakdown in
+    _full_map_column_diag below without a dozen near-identical f-strings."""
+    if widget is None:
+        return f"{label}=<missing>"
+    return (
+        f"{label}(w={widget.width()}, "
+        f"min={widget.minimumSizeHint().width()}, hint={widget.sizeHint().width()})"
+    )
+
+
+def _full_map_column_diag(window) -> str:
+    """Round 10 (p4-r11): every number that could explain *why* the map
+    column's minimum width came out some particular value on a CI runner
+    this doesn't reproduce on locally -- window/splitter/side-pane geometry
+    (as _layout_diag already had), _map_tab/map_widget's own width and size
+    hints, LEGEND_COMPACT_WIDTH, the width/min/hint of every direct child of
+    the map column that isn't itself a reflowing grid (header row, cluster
+    combo, the control strip, the Layers/Spots groups, both sliders, the
+    Time cluster, the chips row, the in-map legend, the map frame, the
+    cluster/no-spots status pills), and the logical DPI/devicePixelRatio +
+    app font family/pointSize/pixelSize that drive every one of those
+    widths. A shared helper (imported by tests/test_map_frame.py too) so one
+    CI run gives real numbers instead of a third round of guessing."""
+    from PySide6.QtWidgets import QApplication
+
+    from orbitrx.ui.map_widget import LEGEND_COMPACT_WIDTH
+
+    app = QApplication.instance()
+    font = app.font() if app is not None else None
+    splitter = getattr(window, "_splitter", None)
+    side_pane = getattr(window, "_side_pane", None)
+    map_tab = getattr(window, "_map_tab", None)
+    map_widget = getattr(window, "map_widget", None)
+
+    children = [
+        (getattr(window, "_map_header_row", None), "header_row"),
+        (getattr(window, "cluster_combo", None), "cluster_combo"),
+        (getattr(window, "_map_controls", None), "control_strip"),
+        (getattr(window, "_layers_group", None), "layers_group"),
+        (getattr(window, "_spots_group", None), "spots_group"),
+        (getattr(window, "time_slider", None), "time_slider"),
+        (getattr(window, "replay_slider", None), "replay_slider"),
+        (getattr(window, "_time_box", None), "time_cluster"),
+        (getattr(window, "_chips_row", None), "chips_row"),
+        (getattr(map_widget, "_legend_lbl", None), "legend"),
+        (getattr(window, "_map_frame", None), "map_frame"),
+        (getattr(map_widget, "_cluster_pill", None), "cluster_pill"),
+        (getattr(map_widget, "_empty_overlay", None), "no_spots_pill"),
+    ]
+
+    return (
+        f"map_tab.width()={map_tab.width() if map_tab is not None else None} "
+        f"map_tab.minimumSizeHint()={map_tab.minimumSizeHint() if map_tab is not None else None} "
+        f"map_tab.sizeHint()={map_tab.sizeHint() if map_tab is not None else None} "
+        f"map_widget.width()={map_widget.width() if map_widget is not None else None} "
+        f"map_widget.minimumSizeHint()="
+        f"{map_widget.minimumSizeHint() if map_widget is not None else None} "
+        f"LEGEND_COMPACT_WIDTH={LEGEND_COMPACT_WIDTH} "
+        f"children=[{' '.join(_wh(w, label) for w, label in children)}] "
+        f"logicalDpiX={window.logicalDpiX()} devicePixelRatio={window.devicePixelRatio()} "
+        f"font.family()={font.family() if font is not None else None} "
+        f"font.pointSize()={font.pointSize() if font is not None else None} "
+        f"font.pixelSize()={font.pixelSize() if font is not None else None}"
+    )
+
+
 def _layout_diag(window) -> str:
     """Dump every piece of state relevant to side-pane/splitter sizing, for
     windows-latest-only CI failures that don't reproduce locally -- without
     this, a timeout just says a predicate never became true and gives no clue
     whether the window itself never reached the resized-to size, the splitter
-    never got real width, or the side pane is being clamped by its own min/max."""
+    never got real width, or the side pane is being clamped by its own min/max.
+
+    Round 10 (p4-r11): appends _full_map_column_diag's per-child breakdown
+    too -- the plain splitter/side-pane numbers alone weren't enough to tell
+    *which* map-column child pushed the minimum over budget on windows-latest."""
     splitter = getattr(window, "_splitter", None)
     side_pane = getattr(window, "_side_pane", None)
     screen = window.screen()
@@ -83,9 +155,12 @@ def _layout_diag(window) -> str:
         f"side_pane.isVisible()={side_pane.isVisible() if side_pane is not None else None} "
         f"side_pane.width()={side_pane.width() if side_pane is not None else None} "
         f"side_pane.minimumWidth()={side_pane.minimumWidth() if side_pane is not None else None} "
+        f"side_pane.minimumSizeHint()="
+        f"{side_pane.minimumSizeHint() if side_pane is not None else None} "
         f"side_pane.maximumWidth()={side_pane.maximumWidth() if side_pane is not None else None} "
         f"side_pane.sizeHint()={side_pane.sizeHint() if side_pane is not None else None} "
-        f"screen.availableGeometry()={screen.availableGeometry() if screen is not None else None}"
+        f"screen.availableGeometry()={screen.availableGeometry() if screen is not None else None} "
+        f"{_full_map_column_diag(window)}"
     )
 
 
