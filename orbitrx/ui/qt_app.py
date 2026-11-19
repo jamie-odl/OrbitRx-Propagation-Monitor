@@ -633,24 +633,34 @@ class _MapControlStrip(QWidget):
             self._recompute_layout()
 
     def minimumSizeHint(self):
-        """Round 8: the floor this strip can actually be squeezed to is the
-        *stacked* (chips above sliders) arrangement's minimum, not whichever
-        page _stack currently shows -- QStackedWidget's own minimumSizeHint
-        only reflects the current page, and while in single-row mode that
-        page's minimum is both chips and sliders side by side, which on
-        windows-latest's bulkier fonts pushed the whole map column's
-        minimumSizeHint past the 1280-minus-side-panel budget even though
-        resizeEvent() above would happily wrap onto two rows well before
-        actually running out of room."""
+        """Round 8: the WIDTH floor this strip can actually be squeezed to is
+        the *stacked* (chips above sliders) arrangement's minimum, not
+        whichever page _stack currently shows -- QStackedWidget's own
+        minimumSizeHint only reflects the current page, and while in
+        single-row mode that page's minimum is both chips and sliders side
+        by side, which on windows-latest's bulkier fonts pushed the whole map
+        column's minimumSizeHint past the 1280-minus-side-panel budget even
+        though resizeEvent() above would happily wrap onto two rows well
+        before actually running out of room.
+
+        P5-r5: the HEIGHT component must stay mode-aware, unlike width --
+        forcing the *stacked* (summed) height as the floor even while
+        genuinely in single-row mode fed a bogus, too-tall minimumSizeHint
+        into any QBoxLayout this strip sits in (map_layout/map_tab_layout),
+        which both callers reuse for the always-single-row-in-compact header
+        row and the force-single-row-in-compact control strip -- silently
+        taking height away from the map pane that sits right next to it
+        (test_map_dominates_compact_window_height_at_683x485)."""
         from PySide6.QtCore import QSize
 
         chips_min = self._chips.minimumSizeHint()
         sliders_min = self._sliders.minimumSizeHint()
         spacing = self._col_layout.spacing()
-        return QSize(
-            max(chips_min.width(), sliders_min.width()),
-            chips_min.height() + sliders_min.height() + spacing,
-        )
+        if self._single_row:
+            height = max(chips_min.height(), sliders_min.height())
+        else:
+            height = chips_min.height() + sliders_min.height() + spacing
+        return QSize(max(chips_min.width(), sliders_min.width()), height)
 
 
 # P4-7 (SPEC §9 item 3): Kp over the window drawn as bars never exceeds this,

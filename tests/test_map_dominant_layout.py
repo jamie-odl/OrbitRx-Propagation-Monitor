@@ -658,6 +658,71 @@ def test_map_dominates_compact_window_height_at_683x485(window):
     assert ratio >= 0.50, ratio
 
 
+@pytest.fixture
+def taller_font_window(tmp_path, monkeypatch, large_avail):
+    """Regression harness for a windows-latest-only CI failure (p5-r5):
+    test_map_dominates_compact_window_height_at_683x485 passed here (ratio
+    0.566) but failed on windows-latest (0.497) -- Segoe UI's taller line
+    metrics inflated the compact header row/control strip/band chip row just
+    enough to starve the map. Unlike the wide_font_window fixture below
+    (QFont.setStretch(), which widens glyphs), every widget's *height* here
+    is actually driven by theme.QSS's own `font-size: {FONT_BODY}px` rule,
+    not the QApplication default font -- QSS font-size always wins over
+    QFont.setPointSizeF() for sizeHint/layout purposes, so bumping the app
+    font alone (as this fixture's sibling does for width) has no effect on
+    any rendered height. Patching the baked-in QSS string before
+    construction is the only way to deterministically simulate "every label
+    and button is taller" on any platform, including this offscreen Linux
+    one. Reset after the test so it can't bleed into others sharing this
+    session's QApplication instance."""
+    monkeypatch.chdir(tmp_path)
+    from PySide6.QtWidgets import QApplication
+
+    import orbitrx.spots.service as svc
+    monkeypatch.setattr(svc.SpotsService, "start", lambda self: None)
+    import orbitrx.dx as dx
+    monkeypatch.setattr(dx.DxClusterService, "start", lambda self: None)
+    from orbitrx.ui.controller import OrbitRxController
+    monkeypatch.setattr(OrbitRxController, "fetch_weather", lambda self: None)
+    monkeypatch.setattr(OrbitRxController, "refresh_location", lambda self: None)
+
+    import orbitrx.ui.theme as theme
+    original_qss = theme.QSS
+    theme.QSS = theme.QSS.replace("font-size: 13px", "font-size: 24px")
+
+    app = QApplication.instance() or QApplication([])
+    try:
+        from orbitrx.ui.qt_app import QtOrbitRxApplication
+        win = QtOrbitRxApplication()
+        win.show()
+        app.processEvents()
+        win.activateWindow()
+        app.processEvents()
+        yield win
+        win.ctrl.stop()
+        win.close()
+    finally:
+        theme.QSS = original_qss
+        theme.apply_theme(app)
+
+
+def test_map_dominates_compact_window_height_at_683x485_under_taller_font(
+    taller_font_window,
+):
+    """Companion to test_map_dominates_compact_window_height_at_683x485: the
+    same 683x485 compact ratio floor must hold even when every chrome row
+    (header, control strip, band chips) renders taller, not just when every
+    chip/label renders wider (test_side_pane_is_not_crushed_by_wide_fonts_at_1280
+    below) -- this is the windows-latest regression this fixture reproduces."""
+    window = taller_font_window
+    window.resize(683, 485)
+    window._update_compact_mode()
+    assert window._compact
+
+    ratio = window.map_widget.height() / window.height()
+    assert ratio >= 0.50, ratio
+
+
 # --- Band cards: QFrame#bandCard + state property + badge (P4-5, SPEC §8) --
 
 
