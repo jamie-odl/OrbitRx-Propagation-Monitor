@@ -706,6 +706,29 @@ def taller_font_window(tmp_path, monkeypatch, large_avail):
         theme.apply_theme(app)
 
 
+def _compact_chrome_row_heights(window) -> str:
+    """p5-r7: a per-row height breakdown for the compact chrome stacked
+    above/around the map (menu bar, map header, control strip, band-chip
+    row, status bar) plus the map itself -- so a future windows-latest-only
+    ratio failure shows exactly which row's height ate the map's share,
+    instead of just the bare too-small ratio float this test used to
+    assert on."""
+    menu_bar = window.menuBar()
+    status_bar = window.statusBar()
+    header_row = getattr(window, "_map_header_row", None)
+    controls = getattr(window, "_map_controls", None)
+    band_panel = getattr(window, "band_panel", None)
+    return (
+        f"menu_bar={menu_bar.height()} "
+        f"map_header_row={header_row.height() if header_row is not None else None} "
+        f"control_strip={controls.height() if controls is not None else None} "
+        f"band_chip_row={band_panel.height() if band_panel is not None else None} "
+        f"status_bar={status_bar.height()} "
+        f"map_widget={window.map_widget.height()} "
+        f"window={window.height()}"
+    )
+
+
 def test_map_dominates_compact_window_height_at_683x485_under_taller_font(
     taller_font_window,
 ):
@@ -720,7 +743,7 @@ def test_map_dominates_compact_window_height_at_683x485_under_taller_font(
     assert window._compact
 
     ratio = window.map_widget.height() / window.height()
-    assert ratio >= 0.50, ratio
+    assert ratio >= 0.50, f"{ratio} ({_compact_chrome_row_heights(window)})"
 
 
 # --- Band cards: QFrame#bandCard + state property + badge (P4-5, SPEC §8) --

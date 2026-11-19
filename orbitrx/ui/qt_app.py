@@ -31,7 +31,8 @@ from orbitrx.ui.formatting import (
 from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
 from orbitrx.ui.theme import (
     BAND_CHIP_HEIGHT_COMPACT, BG_ELEVATED, BORDER, CARD_STYLE, CARD_TEXT, CONTROL_HEIGHT,
-    CONTROL_HEIGHT_COMPACT, ERR, FAIR, FONT_BODY, FONT_MONO, GOOD, GUTTER_COMPACT, GUTTER_WIDE,
+    CONTROL_HEIGHT_COMPACT, CONTROLS_HEIGHT_COMPACT, ERR, FAIR, FONT_BODY, FONT_MONO, GOOD,
+    GUTTER_COMPACT, GUTTER_WIDE,
     MAP_HEADER_HEIGHT, MAP_HEADER_HEIGHT_COMPACT, MENU_BAR_HEIGHT, MENU_BAR_HEIGHT_COMPACT, MUTED,
     MUTED_SECONDARY, NO_DATA, OK, POOR, RADIUS_M, SLIDER_VALUE_MIN_WIDTH, SLIDER_WIDTH,
     SLIDER_WIDTH_COMPACT, SPACE_1, SPACE_2, SPACE_3, STATUS_BAR_HEIGHT, STATUS_BAR_HEIGHT_COMPACT,
@@ -2275,17 +2276,34 @@ class QtOrbitRxApplication(QMainWindow):
 
         self.menuBar().setFixedHeight(MENU_BAR_HEIGHT_COMPACT if compact else MENU_BAR_HEIGHT)
         self.statusBar().setFixedHeight(STATUS_BAR_HEIGHT_COMPACT if compact else STATUS_BAR_HEIGHT)
-        # The header row's own wrapper is floored at its target height
-        # directly -- its children (segButton/combo/help chip) already fit
-        # comfortably inside 32px, so there's no need to also shrink their
-        # own min-height/padding the way the control-strip toggles below do.
-        # Round 10 (p4-r11): a floor via setMinimumHeight, not setFixedHeight
-        # -- this row can now stack onto two lines under width pressure (see
-        # its _MapControlStrip wrapping above), and a hard Fixed height would
-        # clip that second line instead of letting the row grow to fit it.
+        # p5-r7 (windows-latest-only CI failure under a taller QSS font-size):
+        # the header row's single_row_min_width threshold is computed once at
+        # construction time from header_left/header_right's sizeHint(),
+        # before _enter_compact_mode ever hides the greyline banner -- under a
+        # bulkier font that stale threshold can exceed 683px, forcing this row
+        # into its *stacked* two-line layout even though the real (banner-less)
+        # compact content fits one line comfortably. force_single_row(True)
+        # bypasses that stale threshold the same way _map_controls already
+        # does below. With that in place a hard setFixedHeight is now safe
+        # (and intentional, per SPEC §13 "map header 32"): any further
+        # font-driven overflow inside the single row elides/clips there
+        # instead of inflating this row's height and starving the map.
         target_header_height = MAP_HEADER_HEIGHT_COMPACT if compact else MAP_HEADER_HEIGHT
-        self._map_header_row.setMinimumHeight(target_header_height)
-        self._map_header_row.setMaximumHeight(16777215)
+        self._map_header_row.set_force_single_row(True if compact else None)
+        if compact:
+            self._map_header_row.setFixedHeight(target_header_height)
+        else:
+            self._map_header_row.setMinimumHeight(target_header_height)
+            self._map_header_row.setMaximumHeight(16777215)
+        # Round 6 (SPEC §13 "controls 28"): same fixed-in-compact treatment
+        # for the control strip -- its own compact chip/slider sizing already
+        # lands close to this floor, but without an explicit cap a future
+        # font bump could still quietly inflate it and eat into the map.
+        if compact:
+            self._map_controls.setFixedHeight(CONTROLS_HEIGHT_COMPACT)
+        else:
+            self._map_controls.setMinimumHeight(0)
+            self._map_controls.setMaximumHeight(16777215)
         gutter = GUTTER_COMPACT if compact else GUTTER_WIDE
         # P5-r4 683x485 leftover: a real bottom margin in compact mode only
         # -- without it the band-chip row's bottom border lands flush on
