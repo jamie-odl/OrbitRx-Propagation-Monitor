@@ -170,7 +170,12 @@ def test_cluster_pill_shown_when_not_connected(tmp_path, monkeypatch, status):
     try:
         win._set_cluster(status)
         assert win.map_widget._cluster_pill.isVisible() is True
-        assert win.map_widget._cluster_pill.text() == "Cluster disconnected"
+        text = win.map_widget._cluster_pill.text()
+        # G14: one pill, with a real Reconnect link -- "Cluster disconnected"
+        # alone (the pre-G14 text) is a substring check, not an equality one,
+        # so this still catches a regression back to a bare informational pill.
+        assert "Cluster disconnected" in text
+        assert "Reconnect" in text
     finally:
         win.ctrl.stop()
         win.deleteLater()
@@ -190,16 +195,24 @@ def test_cluster_pill_not_shown_while_first_connecting(tmp_path, monkeypatch):
         app.processEvents()
 
 
-def test_cluster_and_no_spots_pills_stack_without_overlap(tmp_path, monkeypatch):
+def test_cluster_pill_suppresses_no_spots_pill(tmp_path, monkeypatch):
+    """G14: the map shows at most one pill -- while the cluster is down,
+    "Cluster disconnected · Reconnect" always wins over "No spots in this
+    window" rather than the two stacking."""
     app, win = _build_window(tmp_path, monkeypatch)
     try:
         win.map_widget.resize(900, 600)
         win._set_cluster("disconnected")
         win.map_widget.set_empty_overlay("No spots in this window")
-        cluster_rect = win.map_widget._cluster_pill.geometry()
-        empty_rect = win.map_widget._empty_overlay.geometry()
-        assert not cluster_rect.intersects(empty_rect)
-        assert cluster_rect.bottom() < empty_rect.top()
+        assert win.map_widget._cluster_pill.isVisible() is True
+        assert win.map_widget._empty_overlay.isVisible() is False
+
+        # Calling set_cluster_pill("") (reconnected) releases the no-spots
+        # pill again for a later set_empty_overlay call -- not a one-way gate.
+        win._set_cluster("connected")
+        win.map_widget.set_empty_overlay("No spots in this window")
+        assert win.map_widget._cluster_pill.isVisible() is False
+        assert win.map_widget._empty_overlay.isVisible() is True
     finally:
         win.ctrl.stop()
         win.deleteLater()

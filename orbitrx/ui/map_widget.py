@@ -91,6 +91,7 @@ class PropagationMapWidget(QWidget):
     greyline_meta_changed = Signal(str)
     spot_clicked = Signal(float)
     map_clicked = Signal(float, float)
+    reconnect_requested = Signal()
 
     def __init__(self, renderer: MapRenderer, parent=None) -> None:
         super().__init__(parent)
@@ -177,16 +178,22 @@ class PropagationMapWidget(QWidget):
         self._empty_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._empty_overlay.hide()
 
-        # P4-8 (SPEC §10 / "Cluster disconnected"): a second centred pill,
-        # stacked above the no-spots pill when both are visible at once --
-        # driven only by the real DX-cluster connection state (qt_app.py's
+        # P4-8/P5-r4 (SPEC §10 / "Cluster disconnected"): the map's one
+        # centred status pill while the cluster feed is down -- driven only
+        # by the real DX-cluster connection state (qt_app.py's
         # _render_cluster_label calls set_cluster_pill()), never a sample.
+        # G14: this and the no-spots pill below must never stack -- showing
+        # this one forces the no-spots pill hidden (see set_cluster_pill/
+        # set_empty_overlay), so there is always at most one pill. Its
+        # "Reconnect" link needs real mouse events, unlike the purely
+        # informational pills elsewhere, so it does NOT get
+        # WA_TransparentForMouseEvents.
         self._cluster_pill = QLabel("", self)
         self._cluster_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._cluster_pill.setWordWrap(False)
         self._cluster_pill.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self._cluster_pill.setStyleSheet(MAP_CLUSTER_PILL_STYLE)
-        self._cluster_pill.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._cluster_pill.linkActivated.connect(lambda _: self.reconnect_requested.emit())
         self._cluster_pill.hide()
 
         # P4-8 (SPEC §7): bottom-left in-map legend (Greyline/Night/DX spot),
@@ -217,6 +224,10 @@ class PropagationMapWidget(QWidget):
         self._reposition_legend()
 
     def set_empty_overlay(self, text: str) -> None:
+        # G14: never stack with the cluster pill -- while it's up, there is
+        # by definition no live feed to have "no spots in this window" about.
+        if self._cluster_pill.isVisible():
+            text = ""
         self._empty_overlay.setText(text)
         self._empty_overlay.setVisible(bool(text))
         self._reposition_center_pills()
@@ -225,7 +236,11 @@ class PropagationMapWidget(QWidget):
 
     def set_cluster_pill(self, text: str) -> None:
         self._cluster_pill.setText(text)
-        self._cluster_pill.setVisible(bool(text))
+        visible = bool(text)
+        self._cluster_pill.setVisible(visible)
+        if visible:
+            # G14: one pill only -- showing the cluster pill always wins.
+            self._empty_overlay.setVisible(False)
         self._reposition_center_pills()
         if text:
             self._cluster_pill.raise_()

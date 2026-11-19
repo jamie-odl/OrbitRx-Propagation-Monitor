@@ -228,6 +228,13 @@ class OrbitRxController:
                     # _apply_weather (which would normally flip this) never
                     # runs on this path.
                     self.state.weather_last_fetch_ok = False
+                    # P5-r4/SPEC §10 "Error (no usable data)"/"Stale": the
+                    # header/banner/band-strip must reflect this failure
+                    # immediately, not just on the next unrelated refresh --
+                    # _apply_weather (the other branch) already ends in
+                    # self._on_weather(); this early-return path needs the
+                    # same notification since it skips that call entirely.
+                    self._on_weather()
                     return
                 self._on_error("Weather update failed, showing cached data")
             try:

@@ -1064,6 +1064,8 @@ class QtOrbitRxApplication(QMainWindow):
             # subtitle, since the header already shows the same string.
             self.map_widget.greyline_meta_changed.connect(self.banner.setFullText)
         self.map_widget.map_clicked.connect(self._on_map_click)
+        if hasattr(self.map_widget, "reconnect_requested"):
+            self.map_widget.reconnect_requested.connect(self._reconnect_cluster)
         # P4-8 (SPEC §7): "QFrame#mapFrame has a 1px BORDER_SUBTLE border,
         # radius 8, and a MAP_OCEAN background" -- wraps the graphics view so
         # the never-letterbox ocean padding _fit_scene_rect() now adds sits
@@ -1238,6 +1240,7 @@ class QtOrbitRxApplication(QMainWindow):
         # isn't vertical room under the map for both the map and this row
         # without shrinking the map below its own dominance floor.
         self.band_panel = BandPanelWidget()
+        self.band_panel.retry_requested.connect(self._trigger_weather_refresh)
         map_tab_layout.addWidget(self.band_panel)
         self._map_tab = map_tab
         self._map_tab_layout = map_tab_layout
@@ -1332,6 +1335,17 @@ class QtOrbitRxApplication(QMainWindow):
         self._weather_never_loaded_lbl.setObjectName("muted")
         self._weather_never_loaded_lbl.linkActivated.connect(lambda _: self._trigger_weather_refresh())
         stats_outer.addWidget(self._weather_never_loaded_lbl)
+
+        # P5-r4 (SPEC §10 "Stale"/"Error (no usable data)"): the FAIR/POOR
+        # banner that replaces the muted "No data yet" line above once a
+        # fetch has actually been attempted and failed -- mutually exclusive
+        # with it (see _refresh_labels_and_map), never shown together.
+        self._weather_banner_lbl = QLabel("")
+        self._weather_banner_lbl.setObjectName("stateBanner")
+        self._weather_banner_lbl.setWordWrap(True)
+        self._weather_banner_lbl.linkActivated.connect(lambda _: self._trigger_weather_refresh())
+        self._weather_banner_lbl.hide()
+        stats_outer.addWidget(self._weather_banner_lbl)
 
         stats_body = QWidget()
         stats_body_layout = QVBoxLayout(stats_body)
@@ -2037,6 +2051,10 @@ class QtOrbitRxApplication(QMainWindow):
                 "heat": heatmap_payload(spots),
             })
         if hasattr(self.map_widget, "set_empty_overlay"):
+            # G14: never stacked with the cluster pill -- set_empty_overlay/
+            # set_cluster_pill (map_widget.py) enforce that mutual exclusion
+            # directly, so whichever pill the real cluster_status currently
+            # calls for always wins.
             self.map_widget.set_empty_overlay(format_no_spots_message(val) if live_on and not spots else "")
         err = self.ctrl.spots.last_error
         if err:
@@ -2076,7 +2094,7 @@ class QtOrbitRxApplication(QMainWindow):
         self._refresh_key_tiles()
         self._freshness_lbl.setText(self._space_weather_freshness_text())
         self._update_location_hint_visibility()
-        self._weather_never_loaded_lbl.setVisible(self.ctrl.state.last_weather_update is None)
+        self._update_weather_state_banner()
         self.alerts_list.clear()
         for alert in self.ctrl.state.alerts[:5] or ["No active alerts"]:
             item = QListWidgetItem(humanize_iso_dates(alert))
@@ -2208,7 +2226,12 @@ class QtOrbitRxApplication(QMainWindow):
         self._map_header_row.setMinimumHeight(target_header_height)
         self._map_header_row.setMaximumHeight(16777215)
         gutter = GUTTER_COMPACT if compact else GUTTER_WIDE
-        self._map_tab_layout.setContentsMargins(gutter, 0, gutter, 0)
+        # P5-r4 683x485 leftover: a real bottom margin in compact mode only
+        # -- without it the band-chip row's bottom border lands flush on
+        # the status bar (map_pane's stretch=1 consumes every other px of
+        # slack, so nothing else naturally reserves this gap).
+        bottom_margin = SPACE_1 if compact else 0
+        self._map_tab_layout.setContentsMargins(gutter, 0, gutter, bottom_margin)
 
         # The control strip has no single wrapper to force-shrink (clipping
         # content instead of actually reclaiming height) -- each toggle's
@@ -2252,6 +2275,59 @@ class QtOrbitRxApplication(QMainWindow):
         if s.last_weather_update is not None:
             return f"Updated {s.last_weather_update.strftime('%H:%M')}"
         return "Never updated"
+
+    def _update_weather_state_banner(self) -> None:
+        """P5-r4/SPEC §10: the three never-loaded/error/stale states read
+        identically before this (G12) -- all three gate on
+        last_weather_update alone, which a failed fetch with no cache never
+        touches. Distinguishing them needs the *combination* of
+        weather_last_fetch_ok (did the most recent attempt fail?) and
+        whether any data -- ever, or specifically last-good -- exists:
+
+          * never attempted (weather_last_fetch_ok still at its True
+            default, nothing loaded): "No data yet ... Refresh now".
+          * attempted, failed, no usable data ever: POOR "Couldn't reach
+            source · Retry" -- and the band strip collapses (G13/band_panel).
+          * attempted, failed, but a last-good snapshot exists: FAIR
+            "Stale · last OK hh:mm · retrying", and band badges go outline
+            (band_panel.set_stale).
+
+        Also drives the band-strip collapse and stale-badge styling so every
+        caller of this state goes through one place rather than three
+        widgets independently re-deriving the same three-way split."""
+        s = self.ctrl.state
+        fetch_failed = not s.weather_last_fetch_ok
+        has_last_good = s.last_weather_success_update is not None
+        error_no_data = fetch_failed and s.last_weather_update is None
+
+        if fetch_failed and has_last_good:
+            self._weather_banner_lbl.setText(
+                f"Stale · last OK {s.last_weather_success_update.strftime('%H:%M')} · retrying"
+            )
+            self._set_weather_banner_state("stale")
+        elif error_no_data:
+            self._weather_banner_lbl.setText('Couldn\'t reach source · <a href="#">Retry</a>')
+            self._set_weather_banner_state("error")
+        else:
+            self._set_weather_banner_state(None)
+
+        self._weather_never_loaded_lbl.setVisible(not fetch_failed and s.last_weather_update is None)
+        last_update_text = (
+            s.last_weather_update.strftime("%H:%M") if s.last_weather_update is not None else "never"
+        )
+        self.band_panel.set_all_unknown(error_no_data, last_update_text)
+        self.band_panel.set_stale(fetch_failed and has_last_good)
+
+    def _set_weather_banner_state(self, state: str | None) -> None:
+        lbl = self._weather_banner_lbl
+        if state is None:
+            lbl.setVisible(False)
+            return
+        if lbl.property("state") != state:
+            lbl.setProperty("state", state)
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
+        lbl.setVisible(True)
 
     def _trigger_weather_refresh(self) -> None:
         """Every UI entry point that kicks off a weather fetch goes through
@@ -2525,16 +2601,28 @@ class QtOrbitRxApplication(QMainWindow):
         # above, not a static glyph.
         if hasattr(self, "_cluster_dot_lbl"):
             self._cluster_dot_lbl.setStyleSheet(f"color: {dot_color};")
-        # P4-8 (SPEC §10): the map's own "Cluster disconnected" pill, driven
-        # by the same real cluster_status the corner/status-bar labels use --
-        # "disconnected" (never started, or deliberately dropped) and
-        # "reconnecting" (lost a live connection) both mean there is no
-        # working cluster feed right now; "connecting" (first attempt) is
-        # not flagged here, since it isn't a failure yet.
+        # P4-8/P5-r4 (SPEC §10/G14): the map's own "Cluster disconnected ·
+        # Reconnect" pill, driven by the same real cluster_status the
+        # corner/status-bar labels use -- "disconnected" (never started, or
+        # deliberately dropped) and "reconnecting" (lost a live connection)
+        # both mean there is no working cluster feed right now; "connecting"
+        # (first attempt) is not flagged here, since it isn't a failure yet.
+        # Reconnect is a real link (map_widget.reconnect_requested ->
+        # self._reconnect_cluster), never just static text.
         if hasattr(self.map_widget, "set_cluster_pill"):
             self.map_widget.set_cluster_pill(
-                "Cluster disconnected" if status in ("disconnected", "reconnecting") else ""
+                'Cluster disconnected · <a href="#">Reconnect</a>'
+                if status in ("disconnected", "reconnecting") else ""
             )
+
+    def _reconnect_cluster(self) -> None:
+        """G14: the map pill's Reconnect link -- same stop()/start() cycle
+        the cluster combo's node-change handler already uses, which is a
+        no-op under offline_fixture() so this never opens the network in
+        tests/screenshots."""
+        self.ctrl.stop()
+        self.ctrl.start()
+        self._set_status("Reconnecting to cluster…")
 
     def _update_location_hint_visibility(self) -> None:
         """M5: path_muf/sunrise/sunset only mean anything once a location is set;
@@ -3145,9 +3233,17 @@ class QtOrbitRxApplication(QMainWindow):
         ratio = 0.42 if self._compact else 0.48
         target = max(160, int(central.height() * ratio))
         if self._compact:
-            # Leave room for the (stacked, in compact mode) chip + slider
-            # control strip under the map.
-            reserve = 26 + 60 + 24
+            # P5-r4: reserve real sizeHints for the map header row, the
+            # (forced single-row, G11) control strip and the band-chip row
+            # under the map -- not a tuned magic constant that predates G10
+            # putting the band row back under the map, which left no room
+            # for it and let the status bar clip its bottom border. The
+            # extra GUTTER_COMPACT leaves a visible gap above the status
+            # bar instead of the chip row's border landing flush on it.
+            header_h = self._map_header_row.sizeHint().height() if hasattr(self, "_map_header_row") else 0
+            controls_h = self._map_controls.sizeHint().height() if hasattr(self, "_map_controls") else 0
+            band_h = self.band_panel.sizeHint().height() if hasattr(self, "band_panel") else 0
+            reserve = header_h + controls_h + band_h + 3 * SPACE_1 + GUTTER_COMPACT
             target = min(target, max(120, central.height() - reserve))
         self.map_widget.setMinimumHeight(target)
         if hasattr(self.map_widget, "setSizePolicy"):
@@ -3165,7 +3261,6 @@ class QtOrbitRxApplication(QMainWindow):
             self._enter_compact_mode()
         elif self._compact and width > COMPACT_WIDTH_ABOVE:
             self._exit_compact_mode()
-        self._apply_map_min_height()
         # Round 6 (SPEC §11/§13): the control strip's own responsive rules
         # reuse this same compact flag/hysteresis rather than inventing a
         # separate "683px" breakpoint -- COMPACT_WIDTH_BELOW (900) already
@@ -3187,6 +3282,11 @@ class QtOrbitRxApplication(QMainWindow):
         self._update_control_strip_corner_summary()
         self._update_band_panel_compact()
         self._update_compact_chrome()
+        # P5-r4: band_panel/the control strip's own compact sizing (just
+        # above) must already be applied before this reads their
+        # sizeHint()s, or the reserved height would be computed off their
+        # wide-layout sizes on the very first resize into compact mode.
+        self._apply_map_min_height()
         # band_panel's compact toggle just above can change its own fixed
         # height (SPEC §8 "Compact variant"), which in turn changes how much
         # room map_tab_layout's stretch=1 map_pane gets -- QWidget normally
@@ -3251,6 +3351,12 @@ class QtOrbitRxApplication(QMainWindow):
         self._compact_tabs.addTab(self._side_pane, "Conditions")
         central_layout.addWidget(self._compact_tabs)
         self._compact_tabs.show()
+        # P5-r4 (683x485 leftover): the header's own "Greyline · ..." caption
+        # has no room to avoid eliding at this width, and the map's own
+        # bottom-left caption (_legend_caption_lbl, SPEC §7 "At 683") already
+        # shows the identical real string -- so at compact width the header
+        # is just the segmented control, stretch, Cluster combo and "?".
+        self.banner.setVisible(False)
         # Map first, always -- SPEC principle #1 ("the map is the product")
         # and §13's drawer default ("closed"). _side_panel_visible is the
         # *wide*-layout collapse flag and is not reused as a "remember which
@@ -3278,6 +3384,7 @@ class QtOrbitRxApplication(QMainWindow):
         # though its new parent is shown.
         self._map_tab.show()
         self._side_pane.setVisible(self._side_panel_visible)
+        self.banner.setVisible(True)
         self._apply_default_splitter_sizes()
 
     def keyPressEvent(self, event) -> None:

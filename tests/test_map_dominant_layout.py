@@ -884,6 +884,67 @@ def test_weather_never_loaded_hint_visible_before_first_fetch_then_hidden(window
     assert window._weather_never_loaded_lbl.isHidden()
 
 
+def test_error_banner_shown_when_fetch_fails_with_no_usable_data(window):
+    """G12/SPEC §10 "Error (no usable data)": attempted + failed + never
+    loaded is a different, real state from "never attempted" -- it gets the
+    POOR "Couldn't reach source · Retry" banner (not the muted "No data yet"
+    hint), and the band strip collapses to the single unavailable line."""
+    assert window.ctrl.state.last_weather_update is None
+
+    window.ctrl.state.weather_last_fetch_ok = False
+    window._refresh_labels_and_map()
+
+    assert window._weather_banner_lbl.isVisible()
+    assert window._weather_banner_lbl.property("state") == "error"
+    assert "Couldn't reach source" in window._weather_banner_lbl.text()
+    assert window._weather_never_loaded_lbl.isVisible() is False
+    assert window.band_panel._all_unknown is True
+
+
+def test_stale_banner_shown_when_last_good_data_exists_but_fetch_fails(window):
+    """G12/SPEC §10 "Stale (refresh failed, has last-good)": a real
+    previously-successful snapshot plus a now-failed fetch gets the FAIR
+    "Stale · last OK hh:mm · retrying" banner, and band badges switch to
+    outline (set_stale), never the collapsed all-unknown strip (there is
+    real data to show)."""
+    import datetime
+
+    window.ctrl.state.flux = 111.0
+    now = datetime.datetime.now(datetime.timezone.utc)
+    window.ctrl.state.last_weather_update = now
+    window.ctrl.state.last_weather_success_update = now
+    window.ctrl.state.weather_last_fetch_ok = True
+    window._refresh_labels_and_map()
+    assert window._weather_banner_lbl.isVisible() is False
+
+    window.ctrl.state.weather_last_fetch_ok = False
+    window._refresh_labels_and_map()
+
+    assert window._weather_banner_lbl.isVisible()
+    assert window._weather_banner_lbl.property("state") == "stale"
+    assert "Stale" in window._weather_banner_lbl.text()
+    assert "retrying" in window._weather_banner_lbl.text()
+    assert window.band_panel._all_unknown is False
+    badge = next(iter(window.band_panel._badge_labels.values()))
+    assert badge.property("stale") is True
+
+
+def test_map_pill_consolidated_disconnected_vs_connected(window):
+    """G14: the map shows one pill, never two stacked -- disconnected shows
+    only "Cluster disconnected · Reconnect"; connected (with a genuinely
+    empty live-spots window) shows only "No spots in this window"."""
+    window._set_cluster("disconnected")
+    assert window.map_widget._cluster_pill.isVisible() is True
+    assert window.map_widget._empty_overlay.isVisible() is False
+
+    window._set_cluster("connected")
+    window._layer_checks["spot_arcs"].setChecked(True)
+    window.ctrl.spots.latest = []
+    window._refresh_live_spots()
+    assert window.map_widget._cluster_pill.isVisible() is False
+    assert window.map_widget._empty_overlay.isVisible() is True
+
+
 def test_muf_luf_tiles_show_values_with_mhz_unit(window):
     """SPEC §9 item 5: MUF/LUF are now their own Propagation tiles (not the
     old key-metric row), each showing the value with its "MHz" unit."""
@@ -1151,3 +1212,49 @@ def test_map_frame_has_no_non_ocean_side_bars_at_compact_width(window):
                 + abs(colour.blue() - ocean.blue())
             )
             assert diff <= tolerance, (x, y, colour.getRgb(), ocean.getRgb(), diff)
+
+
+def test_band_chip_row_bottom_is_inside_central_widget_at_compact_width(window):
+    """P5-r4 683x485 leftover: the band chip row used to be clipped by the
+    status bar -- its bottom border (plus a small gap above the status bar)
+    must be fully visible inside the central widget's own height, not
+    overdrawn or pushed past it."""
+    _resize_and_settle(window, 683, 485)
+    assert window._compact
+
+    central = window.centralWidget()
+    chip_bottom = window.band_panel.mapTo(central, window.band_panel.rect().bottomLeft()).y()
+    assert 0 < chip_bottom < central.height(), (chip_bottom, central.height())
+    # A visible gap above the status bar, not the chip row's border landing
+    # flush on it.
+    assert central.height() - chip_bottom >= 2
+
+
+def test_header_greyline_caption_hidden_at_compact_width(window):
+    """P5-r4 683x485 leftover: the header's own "Greyline · ..." caption has
+    no room to avoid eliding next to the segmented control at this width --
+    the map's own bottom-left caption (SPEC §7 "At 683") already shows the
+    identical real string, so the header hides its copy and is just the
+    segmented control, stretch, Cluster combo and "?"."""
+    _resize_and_settle(window, 683, 485)
+    assert window._compact
+    assert window.banner.isVisible() is False
+
+    _resize_and_settle(window, 1280, 800)
+    assert not window._compact
+    assert window.banner.isVisible() is True
+
+
+def test_unknown_band_badge_has_no_border(window):
+    """G13: the unknown badge is a bare dash with no colour -- not an empty
+    bordered chip, which is how the badge used to render before this."""
+    band = next(iter(window.band_panel._cards))
+    window.band_panel.update_grid({band: "UNKNOWN"})
+    badge = window.band_panel._badge_labels[band]
+    assert badge.property("state") == "unknown"
+    assert "border" not in window.band_panel.styleSheet()
+    from orbitrx.ui.theme import QSS
+
+    assert 'stateBadge[state="unknown"]' in QSS
+    unknown_rule = QSS.split('stateBadge[state="unknown"]')[1].split("}")[0]
+    assert "border" not in unknown_rule

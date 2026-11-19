@@ -406,7 +406,20 @@ QLabel#stateBadge {{ font-size: {FONT_CAPTION}px; font-weight: 600; border-radiu
 QLabel#stateBadge[state="good"] {{ color: {GOOD}; background: {GOOD_BG}; }}
 QLabel#stateBadge[state="fair"] {{ color: {FAIR}; background: {FAIR_BG}; }}
 QLabel#stateBadge[state="poor"] {{ color: {POOR}; background: {POOR_BG}; }}
-QLabel#stateBadge[state="unknown"] {{ color: {UNKNOWN}; background: transparent; border: 1px solid {BORDER_DEFAULT}; }}
+/* G13 (p5-r4): unknown is a bare dash, no colour, no empty bordered badge
+   box -- the border this used to draw read as an empty outline chip even
+   though it never carries a fill like good/fair/poor do. */
+QLabel#stateBadge[state="unknown"] {{ color: {UNKNOWN}; background: transparent; }}
+/* P5-r4/SPEC §8 "stale": same word, outline badge in its own semantic
+   colour, no fill -- toggled via a second "stale" property so the state
+   property itself keeps meaning good/fair/poor/unknown. */
+QLabel#stateBadge[stale="true"][state="good"] {{ color: {GOOD}; background: transparent; border: 1px solid {GOOD}; }}
+QLabel#stateBadge[stale="true"][state="fair"] {{ color: {FAIR}; background: transparent; border: 1px solid {FAIR}; }}
+QLabel#stateBadge[stale="true"][state="poor"] {{ color: {POOR}; background: transparent; border: 1px solid {POOR}; }}
+/* P5-r4/SPEC §10: the space-weather panel's error (POOR)/stale (FAIR)
+   banners, toggled via a "state" property like stateBadge above. */
+QLabel#stateBanner[state="error"] {{ color: {POOR}; background: {POOR_BG}; border-radius: 6px; padding: 6px 10px; }}
+QLabel#stateBanner[state="stale"] {{ color: {FAIR}; background: {FAIR_BG}; border-radius: 6px; padding: 6px 10px; }}
 QFrame#keyMetricTile {{
     background: {BG_ELEVATED}; border: 1px solid {BORDER}; border-radius: {RADIUS_M}px;
 }}

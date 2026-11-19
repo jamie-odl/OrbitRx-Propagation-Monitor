@@ -156,11 +156,22 @@ def drive_weather_fetch_failure(app, ctrl, timeout: float = 3.0) -> bool:
             ctrl.fetch_weather()
         finally:
             controller_mod.offline_fixture = orig_offline_fixture
-        return pump_until(
+        settled = pump_until(
             app,
             lambda: not ctrl.state.weather_fetch_in_progress and not ctrl.state.weather_last_fetch_ok,
             timeout=timeout,
         )
+        # The worker thread sets those two state flags *before* firing its
+        # on_weather UI callback (same order the real success path uses) --
+        # pump_until can observe the flags true and return on the very
+        # iteration that would otherwise have called processEvents(),
+        # without that call ever happening, so the queued UI refresh (which
+        # flips the real error/stale banner -- see
+        # qt_app._update_weather_state_banner) can still be sitting
+        # unprocessed when this returns. One more pump flushes it before any
+        # caller grabs a screenshot or asserts state.
+        pump(app, 0.05)
+        return settled
     finally:
         controller_mod.fetch_space_weather_data = orig_fetch
         if had_cache_key:

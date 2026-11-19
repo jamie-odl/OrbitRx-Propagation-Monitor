@@ -25,6 +25,10 @@ def restore_cwd():
     os.chdir(cwd)
 
 
+def _png_bytes(path: Path) -> bytes:
+    return path.read_bytes()
+
+
 def _png_size(path: Path) -> tuple[int, int]:
     from PIL import Image
 
@@ -54,6 +58,22 @@ def test_ui_screenshots_writes_pngs_and_exits_cleanly(tmp_path, restore_cwd):
             path = out_dir / f"{prefix}{label}.png"
             assert path.exists(), f"missing {path.name}"
             assert _png_size(path) == (width, height)
+
+    # G12 (p5-r4): empty/no-data/stale must be three visibly different real
+    # states (Never-updated+muted-hint / red Couldn't-reach-source banner /
+    # amber Stale banner) -- not just three names for the same screenshot,
+    # the bug these three states previously had. A byte-equality check on
+    # each PNG is a cheap, deterministic stand-in for a perceptual pixel
+    # hash: identical rendered pixels always serialize to identical bytes
+    # from the same Qt/PNG encoder in one process, so any difference in
+    # content shows up as different bytes.
+    for label, _width, _height in ui_screenshots.SIZES:
+        empty_bytes = _png_bytes(out_dir / f"state_empty_{label}.png")
+        nodata_bytes = _png_bytes(out_dir / f"state_nodata_{label}.png")
+        stale_bytes = _png_bytes(out_dir / f"state_stale_{label}.png")
+        assert empty_bytes != nodata_bytes, f"state_empty/state_nodata identical at {label}"
+        assert empty_bytes != stale_bytes, f"state_empty/state_stale identical at {label}"
+        assert nodata_bytes != stale_bytes, f"state_nodata/state_stale identical at {label}"
 
     drawer_path = out_dir / "drawer_683x485.png"
     assert drawer_path.exists()

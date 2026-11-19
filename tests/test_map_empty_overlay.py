@@ -46,6 +46,12 @@ def window(tmp_path, monkeypatch):
 
 
 def test_empty_live_spots_shows_overlay_on_static_map(window):
+    # G14: "No spots" only means anything while connected (otherwise the
+    # map's one pill is "Cluster disconnected · Reconnect" -- see
+    # test_map_frame.py's cluster-pill tests), so this test about the
+    # replay-window-empty case needs a real connected cluster_status first.
+    window.ctrl.state.cluster_status = "connected"
+    window._render_cluster_label()
     window._layer_checks["spot_arcs"].setChecked(True)
     window.ctrl.spots.latest = []
     window._refresh_live_spots()
@@ -72,6 +78,9 @@ def test_replay_offset_appends_hours_ago_to_overlay(window, monkeypatch):
     # Isolate from the shared on-disk spots database: an empty replay window is the
     # state under test, so real spots captured earlier must not leak in.
     monkeypatch.setattr(window.ctrl.spots, "replay", lambda hours_back, window_minutes=30: [])
+    # G14: see test_empty_live_spots_shows_overlay_on_static_map above.
+    window.ctrl.state.cluster_status = "connected"
+    window._render_cluster_label()
     window._layer_checks["spot_arcs"].setChecked(True)
     window.replay_slider.setValue(6)
     window._refresh_live_spots()

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFontMetrics
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QSizePolicy, QStackedLayout, QVBoxLayout, QWidget,
@@ -54,7 +54,15 @@ class BandPanelWidget(QWidget):
     bandFreq, stateBadge). State is communicated through a dynamic "state"
     property plus unpolish/polish -- never a per-card inline styleSheet --
     so the cards are themed entirely through theme.QSS.
+
+    P5-r4/SPEC §8 "All unknown": when every band is unknown because a weather
+    fetch failed with no usable data at all (never the merely-never-fetched
+    case, which keeps showing the six unknown cards), the six cards are
+    replaced by a single muted strip line of the *same reserved height* --
+    see set_all_unknown() -- so the map never jumps.
     """
+
+    retry_requested = Signal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -70,13 +78,102 @@ class BandPanelWidget(QWidget):
         self._raw: dict[str, str] = {band: f"{suggested_dial_freq(band)} MHz" for band in self._bands}
         self._cols = 0
         self._compact = False
-        self._grid = QGridLayout(self)
+        self._all_unknown = False
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self._stack = QStackedLayout()
+        self._stack.setContentsMargins(0, 0, 0, 0)
+        outer.addLayout(self._stack)
+
+        grid_page = QWidget()
+        self._grid = QGridLayout(grid_page)
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setSpacing(8)
+        self._stack.addWidget(grid_page)
+        self._strip = self._build_all_unknown_strip()
+        self._stack.addWidget(self._strip)
+        self._stack.setCurrentIndex(0)
+
         for band in self._bands:
             self._build_card(band)
             self._apply_state(band, "unknown")
         self._relayout(3)
+
+    def _build_all_unknown_strip(self) -> QWidget:
+        # SPEC §8 "All unknown ... container of the *same reserved height*
+        # (64px)" is specifically the full-size card height -- set_compact()
+        # re-floors this to BAND_CHIP_HEIGHT_COMPACT to match instead, so the
+        # strip never reserves more height than the six chips it replaces
+        # would have at the current size (that extra height was silently
+        # eating into the compact map's own share, see
+        # qt_app._apply_map_min_height).
+        strip = QFrame()
+        strip.setObjectName("bandStrip")
+        strip.setFixedHeight(64)
+        layout = QHBoxLayout(strip)
+        self._strip_layout = layout
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(12)
+
+        # Explicit setMinimumWidth(1), not the QLabel default of 0: Qt's
+        # qSmartMinSize only honours an *explicitly set* QWidget.minimumSize
+        # over the (long, uncompressible-text) minimumSizeHint when that
+        # explicit size is non-zero -- a bare 0 is indistinguishable from
+        # "never set". Without this, this strip's own minimum width (not
+        # just its current, visible width) sets a floor on the whole
+        # BandPanelWidget via QStackedLayout (which sizes for the largest of
+        # all its pages, not just the current one) even while the six-card
+        # grid page is the one actually showing -- harmless at this app's
+        # normal fonts, but it ballooned past the map column's budget under
+        # the wide-font CI metrics tests/test_map_dominant_layout.py and
+        # tests/test_map_frame.py pin.
+        self._strip_dot_lbl = QLabel("○")
+        self._strip_dot_lbl.setStyleSheet(f"color: {UNKNOWN};")
+        self._strip_dot_lbl.setMinimumWidth(1)
+        layout.addWidget(self._strip_dot_lbl)
+
+        self._strip_text_lbl = QLabel("Band conditions unavailable · last update never")
+        self._strip_text_lbl.setObjectName("muted")
+        self._strip_text_lbl.setMinimumWidth(1)
+        layout.addWidget(self._strip_text_lbl)
+        layout.addStretch(1)
+
+        self._strip_retry_lbl = QLabel('<a href="#">Retry</a>')
+        self._strip_retry_lbl.linkActivated.connect(lambda _: self.retry_requested.emit())
+        self._strip_retry_lbl.setMinimumWidth(1)
+        layout.addWidget(self._strip_retry_lbl)
+
+        self._strip_bands_lbl = QLabel(" · ".join(self._bands))
+        self._strip_bands_lbl.setObjectName("muted")
+        self._strip_bands_lbl.setMinimumWidth(1)
+        layout.addWidget(self._strip_bands_lbl)
+        return strip
+
+    def set_all_unknown(self, flag: bool, last_update_text: str = "never") -> None:
+        """SPEC §10/§8 "All unknown": real driver is qt_app's own fetch-failed
+        + never-loaded check (not "every band_grid value happens to be
+        UNKNOWN"), so the ordinary never-fetched startup state keeps showing
+        six unknown cards and only a genuine no-usable-data failure collapses
+        to this strip."""
+        self._strip_text_lbl.setText(f"Band conditions unavailable · last update {last_update_text}")
+        if flag == self._all_unknown:
+            return
+        self._all_unknown = flag
+        self._stack.setCurrentIndex(1 if flag else 0)
+
+    def set_stale(self, flag: bool) -> None:
+        """SPEC §8 "stale": same word, outline badge in its own semantic
+        colour, no fill -- a second "stale" property alongside the existing
+        good/fair/poor "state" one, so the colour/word themselves never
+        change, only the fill."""
+        for badge in self._badge_labels.values():
+            if badge.property("stale") == flag:
+                continue
+            badge.setProperty("stale", flag)
+            badge.style().unpolish(badge)
+            badge.style().polish(badge)
 
     def _build_card(self, band: str) -> None:
         card = QFrame()
@@ -170,6 +267,20 @@ class BandPanelWidget(QWidget):
         for i, band in enumerate(self._bands):
             row, col = divmod(i, cols)
             self._grid.addWidget(self._cards[band], row, col)
+        # P5-r4: self._grid now lives on grid_page (a child of self._stack),
+        # not directly on self the way it did before the all-unknown strip
+        # (G12) added a second QStackedLayout page. QGridLayout normally
+        # self-invalidates on structural changes like this, which is enough
+        # when it's the widget's own top-level layout -- but one level
+        # removed behind QStackedLayout, that invalidation only reaches
+        # self._stack via a *posted* LayoutRequest event, which needs an
+        # actual event-loop turn to land. Explicitly invalidating the stack
+        # here makes this synchronous instead, so a parent activate() racing
+        # this call (e.g. qt_app._update_compact_mode, which toggles compact
+        # mode and reads geometry back with no processEvents() in between)
+        # sees the real, already-shrunk size instead of a stale, taller one.
+        self._stack.invalidate()
+        self.updateGeometry()
 
     def _apply_state(self, band: str, state: str) -> None:
         card = self._cards[band]
@@ -204,6 +315,11 @@ class BandPanelWidget(QWidget):
                 card.setMinimumHeight(0)
                 card.setMaximumHeight(16777215)
                 card.setToolTip("")
+        self._strip.setFixedHeight(BAND_CHIP_HEIGHT_COMPACT if compact else 64)
+        if compact:
+            self._strip_layout.setContentsMargins(10, 2, 10, 2)
+        else:
+            self._strip_layout.setContentsMargins(12, 10, 12, 10)
         # G10: _columns_for_width()'s own floor depends on self._compact, so
         # a toggle here can change the right column count even when the
         # widget's width hasn't -- resizeEvent() alone wouldn't catch that.
