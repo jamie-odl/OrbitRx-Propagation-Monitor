@@ -27,9 +27,14 @@ class AppState:
     bands_summary: str = "--"
     band_grid: dict[str, str] = field(default_factory=dict)
     time_utc: str = "--"
-    kp_forecast: str = "--"
+    # SPEC §10: the one "no data" glyph (an en dash), not "--" -- these two
+    # reach the UI verbatim (controller.weather_labels()'s "kp_forecast"/
+    # "solar_forecast" rows interpolate the raw string with no NONE_TEXT
+    # gate), unlike bands_summary/time_utc which always pass through a
+    # formatter that already special-cases "--".
+    kp_forecast: str = "–"
     alerts: list[str] = field(default_factory=list)
-    solar_forecast: str = "--"
+    solar_forecast: str = "–"
     slider_offset_hours: float = 0.0
     map_zoom: float = 1.0
     map_pan_x: float = 0.0

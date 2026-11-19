@@ -421,12 +421,22 @@ class PropagationMapWidget(QWidget):
         viewport's own aspect overshoots (the old unconditional
         KeepAspectRatioByExpanding behaviour, which cropped longitude at
         1280x800 -- see p4-findings.md "(e) Map framing"). Once the padded
-        rect's aspect matches the viewport's, KeepAspectRatio (contain) and
-        KeepAspectRatioByExpanding (cover) are identical, since there's
-        nothing left to crop or letterbox; KeepAspectRatio is used as the
-        "fit exactly" intent. The view is still scaled uniformly (m11==m22),
-        so overlays/markers drawn in the same scene coordinates as the
-        basemap never drift out of alignment."""
+        rect's aspect matches the viewport's, "contain" and "cover" are
+        identical, since there's nothing left to crop or letterbox. The view
+        is still scaled uniformly (m11==m22), so overlays/markers drawn in
+        the same scene coordinates as the basemap never drift out of
+        alignment.
+
+        P5-r6 (G9 follow-up): this scales/centres manually instead of calling
+        QGraphicsView.fitInView(), which internally shrinks the viewport rect
+        by a hardcoded 2 px margin per side before computing its ratio (a
+        Qt-internal anti-scrollbar-feedback guard, not configurable) -- with
+        scrollbars already force-disabled above, that margin only leaves a
+        several-pixel strip of the view's raw MAP_OCEAN backgroundBrush
+        uncovered by the basemap at the viewport's edges, visually distinct
+        from the basemap's own (slightly different) sea pixels. Computing the
+        scale from the real viewport size and centering directly covers the
+        full viewport with no residual margin."""
         if rect.width() <= 0 or rect.height() <= 0:
             return
         vp = self.view.viewport()
@@ -435,7 +445,12 @@ class PropagationMapWidget(QWidget):
             self.view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatioByExpanding)
             return
         padded = self._padded_scene_rect(rect, vp_w / vp_h)
-        self.view.fitInView(padded, Qt.AspectRatioMode.KeepAspectRatio)
+        if padded.width() <= 0 or padded.height() <= 0:
+            return
+        scale_factor = max(vp_w / padded.width(), vp_h / padded.height())
+        self.view.resetTransform()
+        self.view.scale(scale_factor, scale_factor)
+        self.view.centerOn(padded.center())
 
     def _overlay_refresh_key(self, scene: MapScene, snapshot: _MapStateSnapshot) -> tuple:
         return (

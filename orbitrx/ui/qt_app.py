@@ -24,7 +24,7 @@ from orbitrx.ui.map_widget import PropagationMapWidget, QT_AVAILABLE, _pil_to_qi
 from orbitrx.spots.settings import clamp_poll_seconds
 from orbitrx.ui.formatting import (
     widen_to_min_span,
-    humanize_iso_dates, fmt, format_value,
+    fmt, format_value,
     format_hour_offset, format_no_spots_message, format_replay_offset,
     history_plot_date_format, insert_gap_breaks, pad_datetime_range, EXPECTED_POLL_S,
 )
@@ -52,7 +52,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QApplication, QButtonGroup, QCheckBox, QComboBox, QDateEdit, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QListWidget,
-    QListWidgetItem, QMainWindow, QMessageBox, QPushButton, QScrollArea, QSlider,
+    QMainWindow, QMessageBox, QPushButton, QScrollArea, QSlider,
     QSpinBox, QSplitter, QStackedWidget, QTabWidget, QToolButton, QVBoxLayout, QWidget, QFileDialog,
     QSystemTrayIcon, QMenu, QWidgetAction,
 )
@@ -845,6 +845,7 @@ class QtOrbitRxApplication(QMainWindow):
             on_alarm_excellent=ui(self._alarm_excellent),
             on_alarm_storm=ui(self._alarm_storm),
             on_error=ui(self._on_controller_error),
+            on_alert=ui(self._on_spot_alert_toast),
         )
         self.ctrl._on_band_beep = ui(self._spot_beep)
         self.ctrl.on_live_spots = ui(self._refresh_live_spots)
@@ -852,6 +853,10 @@ class QtOrbitRxApplication(QMainWindow):
         geom = self.ctrl.cfg.get("window_geometry", "1400x820")
         self.resize(*self._parse_geom(geom))
         self._build_ui()
+        # P5-r6 (c): anchor every toast to the map frame, not the window's
+        # own bottom-right corner, so it never overlaps the control strip/
+        # band chips at compact widths (SPEC §7's in-map-overlay area).
+        self._toasts.set_anchor_widget(self._map_frame)
         self._render_cluster_label()  # P4-8: sync the map's cluster pill to the initial real state
         fit_to_screen(self, 640, 440)
         self._load_map()
@@ -1499,14 +1504,12 @@ class QtOrbitRxApplication(QMainWindow):
 
         stats_outer.addWidget(stats_body, stretch=1)
 
-        stats_outer.addWidget(QLabel("Alerts"))
-        self.alerts_list = QListWidget()
-        self.alerts_list.setMaximumHeight(90)
-        self.alerts_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.alerts_list.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self.alerts_list.setWordWrap(False)
-        self.alerts_list.setUniformItemSizes(True)
-        stats_outer.addWidget(self.alerts_list)
+        # P5-r6 (a): the "Alerts / No active alerts" box is gone -- SPEC §9's
+        # panel structure has no Alerts section, and §6.1 ("one home per
+        # fact") already gives DX-spot alerts a home: a toast
+        # (_on_spot_alert_toast) plus the status bar (_set_status below).
+        # Alert *detection* (orbitrx/spots/alerts.py's evaluate_alerts) is
+        # untouched -- only this redundant list-widget mirror of it is removed.
         self.tabs.addTab(stats_tab, "Stats")
         self._stats_tab = stats_tab
 
@@ -1547,12 +1550,11 @@ class QtOrbitRxApplication(QMainWindow):
 
         right_layout.addWidget(self.tabs)
 
-        self.status_lbl = QLabel("Ready")
-        self.status_lbl.setObjectName("muted")
-        self.status_lbl.setWordWrap(True)
-        self.status_lbl.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        right_layout.addWidget(self.status_lbl)
-
+        # P5-r6 (a): the stray "Ready"/"Weather error: ..." label under the
+        # panel is gone too -- not in SPEC §9's structure. Every message that
+        # used to land here now goes through _set_status -> the real Qt
+        # status bar's showMessage (transient, already in the SPEC §6.2
+        # status-bar row), so nothing it carried is lost.
         self.click_lbl = QLabel("")
         self.click_lbl.setWordWrap(True)
         self.click_lbl.setObjectName("muted")
@@ -1764,6 +1766,19 @@ class QtOrbitRxApplication(QMainWindow):
         self._corner_summary_visible = False
         layout.addWidget(self._corner_summary_lbl)
 
+        # P5-r6 (c): the weather no-data/stale banner (SPEC §10) lives in the
+        # side panel's "stateBanner", which is itself hidden below the 820px
+        # side-panel breakpoint and only reachable through the Ctrl+B drawer
+        # -- so at compact widths a feed failure was invisible unless the
+        # user opened it. This one-word corner state (POOR "Error"/FAIR
+        # "Stale") mirrors the banner without needing the drawer, right next
+        # to the SFI/Kp/A summary it already sits beside.
+        self._corner_state_lbl = QLabel("")
+        self._corner_state_lbl.setObjectName("statusCornerState")
+        self._corner_state_lbl.setTextFormat(Qt.TextFormat.RichText)
+        self._corner_state_lbl.setVisible(False)
+        layout.addWidget(self._corner_state_lbl)
+
         self._corner_cluster_lbl = QLabel("Cluster disconnected")
         self._corner_cluster_lbl.setObjectName("statusCornerCluster")
         self._corner_cluster_lbl.setTextFormat(Qt.TextFormat.RichText)
@@ -1919,8 +1934,8 @@ class QtOrbitRxApplication(QMainWindow):
             self.band_panel.setFocus()
         elif which == "log":
             self.tabs.setCurrentWidget(self._stats_tab)
-            self._side_scroll.ensureWidgetVisible(self.alerts_list)
-            self.alerts_list.setFocus()
+            self._side_scroll.ensureWidgetVisible(self._stats_tab)
+            self._stats_tab.setFocus()
 
     def controls_reachable(self) -> dict[str, bool]:
         """Every tracked command is reachable as long as the menu bar itself
@@ -2105,11 +2120,6 @@ class QtOrbitRxApplication(QMainWindow):
         self._freshness_lbl.setText(self._space_weather_freshness_text())
         self._update_location_hint_visibility()
         self._update_weather_state_banner()
-        self.alerts_list.clear()
-        for alert in self.ctrl.state.alerts[:5] or ["No active alerts"]:
-            item = QListWidgetItem(humanize_iso_dates(alert))
-            item.setToolTip(humanize_iso_dates(alert))
-            self.alerts_list.addItem(item)
         self._render_cluster_label()
         self.band_panel.update_grid(self.ctrl.state.band_grid)
         # P2B/G6: "whenever data refresh completes" -- on_weather and on_dx
@@ -2143,14 +2153,18 @@ class QtOrbitRxApplication(QMainWindow):
         self._kpi_labels["sfi"].setToolTip(f"Trend: {s.flux_trend}" if loaded and s.flux_trend else "")
         self._kpi_labels["kp"].setText(format_value(s.kp_index, fmt="{:.1f}") if loaded else NO_DATA)
         self._kpi_labels["a_index"].setText(format_value(s.a_index, fmt="{:g}") if loaded else NO_DATA)
-        if self._kp_caption_lbl is None:
-            return
-        if not loaded:
-            self._kp_caption_lbl.setText("Kp")
-            return
-        word, token = kp_state(s.kp_index)
-        color = {"GOOD": GOOD, "FAIR": FAIR, "POOR": POOR}[token]
-        self._kp_caption_lbl.setText(f'Kp &middot; <span style="color:{color}">{word}</span>')
+        if self._kp_caption_lbl is not None:
+            if not loaded:
+                self._kp_caption_lbl.setText("Kp")
+            else:
+                word, token = kp_state(s.kp_index)
+                color = {"GOOD": GOOD, "FAIR": FAIR, "POOR": POOR}[token]
+                self._kp_caption_lbl.setText(f'Kp &middot; <span style="color:{color}">{word}</span>')
+        # P5-r6 (c): this used to live inside the `loaded` branch above and
+        # return early otherwise, so the corner summary/state indicator
+        # never refreshed while stuck in the "never loaded"/error-no-data
+        # state (e.g. a retry that fails again) -- it must run on every
+        # call so the corner state word (Error/Stale) can actually appear.
         self._update_control_strip_corner_summary()
 
     # Round 6 (SPEC §9 "At 683"/§13 "W<820"): corner space-weather summary.
@@ -2180,17 +2194,54 @@ class QtOrbitRxApplication(QMainWindow):
             return
         self._corner_summary_visible = visible
         self._corner_summary_lbl.setVisible(visible)
+        self._resync_corner_widget_geometry()
+
+    def _resync_corner_widget_geometry(self) -> None:
+        """P5-r6 (c): QMenuBar only reserves space for its corner widget
+        based on the sizeHint() it had the last time the menu bar itself
+        relaid out (construction, or its own resize) -- it never re-queries
+        that hint just because a corner label's text changed afterward. The
+        state summary/cluster phrase do change length after that (real
+        values arriving, "No data" dashes vs digits, "disconnected" vs a
+        connected node name), so the corner's QHBoxLayout can end up cramming
+        wider content into the old, narrower reserved rect and clipping
+        glyphs instead of growing. Re-setting the same corner widget forces
+        QMenuBar to re-measure and re-reserve space for it right now."""
+        corner = getattr(self, "_status_corner", None)
+        if corner is None:
+            return
+        self.menuBar().setCornerWidget(corner, Qt.Corner.TopRightCorner)
 
     def _update_control_strip_corner_summary(self) -> None:
         lbl = getattr(self, "_corner_summary_lbl", None)
         if lbl is None:
             return
         lbl.setText(self._corner_summary_text())
+        lbl.adjustSize()
         width = self.width()
         if width < self._CORNER_SUMMARY_BELOW:
             self._apply_corner_summary_visible(True)
         elif width > self._CORNER_SUMMARY_ABOVE:
             self._apply_corner_summary_visible(False)
+        self._update_corner_state_indicator(width)
+        self._resync_corner_widget_geometry()
+
+    def _update_corner_state_indicator(self, width: int) -> None:
+        state_lbl = getattr(self, "_corner_state_lbl", None)
+        if state_lbl is None:
+            return
+        s = self.ctrl.state
+        fetch_failed = not s.weather_last_fetch_ok
+        has_last_good = s.last_weather_success_update is not None
+        if fetch_failed and has_last_good:
+            state_lbl.setText(f'<span style="color:{FAIR}">Stale</span>')
+            is_degraded = True
+        elif fetch_failed and s.last_weather_update is None:
+            state_lbl.setText(f'<span style="color:{POOR}">Error</span>')
+            is_degraded = True
+        else:
+            is_degraded = False
+        state_lbl.setVisible(is_degraded and width < self._CORNER_SUMMARY_BELOW)
 
     # Round 6 (SPEC §8/§13 "Compact variant (683, or a window height under
     # 560)"): band-chip compact threshold, same ±16px hysteresis idiom.
@@ -2564,10 +2615,21 @@ class QtOrbitRxApplication(QMainWindow):
         QMessageBox.information(self, "CAT", result)
 
     def _set_status(self, text: str) -> None:
-        self.status_lbl.setText(text)
+        # P5-r6 (a): this used to set a dedicated "Ready"/status label in the
+        # now-removed side-panel footer -- the real Qt status bar's own
+        # transient message area (already part of SPEC §6.2's status-bar row)
+        # is the one home left for it.
+        self.statusBar().showMessage(text, 6000)
 
     def _on_controller_error(self, message: str) -> None:
         self._toasts.show_toast(message, kind="error")
+
+    def _on_spot_alert_toast(self, title: str, message: str) -> None:
+        # P5-r6 (a): DX-spot alerts (orbitrx/spots/alerts.py's AlertEvents,
+        # relayed via controller._spot_alert) now toast in-app instead of
+        # only writing to the removed Alerts list box -- "info" (not
+        # "error") since these are opportunity notices, not failures.
+        self._toasts.show_toast(f"{title}: {message}", kind="info")
 
     def _set_cluster(self, status: str) -> None:
         was_connected = self.ctrl.state.cluster_status == "connected"
@@ -2606,6 +2668,7 @@ class QtOrbitRxApplication(QMainWindow):
             phrase = f"Cluster {status}"
         if hasattr(self, "_corner_cluster_lbl"):
             self._corner_cluster_lbl.setText(f'<span style="color:{dot_color}">●</span> {phrase}')
+            self._resync_corner_widget_geometry()
         # G3/SPEC §6.1/§11: the header's cluster combo leads with a status
         # dot in the same real cluster_status colour as the corner text
         # above, not a static glyph.

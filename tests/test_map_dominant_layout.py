@@ -994,6 +994,103 @@ def test_stale_banner_shown_when_last_good_data_exists_but_fetch_fails(window):
     assert badge.property("stale") is True
 
 
+def test_corner_state_indicator_visible_without_drawer_at_683x485(window):
+    """P5-r6 (c): the no-data/stale banner (SPEC §10) lives in the side
+    panel, which is hidden below 820px wide and only reachable via the
+    Ctrl+B drawer -- at 683x485 a feed failure used to be invisible unless
+    the user opened it. The one-word menu-bar corner state must say so
+    without the drawer: hidden in the normal state, "Error" (error_no_data)
+    or "Stale" otherwise, and never while the drawer/side panel is open."""
+    _resize_and_settle(window, 683, 485)
+    assert window._compact
+    assert window._side_pane.isVisible() is False or not window._side_panel_visible
+
+    window.ctrl.state.weather_last_fetch_ok = True
+    window._refresh_labels_and_map()
+    assert window._corner_state_lbl.isVisible() is False
+
+    window.ctrl.state.weather_last_fetch_ok = False
+    window._refresh_labels_and_map()
+    assert window._corner_state_lbl.isVisible()
+    assert "Error" in window._corner_state_lbl.text()
+
+    import datetime
+    window.ctrl.state.flux = 111.0
+    now = datetime.datetime.now(datetime.timezone.utc)
+    window.ctrl.state.last_weather_update = now
+    window.ctrl.state.last_weather_success_update = now
+    window.ctrl.state.weather_last_fetch_ok = False
+    window._refresh_labels_and_map()
+    assert window._corner_state_lbl.isVisible()
+    assert "Stale" in window._corner_state_lbl.text()
+
+
+def test_corner_widget_sizehint_fits_its_allotted_width_in_every_state_at_683x485(window):
+    """P5-r6 (c): the menu-bar corner must never clip -- QMenuBar only
+    re-measures its corner widget's reserved width when the menu bar itself
+    relays out, not just because a corner label's text grew (real values
+    replacing NO_DATA dashes, "disconnected" vs a longer connected node
+    name) -- _resync_corner_widget_geometry() must keep the widget's actual
+    width in sync with its sizeHint() after every state change, in every
+    state, so nothing is ever cropped."""
+    import datetime
+
+    _resize_and_settle(window, 683, 485)
+    assert window._compact
+
+    def assert_no_clip():
+        hint = window._status_corner.sizeHint()
+        assert window._status_corner.width() >= hint.width(), (
+            window._status_corner.width(), hint.width()
+        )
+
+    # empty (never loaded)
+    window._refresh_labels_and_map()
+    assert_no_clip()
+
+    # error (no usable data)
+    window.ctrl.state.weather_last_fetch_ok = False
+    window._refresh_labels_and_map()
+    assert_no_clip()
+
+    # stale (has last-good data)
+    window.ctrl.state.flux = 111.0
+    now = datetime.datetime.now(datetime.timezone.utc)
+    window.ctrl.state.last_weather_update = now
+    window.ctrl.state.last_weather_success_update = now
+    window.ctrl.state.weather_last_fetch_ok = False
+    window._refresh_labels_and_map()
+    assert_no_clip()
+
+    # connected, with a long real cluster node name
+    window.ctrl.cfg.data["dx_cluster_host"] = "a-rather-long-cluster-hostname.example.net"
+    window._set_cluster("connected")
+    assert_no_clip()
+
+
+def test_toast_does_not_overlap_control_strip_at_683x485(window):
+    """P5-r6 (c): a toast anchored to the map frame (not the window's own
+    bottom-right corner) must never cover the control strip/band chips
+    below the map -- both geometries mapped into the same (window)
+    coordinate space must not intersect."""
+    _resize_and_settle(window, 683, 485)
+    assert window._compact
+
+    window._toasts.show_toast("Weather update failed: source unreachable", kind="error")
+    assert window._toasts.is_visible()
+
+    toast_label = window._toasts._label
+    toast_rect = QRect(toast_label.mapTo(window, toast_label.rect().topLeft()), toast_label.size())
+    controls = window._map_controls
+    controls_rect = QRect(controls.mapTo(window, controls.rect().topLeft()), controls.size())
+    assert not toast_rect.intersects(controls_rect), (toast_rect, controls_rect)
+
+    band_rect = QRect(
+        window.band_panel.mapTo(window, window.band_panel.rect().topLeft()), window.band_panel.size()
+    )
+    assert not toast_rect.intersects(band_rect), (toast_rect, band_rect)
+
+
 def test_map_pill_consolidated_disconnected_vs_connected(window):
     """G14: the map shows one pill, never two stacked -- disconnected shows
     only "Cluster disconnected · Reconnect"; connected (with a genuinely

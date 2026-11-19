@@ -26,9 +26,15 @@ _KIND_COLORS = {"error": ERR, "warning": WARN, "info": ACCENT, "ok": OK}
 
 class ToastManager(QObject):
     """Anchors a single auto-dismissing toast to the bottom-right corner of
-    `parent`. Callers must already be on the UI thread (route worker-thread
-    failures through the same _UiInvoker/UiInvoker pattern used for every
-    other controller callback before calling show_toast)."""
+    `parent` (or, once set_anchor_widget() names a descendant of `parent`,
+    the bottom-right corner of that widget instead -- P5-r6: at compact
+    window widths the window's own bottom-right corner sits on top of the
+    control strip/band chips, so a toast anchored there visually overlaps
+    them; anchoring to the map frame instead keeps every toast inside the
+    map, above that chrome, at every width). Callers must already be on the
+    UI thread (route worker-thread failures through the same
+    _UiInvoker/UiInvoker pattern used for every other controller callback
+    before calling show_toast)."""
 
     def __init__(
         self,
@@ -38,6 +44,7 @@ class ToastManager(QObject):
     ) -> None:
         super().__init__(parent)
         self._parent = parent
+        self._anchor_widget: QWidget | None = None
         self._duration_ms = duration_ms
         self._dedup_window_s = dedup_window_s
         self._last_shown: dict[str, float] = {}
@@ -76,11 +83,25 @@ class ToastManager(QObject):
         self._label.raise_()
         self._timer.start(self._duration_ms)
 
+    def set_anchor_widget(self, widget: QWidget | None) -> None:
+        """Anchor future toasts to `widget`'s bottom-right corner (mapped
+        into `parent`'s coordinates) instead of the window's -- `widget`
+        must be a descendant of `parent` (the toast label stays a direct
+        child of `parent`, only the position computation changes)."""
+        self._anchor_widget = widget
+        self.reposition()
+
     def _reposition(self) -> None:
         margin = 12
-        bottom_reserve = 28  # roughly one status-bar height, so it never overlaps it
-        x = max(margin, self._parent.width() - self._label.width() - margin)
-        y = max(margin, self._parent.height() - self._label.height() - margin - bottom_reserve)
+        anchor = self._anchor_widget
+        if anchor is not None and anchor.isVisible() and anchor.width() > 0 and anchor.height() > 0:
+            top_left = anchor.mapTo(self._parent, anchor.rect().topLeft())
+            x = max(top_left.x() + margin, top_left.x() + anchor.width() - self._label.width() - margin)
+            y = max(top_left.y() + margin, top_left.y() + anchor.height() - self._label.height() - margin)
+        else:
+            bottom_reserve = 28  # roughly one status-bar height, so it never overlaps it
+            x = max(margin, self._parent.width() - self._label.width() - margin)
+            y = max(margin, self._parent.height() - self._label.height() - margin - bottom_reserve)
         self._label.move(x, y)
 
     def reposition(self) -> None:

@@ -138,8 +138,11 @@ def fetch_space_weather_data() -> dict[str, Any]:
         "solar_wind_speed": None,
         "bz": None,
         "alerts": [],
-        "kp_forecast": "--",
-        "solar_forecast": "--",
+        # SPEC §10: these two reach the "Kp forecast"/"27-Day" rows verbatim
+        # (no NONE_TEXT-gated formatter in between), so the no-data default
+        # is the real glyph, not a literal "--" (see state.py).
+        "kp_forecast": "–",
+        "solar_forecast": "–",
     }
 
     # Kp index (NOAA now returns dict rows)

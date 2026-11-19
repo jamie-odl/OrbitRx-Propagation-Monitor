@@ -52,6 +52,7 @@ class OrbitRxController:
         on_alarm_storm: Callable[[], None] | None = None,
         on_band_beep: Callable[[dict], None] | None = None,
         on_error: Callable[[str], None] | None = None,
+        on_alert: Callable[[str, str], None] | None = None,
     ) -> None:
         self.log = setup_logging()
         self.cfg = AppConfig().load()
@@ -69,6 +70,11 @@ class OrbitRxController:
         # logged only (weather fetch, geolocation) -- the UI wraps this in a
         # toast via the _UiInvoker pattern, same as every other callback here.
         self._on_error = on_error or (lambda _s: None)
+        # P5-r6 (a): DX-spot alerts (evaluate_alerts()) now reach an in-app
+        # toast through this, not just the removed Alerts list box -- kept
+        # separate from on_error since these are opportunity notices, not
+        # failures.
+        self._on_alert = on_alert or (lambda _t, _m: None)
 
         self._dx = DxClusterService(
             self.state,
@@ -97,6 +103,7 @@ class OrbitRxController:
     def _spot_alert(self, title: str, message: str) -> None:
         show_toast(f"OrbitRx: {title}", message)
         self._on_status(f"{title}: {message}")
+        self._on_alert(title, message)
 
     def start(self) -> None:
         if offline_fixture():
@@ -208,6 +215,17 @@ class OrbitRxController:
         if self.state.weather_fetch_in_progress:
             return
         self.state.weather_fetch_in_progress = True
+        # P5-r6 (e): the no-data banner (SPEC §10) already says the fetch
+        # failed for as long as it keeps failing -- a toast on every single
+        # retry (every auto-refresh interval) duplicates that for the whole
+        # episode. Captured before this attempt's outcome can change it:
+        # True means either the previous attempt succeeded or this is the
+        # very first attempt ever (the dataclass default), so only *this*
+        # failure (the one that starts a new episode) toasts; consecutive
+        # failures after it see this already False and stay silent. A live
+        # success flips weather_last_fetch_ok back to True (_apply_weather),
+        # which is what "resets the episode" means here.
+        was_ok = self.state.weather_last_fetch_ok
 
         def worker():
             try:
@@ -221,7 +239,8 @@ class OrbitRxController:
                 offline = True
                 if not data:
                     self._on_status(f"Weather error: {e}")
-                    self._on_error(f"Weather update failed: {e}")
+                    if was_ok:
+                        self._on_error(f"Weather update failed: {e}")
                     self.state.weather_fetch_in_progress = False
                     # P4-7: no cache to fall back to either -- if there is
                     # last-good data on screen it is now stale, even though
@@ -236,7 +255,8 @@ class OrbitRxController:
                     # same notification since it skips that call entirely.
                     self._on_weather()
                     return
-                self._on_error("Weather update failed, showing cached data")
+                if was_ok:
+                    self._on_error("Weather update failed, showing cached data")
             try:
                 self._apply_weather(data, offline)
             except Exception:
@@ -258,9 +278,9 @@ class OrbitRxController:
         self.state.sunspot_observed = data.get("sunspot_observed")
         self.state.sunspot_predicted = data.get("sunspot_predicted")
         self.state.time_utc = data.get("time_utc", "--")
-        self.state.kp_forecast = data.get("kp_forecast", "--")
+        self.state.kp_forecast = data.get("kp_forecast", NONE_TEXT)
         self.state.alerts = data.get("alerts", [])
-        self.state.solar_forecast = data.get("solar_forecast", "--")
+        self.state.solar_forecast = data.get("solar_forecast", NONE_TEXT)
         self.state.flux_trend = flux_trend_arrow(self.store.recent_flux(5))
         muf, luf = estimate_muf(self.state.flux, self.state.kp_index)
         self.state.muf, self.state.luf = muf, luf

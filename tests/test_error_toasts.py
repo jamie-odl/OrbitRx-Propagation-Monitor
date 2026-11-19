@@ -107,6 +107,50 @@ def test_geolocation_failure_calls_on_error(tmp_path, monkeypatch):
     assert ctrl.state.location_source == "unset"
 
 
+def test_weather_fetch_failure_toasts_once_per_episode(tmp_path, monkeypatch):
+    """P5-r6 (e): a second, third, ... consecutive fetch failure must not
+    toast again -- the no-data banner already says so for as long as the
+    episode lasts. Only the failure that *starts* a new episode (the first
+    one after a success, or the very first attempt) toasts; a live success
+    in between resets the episode so the next failure toasts again."""
+    monkeypatch.chdir(tmp_path)
+    from orbitrx.ui.controller import OrbitRxController
+    import orbitrx.ui.controller as controller_mod
+
+    errors = []
+    ctrl = OrbitRxController(on_error=errors.append)
+    ctrl.cfg.data["offline_cache_enabled"] = False
+    monkeypatch.setattr(
+        controller_mod, "fetch_space_weather_data", lambda: (_ for _ in ()).throw(RuntimeError("NOAA down"))
+    )
+
+    ctrl.fetch_weather()
+    ctrl._weather_thread.join(timeout=5)
+    assert len(errors) == 1, errors
+
+    ctrl.fetch_weather()
+    ctrl._weather_thread.join(timeout=5)
+    assert len(errors) == 1, "a second consecutive failure toasted again"
+
+    monkeypatch.setattr(
+        controller_mod,
+        "fetch_space_weather_data",
+        lambda: {"kp_index": 2.0, "flux": 110.0, "time_utc": "2026-01-01 00:00"},
+    )
+    monkeypatch.setattr(controller_mod, "fetch_solar_xml", lambda: None)
+    ctrl.fetch_weather()
+    ctrl._weather_thread.join(timeout=5)
+    assert len(errors) == 1, "a successful fetch must never toast"
+    assert ctrl.state.weather_last_fetch_ok is True
+
+    monkeypatch.setattr(
+        controller_mod, "fetch_space_weather_data", lambda: (_ for _ in ()).throw(RuntimeError("NOAA down again"))
+    )
+    ctrl.fetch_weather()
+    ctrl._weather_thread.join(timeout=5)
+    assert len(errors) == 2, "the first failure of a new episode (after a success) must toast"
+
+
 def test_weather_fetch_success_does_not_call_on_error(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from orbitrx.ui.controller import OrbitRxController
@@ -137,6 +181,23 @@ def test_controller_error_callback_shows_toast(window, no_modals):
     window._on_controller_error("Weather update failed: boom")
     assert window._toasts.is_visible()
     assert "Weather update failed" in window._toasts.current_text()
+
+
+def test_spot_alert_shows_toast(window, no_modals):
+    """P5-r6 (a): the "Alerts / No active alerts" side-panel box is gone
+    (not in SPEC §9), but a DX-spot alert (orbitrx/spots/alerts.py's
+    evaluate_alerts(), relayed through controller._spot_alert) must still
+    reach the user -- now as an in-app toast instead of only a list item."""
+    from PySide6.QtWidgets import QApplication
+
+    window.ctrl._spot_alert("Local Band Activity", "5 spots are active within 50 miles of HOME.")
+    # _on_alert is wrapped by the same queued _UiInvoker every other
+    # controller callback uses (P1), so it only actually runs on the next
+    # event-loop turn, not synchronously.
+    _pump(QApplication.instance(), 0.2)
+    assert window._toasts.is_visible()
+    assert "Local Band Activity" in window._toasts.current_text()
+    assert "5 spots" in window._toasts.current_text()
 
 
 def test_cluster_reconnect_after_connected_shows_toast(window, no_modals):
