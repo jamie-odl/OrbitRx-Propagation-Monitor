@@ -250,7 +250,7 @@ def test_rig_wizard_test_cat_does_not_block_ui_thread(window, monkeypatch):
     from PySide6.QtWidgets import QApplication
     from orbitrx.ui.rig_wizard import RigWizardDialog
 
-    monkeypatch.setattr(window.ctrl.cat, "tune", _slow_tune(0.3))
+    monkeypatch.setattr(window.ctrl.cat, "probe", _slow_probe(0.3))
     dlg = RigWizardDialog(window.ctrl.cfg, window.ctrl.cat, window)
     app = QApplication.instance()
 
@@ -261,7 +261,8 @@ def test_rig_wizard_test_cat_does_not_block_ui_thread(window, monkeypatch):
     assert not dlg._cat_runner._thread.is_alive()
     app.processEvents()
     assert dlg.test_btn.isEnabled() is True
-    assert "Sent CAT" in dlg.status_text.text()
+    assert "Read" in dlg.status_text.text()
+    assert "Sent CAT" not in dlg.status_text.text()
 
 
 def test_rig_wizard_test_cat_cancel_and_timeout(window, monkeypatch):
@@ -272,7 +273,7 @@ def test_rig_wizard_test_cat_cancel_and_timeout(window, monkeypatch):
     app = QApplication.instance()
 
     # Cancel.
-    monkeypatch.setattr(window.ctrl.cat, "tune", _slow_tune(0.3))
+    monkeypatch.setattr(window.ctrl.cat, "probe", _slow_probe(0.3))
     dlg = RigWizardDialog(window.ctrl.cfg, window.ctrl.cat, window)
     dlg._test_cat()
     assert dlg.test_btn.isEnabled() is False
@@ -289,7 +290,7 @@ def test_rig_wizard_test_cat_cancel_and_timeout(window, monkeypatch):
 
     # Timeout.
     monkeypatch.setattr(rig_wizard, "CAT_TEST_TIMEOUT_S", 0.05)
-    monkeypatch.setattr(window.ctrl.cat, "tune", _slow_tune(2.0))
+    monkeypatch.setattr(window.ctrl.cat, "probe", _slow_probe(2.0))
     dlg2 = RigWizardDialog(window.ctrl.cfg, window.ctrl.cat, window)
     dlg2._test_cat()
     # deadline is only a hang guard -- the timeout itself fires at 0.05s, so
@@ -308,7 +309,7 @@ def test_cat_test_survives_dialog_deletion_before_worker_finishes(window, monkey
     from PySide6.QtWidgets import QApplication
     from orbitrx.ui.rig_wizard import RigWizardDialog
 
-    monkeypatch.setattr(window.ctrl.cat, "tune", _slow_tune(0.3))
+    monkeypatch.setattr(window.ctrl.cat, "probe", _slow_probe(0.3))
     dlg = RigWizardDialog(window.ctrl.cfg, window.ctrl.cat, window)
     app = QApplication.instance()
 

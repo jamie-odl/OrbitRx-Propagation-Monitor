@@ -64,6 +64,7 @@ from orbitrx.ui.async_utils import BackgroundTask, CatTestRunner
 from orbitrx.ui.theme import (
     ACCENT,
     ACCENT_SOFT,
+    ASSETS_DIR,
     BG_CANVAS,
     BG_HOVER,
     BG_INSET,
@@ -98,6 +99,7 @@ _WIDTHS = {"S": 160, "M": 220, "L": 300}
 _CALLSIGN_RE = re.compile(r"^[A-Z0-9]{1,3}[0-9][A-Z0-9]{0,4}(/[A-Z0-9]{1,4})?$")
 _COM_RE = re.compile(r"^COM\d{1,3}$", re.IGNORECASE)
 _PAGE_NAMES = ["Station", "Rig", "DX cluster", "Map & spots", "Services"]
+_COMBO_ARROW = (ASSETS_DIR / "spin-down.svg").as_posix()
 
 PAGE_DESCRIPTIONS = {
     "Station": "Your callsign and home coordinates, used to centre the map and tag your spots.",
@@ -134,8 +136,15 @@ QLabel#fieldError, QLabel#fieldErrorIcon {{ font-size: 12px; color: {POOR}; back
 QLabel#fieldErrorIcon {{ font-size: 14px; font-weight: 600; }}
 QLineEdit, QComboBox, QAbstractSpinBox {{ background: {BG_RAISED}; color: {TEXT_PRIMARY};
     border: 1px solid {BORDER_CONTROL}; border-radius: 6px; padding: 0 10px; min-height: 26px; }}
+QComboBox {{ padding-right: 28px; }}
+QComboBox::drop-down {{
+    subcontrol-origin: padding; subcontrol-position: center right; width: 22px;
+    border: none; background: transparent;
+}}
+QComboBox::down-arrow {{ image: url({_COMBO_ARROW}); width: 8px; height: 8px; }}
 QLineEdit:hover, QComboBox:hover, QAbstractSpinBox:hover {{ border-color: #8A95A8; }}
-QLineEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {{ border: 2px solid {ACCENT}; padding: 0 9px; }}
+QLineEdit:focus, QAbstractSpinBox:focus {{ border: 2px solid {ACCENT}; padding: 0 9px; }}
+QComboBox:focus {{ border: 2px solid {ACCENT}; padding: 0 27px 0 9px; }}
 QLineEdit[invalid="true"], QComboBox[invalid="true"], QAbstractSpinBox[invalid="true"],
 QFrame#coordField[invalid="true"] {{ border: 2px solid {POOR}; }}
 QLineEdit:disabled, QComboBox:disabled, QAbstractSpinBox:disabled {{ background: transparent;
@@ -1039,7 +1048,7 @@ class SettingsDialog(QDialog):
         self._cat_hold = hold
         layout.addWidget(hold)
         self._cat_card = card
-        self._show_cat("idle", "Not tested yet", "Asks the radio for its frequency. It will not change the dial.")
+        self._show_cat("idle", "Not tested yet", "")
         layout.addStretch(1)
 
     def _add_dx(self, cfg) -> None:
@@ -1835,7 +1844,8 @@ class SettingsDialog(QDialog):
         safe = title.replace("<", "")
         self._cat_title.setText(f'<span style="color:{color}; font-weight:600">{safe}</span>')
         self.test_cat_result.setText(detail)
-        self.test_cat_result.setAccessibleDescription(f"{kind} {title}. {detail}")
+        self.test_cat_result.setVisible(bool(detail))
+        self.test_cat_result.setAccessibleDescription(f"{kind} {title}. {detail}".strip())
         if mono:
             self._cat_message.setText(mono)
             self._cat_message.setVisible(True)

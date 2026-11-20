@@ -6,10 +6,10 @@ from typing import Callable
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHBoxLayout, QLabel,
-    QMessageBox, QPushButton, QVBoxLayout,
+    QPushButton, QVBoxLayout,
 )
 
-from orbitrx.cat import CatController, RIG_PROFILES, default_port_fallback
+from orbitrx.cat import CatController, RIG_PROFILES, default_port_fallback, parse_probe_result
 from orbitrx.config import AppConfig
 from orbitrx.ui.async_utils import CatTestRunner
 from orbitrx.ui.theme import ERR, MUTED, OK
@@ -47,6 +47,10 @@ class SimulatedCatController:
         return [(self.port, "Simulated rig (screenshots/tests)")]
 
     def tune(self, freq_mhz: float | str, confirm=None) -> str:
+        return f"{_SIMULATED_PREFIX}{self.freq_mhz:.3f}"
+
+    def probe(self, **_kwargs) -> str:
+        """Same read-back contract as CatController.probe, without retuning."""
         return f"{_SIMULATED_PREFIX}{self.freq_mhz:.3f}"
 
 
@@ -177,22 +181,36 @@ class RigWizardDialog(QDialog):
             self.status_icon.setText("")
 
     def _test_cat(self) -> None:
-        self.cfg.data["cat_port"] = self._current_port()
-        self.cfg.data["cat_baud"] = int(self.baud_combo.currentText())
-        self.cfg.data["cat_rig_profile"] = self.profile_combo.currentText()
-        test_freq = 14.200
+        # Read the form. Do not write those values into cfg, and do not tune.
+        port = self._current_port()
+        baud = int(self.baud_combo.currentText())
+        profile = self.profile_combo.currentData() or self.profile_combo.currentText()
+        backend = str(self.cfg.get("rig_control", "serial") or "serial")
+        rig_number = int(self.cfg.get("omnirig_rig_number", 1) or 1)
         self.test_btn.setEnabled(False)
         self.cancel_test_btn.setVisible(True)
         self.status_icon.setText("")
         self.status_text.setText("Testing…")
         self.status_text.setStyleSheet("")
+
+        def operation() -> str:
+            return self.cat.probe(
+                port=port,
+                baud=baud,
+                profile=str(profile),
+                backend=backend,
+                timeout=min(4.0, CAT_TEST_TIMEOUT_S),
+                rig_number=rig_number,
+            )
+
         self._cat_runner.start(
-            self.cat, test_freq,
-            lambda kind, message: self._on_cat_test_done(kind, message, test_freq),
+            self.cat, 0.0,
+            lambda kind, message: self._on_cat_test_done(kind, message),
             timeout_s=CAT_TEST_TIMEOUT_S,
+            operation=operation,
         )
 
-    def _on_cat_test_done(self, kind: str, message: str, test_freq: float) -> None:
+    def _on_cat_test_done(self, kind: str, message: str) -> None:
         self.test_btn.setEnabled(True)
         self.cancel_test_btn.setVisible(False)
         if kind == "cancelled":
@@ -207,7 +225,7 @@ class RigWizardDialog(QDialog):
             self._on_rig_status(False, "test timed out")
             self._toasts.show_toast(f"CAT test failed: {message}", kind="error")
             return
-        result = message
+        result = str(message)
         if result.startswith(_SIMULATED_PREFIX):
             freq = result[len(_SIMULATED_PREFIX):]
             self.status_icon.setText("🟢")
@@ -215,15 +233,25 @@ class RigWizardDialog(QDialog):
             self.status_text.setStyleSheet(f"color: {SIMULATED_CAT_COLOR};")
             self._on_rig_status(True, "connected")
             return
-        ok = "Sent CAT" in result
-        self.status_icon.setText("🟢" if ok else "🔴")
-        self.status_text.setText(f"{result} (test frequency {test_freq} MHz)" if ok else result)
-        self.status_text.setStyleSheet(f"color: {OK if ok else ERR};")
-        self._on_rig_status(ok, "connected" if ok else "test failed")
-        if ok:
-            QMessageBox.information(self, "CAT", "Rig responded. Profile looks good.")
-        else:
-            self._toasts.show_toast(f"CAT test failed: {result}", kind="error")
+        status, detail = parse_probe_result(result)
+        if status == "ok":
+            self.status_icon.setText("🟢")
+            self.status_text.setText(detail)
+            self.status_text.setStyleSheet(f"color: {OK};")
+            self._on_rig_status(True, "answered")
+            return
+        if status == "timeout":
+            self.status_icon.setText("🔴")
+            self.status_text.setText(detail or "Timed out waiting for the rig")
+            self.status_text.setStyleSheet(f"color: {ERR};")
+            self._on_rig_status(False, "test timed out")
+            self._toasts.show_toast(f"CAT test failed: {detail}", kind="error")
+            return
+        self.status_icon.setText("🔴")
+        self.status_text.setText(detail or result)
+        self.status_text.setStyleSheet(f"color: {ERR};")
+        self._on_rig_status(False, "test failed")
+        self._toasts.show_toast(f"CAT test failed: {detail or result}", kind="error")
 
     def _save(self) -> None:
         port = self._current_port()

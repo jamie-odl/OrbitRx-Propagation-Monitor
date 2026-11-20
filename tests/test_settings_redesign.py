@@ -261,6 +261,71 @@ def test_qrz_and_port_scan_run_off_the_ui_thread(window, monkeypatch):
     assert "QRZ OK" in dlg._qrz_result.text()
 
 
+def test_cat_idle_help_is_shown_once_under_the_button(window):
+    from PySide6.QtWidgets import QLabel
+
+    dlg = window._build_settings_dialog(initial_page="Rig")
+    phrase = "It will not change the dial."
+    copies = [
+        lbl for lbl in dlg.findChildren(QLabel)
+        if phrase in lbl.text() and not lbl.isHidden()
+    ]
+    assert len(copies) == 1
+    assert copies[0].objectName() == "fieldHelp"
+    assert phrase not in dlg.test_cat_result.text()
+    assert "Not tested yet" in dlg._cat_title.text()
+
+
+def test_settings_combo_arrows_sit_inside_the_field(window):
+    from PySide6.QtWidgets import QApplication, QComboBox, QStyle, QStyleOptionComboBox
+
+    dlg = window._build_settings_dialog()
+    dlg.show()
+    app = QApplication.instance()
+    checked = 0
+    for row in range(dlg.page_list.count()):
+        dlg.page_list.setCurrentRow(row)
+        app.processEvents()
+        for combo in dlg.stack.currentWidget().findChildren(QComboBox):
+            if combo.width() < 20 or not combo.isVisible():
+                continue
+            opt = QStyleOptionComboBox()
+            combo.initStyleOption(opt)
+            arrow = combo.style().subControlRect(
+                QStyle.ComplexControl.CC_ComboBox,
+                opt,
+                QStyle.SubControl.SC_ComboBoxArrow,
+                combo,
+            )
+            assert combo.rect().contains(arrow), (combo.currentText(), arrow, combo.rect())
+            assert arrow.right() <= combo.rect().right() - 1
+            checked += 1
+    assert checked >= 3
+
+
+def test_wizard_test_cat_reads_frequency_and_does_not_retune(window, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    import orbitrx.cat as catmod
+    from orbitrx.ui.rig_wizard import RigWizardDialog
+
+    port = _FakeSerial(reply=b"FA00014200000;")
+    monkeypatch.setattr(catmod.serial, "Serial", lambda *a, **k: port)
+    cfg = window.ctrl.cfg
+    before = (cfg.get("cat_port"), cfg.get("cat_baud"), cfg.get("cat_rig_profile"))
+    dlg = RigWizardDialog(cfg, window.ctrl.cat, window)
+    dlg._test_cat()
+    app = QApplication.instance()
+    deadline = time.time() + 3
+    while not dlg.test_btn.isEnabled() and time.time() < deadline:
+        app.processEvents()
+        time.sleep(0.01)
+    _pump(app, 0.2)
+    assert port.written == [b"FA;"]
+    assert "14.200" in dlg.status_text.text()
+    assert "Sent CAT" not in dlg.status_text.text()
+    assert (cfg.get("cat_port"), cfg.get("cat_baud"), cfg.get("cat_rig_profile")) == before
+
+
 def test_dx_page_does_not_mention_a_node_picker():
     from orbitrx.ui.settings_dialog import PAGE_DESCRIPTIONS
 

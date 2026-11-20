@@ -285,7 +285,10 @@ def test_rig_wizard_cat_test_failure_shows_toast_and_calls_on_rig_status(window,
     from orbitrx.ui.rig_wizard import RigWizardDialog
     from PySide6.QtWidgets import QApplication
 
-    monkeypatch.setattr(window.ctrl.cat, "tune", lambda freq, confirm=None: "Could not open serial port")
+    monkeypatch.setattr(
+        window.ctrl.cat, "probe",
+        lambda **_kwargs: "error\nCould not open serial port",
+    )
 
     seen = []
     dlg = RigWizardDialog(window.ctrl.cfg, window.ctrl.cat, window, on_rig_status=lambda ok, detail: seen.append((ok, detail)))
