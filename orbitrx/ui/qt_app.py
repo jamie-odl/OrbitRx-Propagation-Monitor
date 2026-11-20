@@ -30,13 +30,14 @@ from orbitrx.ui.formatting import (
 )
 from orbitrx.ui.rig_wizard import RigWizardDialog, populate_port_combo
 from orbitrx.ui.theme import (
-    BAND_CHIP_HEIGHT_COMPACT, BG_ELEVATED, BORDER, CARD_STYLE, CARD_TEXT, CONTROL_HEIGHT,
+    ACCENT, ACCENT_SOFT, BAND_CHIP_HEIGHT_COMPACT, BG_CANVAS, BG_ELEVATED, BORDER, BORDER_CONTROL,
+    BORDER_DEFAULT, BORDER_SUBTLE, CARD_STYLE, CARD_TEXT, CONTROL_HEIGHT,
     CONTROL_HEIGHT_COMPACT, CONTROLS_HEIGHT_COMPACT, ERR, FAIR, FONT_BODY, FONT_MONO, GOOD,
     GUTTER_COMPACT, GUTTER_WIDE,
     MAP_HEADER_HEIGHT, MAP_HEADER_HEIGHT_COMPACT, MENU_BAR_HEIGHT, MENU_BAR_HEIGHT_COMPACT, MUTED,
     MUTED_SECONDARY, NO_DATA, OK, POOR, RADIUS_M, SLIDER_VALUE_MIN_WIDTH, SLIDER_WIDTH,
     SLIDER_WIDTH_COMPACT, SPACE_1, SPACE_2, SPACE_3, STATUS_BAR_HEIGHT, STATUS_BAR_HEIGHT_COMPACT,
-    TEXT_SECONDARY, TEXT_TERTIARY, UNKNOWN, apply_theme,
+    TEXT_DISABLED, TEXT_PRIMARY, TEXT_SECONDARY, TEXT_TERTIARY, UNKNOWN, apply_theme,
 )
 from orbitrx.ui.toast import ToastManager
 from orbitrx.ui.window_fit import fit_to_screen
@@ -74,7 +75,7 @@ CONTINENT_OPTS = [("NA", "North America"), ("SA", "South America"), ("EU", "Euro
 
 # Shared label column width for every Settings page, so the field column starts at the
 # same x regardless of which page's labels happen to be widest (N-new-3).
-SETTINGS_LABEL_WIDTH = 170
+SETTINGS_LABEL_WIDTH = 152
 
 # S1: fields keep at least this width instead of being squeezed unreadably thin;
 # below it the row wraps (the label moves above the field) rather than clipping.
@@ -91,7 +92,7 @@ SETTINGS_NAV_WIDTH_NARROW = 150
 SETTINGS_PAGE_DESCRIPTIONS = {
     "Station": "Your callsign and home coordinates, used to centre the map and tag your spots.",
     "Rig": "Connect to your radio over CAT so clicking a spot on the map can tune it for you.",
-    "DX cluster": "Pick a cluster node and filter which DX spots show up on the map.",
+    "DX cluster": "Your cluster login, an optional target station, and which spots show on the map.",
     "Map & spots": "How often live spots refresh from PSKReporter, and which mode they show.",
     "Services": "Optional QRZ lookups and how often space weather data refreshes.",
 }
@@ -517,6 +518,122 @@ class _ElidedLabel(QLabel):
         text = getattr(self, "_full_text", "")
         fm = self.fontMetrics()
         super().setText(fm.elidedText(text, Qt.TextElideMode.ElideRight, max(1, self.width())))
+
+
+class _DrawerScrim(QWidget):
+    """Dim layer under the compact drawer. A click closes the drawer."""
+
+    def __init__(self, host, parent=None) -> None:
+        super().__init__(parent)
+        self._host = host
+        self.setObjectName("drawerScrim")
+        self.setStyleSheet("background-color: rgba(3, 5, 9, 140);")
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        action = getattr(self._host, "_actions", {}).get("ShowSidePanel")
+        if action is not None:
+            action.setChecked(False)
+        event.accept()
+
+
+class ElidingComboBox(QComboBox):
+    """Combo whose closed label elides with an ellipsis. The popup stays full width.
+
+    Scoped to the cluster picker so the global QComboBox style is untouched.
+    Windows font metrics made the old contents-length floor clip mid-glyph.
+    """
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._display_text: str | None = None
+        self._dot_color: str | None = None
+
+    def setDisplayText(self, text: str | None) -> None:
+        self._display_text = text
+        self.update()
+
+    def setDotColor(self, color: str | None) -> None:
+        self._dot_color = color
+        self.update()
+
+    def showPopup(self) -> None:  # noqa: N802
+        view = self.view()
+        if view is not None:
+            hint = view.sizeHintForColumn(0) + 24
+            view.setMinimumWidth(min(420, max(int(hint), self.width())))
+        super().showPopup()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        from PySide6.QtGui import QColor, QPainter
+        from PySide6.QtWidgets import QStyle, QStyleOptionComboBox, QStylePainter
+
+        painter = QStylePainter(self)
+        opt = QStyleOptionComboBox()
+        self.initStyleOption(opt)
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, opt)
+        rect = self.style().subControlRect(
+            QStyle.ComplexControl.CC_ComboBox, opt,
+            QStyle.SubControl.SC_ComboBoxEditField, self,
+        )
+        if self._dot_color:
+            painter.save()
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(self._dot_color))
+            mid = rect.center().y()
+            painter.drawEllipse(rect.left(), mid - 4, 8, 8)
+            painter.restore()
+            rect.setLeft(rect.left() + 14)
+        text = opt.currentText if self._display_text is None else self._display_text
+        opt.currentText = self.fontMetrics().elidedText(
+            text, Qt.TextElideMode.ElideRight, max(0, rect.width())
+        )
+        painter.drawControl(QStyle.ControlElement.CE_ComboBoxLabel, opt)
+
+
+class RoundKnobSlider(QSlider):
+    """14 px round knob. Qt's QSS handle height follows the groove, which
+    squared the old radius-8 handle, so this paints the knob itself."""
+
+    def __init__(self, orientation, parent=None) -> None:
+        super().__init__(orientation, parent)
+        self.setFixedHeight(18)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        from PySide6.QtGui import QColor, QPainter, QPen
+        from PySide6.QtWidgets import QStyle
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        groove_h = 4
+        handle = 14
+        span = max(1, self.width() - handle)
+        x = QStyle.sliderPositionFromValue(self.minimum(), self.maximum(), self.value(), span, False)
+        cy = self.height() / 2
+        enabled = self.isEnabled()
+        pressed = self.isSliderDown()
+        hover = self.underMouse()
+        focus = self.hasFocus()
+        groove = BORDER_SUBTLE if not enabled else BORDER_DEFAULT
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(groove))
+        painter.drawRoundedRect(0, int(cy - groove_h / 2), self.width(), groove_h, 2, 2)
+        # The filled side of the groove stays the groove colour. #3A465A is the
+        # Kp sparkline, and empty-state screenshots treat that pixel as a leak.
+        if not enabled:
+            fill, border = TEXT_DISABLED, BG_CANVAS
+        elif pressed:
+            fill, border = ACCENT, BG_CANVAS
+        elif focus:
+            fill, border = "#FFFFFF" if hover else TEXT_PRIMARY, ACCENT
+        elif hover:
+            fill, border = "#FFFFFF", BORDER_CONTROL
+        else:
+            fill, border = TEXT_PRIMARY, BG_CANVAS
+        painter.setBrush(QColor(fill))
+        painter.setPen(QPen(QColor(border), 2))
+        painter.drawEllipse(int(x), int(cy - handle / 2), handle, handle)
+        painter.end()
 
 
 class _MapControlStrip(QWidget):
@@ -1005,31 +1122,38 @@ class QtOrbitRxApplication(QMainWindow):
         header_right_layout.setContentsMargins(0, 0, 0, 0)
         header_right_layout.setSpacing(SPACE_2)
         header_right_layout.addStretch(1)
-        header_right_layout.addWidget(QLabel("Cluster"))
+        self._cluster_label = QLabel("Cluster")
+        self._cluster_label.setObjectName("clusterLabel")
+        header_right_layout.addWidget(self._cluster_label)
         # SPEC §6.1/§11 "Cluster combo with a status dot": a small dot
         # ahead of the combo, synced to the real cluster_status in
         # _render_cluster_label -- same connection-state source the corner
         # widget's dot and the status bar's label already use.
+        # Below 820 the dot moves into the compact pill and this label hides.
         self._cluster_dot_lbl = QLabel("●")
         self._cluster_dot_lbl.setObjectName("clusterComboDot")
         header_right_layout.addWidget(self._cluster_dot_lbl)
-        self.cluster_combo = QComboBox()
-        self.cluster_combo.setMaximumWidth(260)
-        # Round 9: without this, QComboBox's default AdjustToContentsOnFirstShow
-        # sizes (and floors) this combo off its *widest real item* -- a
-        # cluster hostname:port string with no length limit -- which can grow
-        # this header row's minimum width well past the map-column budget
-        # under a bulkier font. A fixed contents-length budget keeps the
-        # floor bounded; the combo still elides its own displayed text when
-        # narrower than it, and every item's full host string is still
-        # reachable in the dropdown.
-        self.cluster_combo.setSizeAdjustPolicy(
-            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
-        )
-        self.cluster_combo.setMinimumContentsLength(10)
+        self.cluster_combo = ElidingComboBox()
+        self.cluster_combo.setFixedWidth(220)
+        # A fixed width, not AdjustToContents: a long host must ellipsize
+        # instead of growing the header. The popup is widened in showPopup.
+        self.cluster_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.cluster_combo.setMinimumContentsLength(8)
+        self._cluster_pill = False
+        self._cluster_wide = True
         self._populate_cluster_combo()
         self.cluster_combo.currentIndexChanged.connect(self._cluster_node_changed)
         header_right_layout.addWidget(self.cluster_combo)
+        self._drawer_btn = QToolButton()
+        self._drawer_btn.setObjectName("drawerButton")
+        self._drawer_btn.setCheckable(True)
+        self._drawer_btn.setIcon(self._panel_right_icon())
+        self._drawer_btn.setToolTip("Show side panel (Ctrl+B)")
+        self._drawer_btn.setAccessibleName("Show side panel")
+        self._drawer_btn.setFixedSize(26, 26)
+        self._drawer_btn.setVisible(False)
+        self._drawer_btn.toggled.connect(self._on_drawer_button)
+        header_right_layout.addWidget(self._drawer_btn)
         # SPEC §6.2/§12 callout 1 + G3: the unlabelled ">>"/"<<" collapse
         # button that used to sit here is gone -- Ctrl+B and the View menu's
         # "Show side panel" action (both wired to the same
@@ -1179,7 +1303,7 @@ class QtOrbitRxApplication(QMainWindow):
         offset_lbl.setObjectName("groupLabel")
         offset_lbl.setToolTip("Time offset (hours)")
         offset_box.addWidget(offset_lbl)
-        self.time_slider = QSlider(Qt.Orientation.Horizontal)
+        self.time_slider = RoundKnobSlider(Qt.Orientation.Horizontal)
         self.time_slider.setRange(0, 48)
         self.time_slider.setValue(0)
         self.time_slider.setToolTip("Time offset (hours)")
@@ -1199,7 +1323,7 @@ class QtOrbitRxApplication(QMainWindow):
         replay_lbl.setObjectName("groupLabel")
         replay_lbl.setToolTip("Spot replay (hours ago)")
         replay_box.addWidget(replay_lbl)
-        self.replay_slider = QSlider(Qt.Orientation.Horizontal)
+        self.replay_slider = RoundKnobSlider(Qt.Orientation.Horizontal)
         self.replay_slider.setRange(0, 48)  # whole-hour steps, up to 48 hours ago
         self.replay_slider.setValue(0)
         self.replay_slider.setToolTip("0 = live. Drag left to right to replay cached PSKReporter spots.")
@@ -1450,8 +1574,7 @@ class QtOrbitRxApplication(QMainWindow):
         stats_body_layout.addWidget(_hline_divider())
 
         # Path: collapsible row, collapsed by default. While Location is not
-        # set, the header's right side is a "Set location to enable" link to
-        # Location settings (SPEC §9 item 8).
+        # set, the hint is plain text. Settings opens only from Tools and Ctrl+,.
         path_header_row = QHBoxLayout()
         path_header_row.setSpacing(SPACE_1)
         self._path_toggle_btn = QToolButton()
@@ -1465,10 +1588,9 @@ class QtOrbitRxApplication(QMainWindow):
         self._path_toggle_btn.toggled.connect(self._on_path_toggled)
         path_header_row.addWidget(self._path_toggle_btn)
         path_header_row.addStretch(1)
-        self._path_hint_lbl = QLabel('<a href="#">Set location to enable</a>')
+        self._path_hint_lbl = QLabel("Set location in Settings (Ctrl+,)")
         self._path_hint_lbl.setObjectName("muted")
-        self._path_hint_lbl.setTextFormat(Qt.TextFormat.RichText)
-        self._path_hint_lbl.linkActivated.connect(lambda _: self._settings(initial_page="Station"))
+        self._path_hint_lbl.setTextFormat(Qt.TextFormat.PlainText)
         path_header_row.addWidget(self._path_hint_lbl)
         stats_body_layout.addLayout(path_header_row)
 
@@ -1891,20 +2013,151 @@ class QtOrbitRxApplication(QMainWindow):
         Defensively tolerant of running before the widgets it syncs exist yet
         (QAction.setChecked during _build_actions can fire this once, before
         the splitter is built)."""
-        self._side_panel_visible = visible
         side_pane = getattr(self, "_side_pane", None)
-        if side_pane is not None:
-            if getattr(self, "_compact", False):
-                compact_tabs = getattr(self, "_compact_tabs", None)
-                if compact_tabs is not None and compact_tabs.indexOf(side_pane) != -1:
-                    compact_tabs.setCurrentWidget(side_pane if visible else self._map_tab)
+        if getattr(self, "_compact", False):
+            if visible:
+                self._open_compact_drawer()
             else:
+                self._close_compact_drawer()
+        else:
+            self._side_panel_visible = visible
+            if side_pane is not None:
+                if getattr(self, "_drawer_open", False):
+                    self._close_compact_drawer()
                 side_pane.setVisible(visible)
         action = getattr(self, "_actions", {}).get("ShowSidePanel")
         if action is not None and action.isChecked() != visible:
             action.blockSignals(True)
             action.setChecked(visible)
             action.blockSignals(False)
+        self._sync_drawer_button()
+
+    def _on_drawer_button(self, checked: bool) -> None:
+        action = getattr(self, "_actions", {}).get("ShowSidePanel")
+        if action is not None and action.isChecked() != checked:
+            action.setChecked(checked)
+
+    def _sync_drawer_button(self) -> None:
+        button = getattr(self, "_drawer_btn", None)
+        if button is None:
+            return
+        button.blockSignals(True)
+        button.setChecked(bool(getattr(self, "_drawer_open", False)))
+        button.blockSignals(False)
+
+    def _panel_right_icon(self) -> QIcon:
+        """16 px panel glyph: a window outline with the right-hand pane filled."""
+        from PySide6.QtGui import QColor, QPainter, QPen
+
+        size = 16
+        ratio = max(1.0, self.devicePixelRatioF())
+        pix = QPixmap(int(size * ratio), int(size * ratio))
+        pix.setDevicePixelRatio(ratio)
+        pix.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pix)
+        painter.setPen(QPen(QColor(TEXT_SECONDARY), 1.3))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(1, 2, 14, 12, 1.5, 1.5)
+        painter.setBrush(QColor(TEXT_SECONDARY))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRect(10, 3, 4, 10)
+        painter.end()
+        return QIcon(pix)
+
+    def _ensure_drawer(self) -> None:
+        if getattr(self, "_drawer_layer", None) is not None:
+            return
+        layer = QWidget(self._map_tab)
+        layer.setObjectName("drawerLayer")
+        layer.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        layer.setStyleSheet("background: transparent;")
+        layer.hide()
+        scrim = _DrawerScrim(self, layer)
+        self._drawer_layer = layer
+        self._drawer_scrim = scrim
+        self._drawer_open = False
+
+    def _reduced_motion(self) -> bool:
+        if os.environ.get("ORBITRX_REDUCE_MOTION") == "1":
+            return True
+        if sys.platform.startswith("win"):
+            try:
+                import ctypes
+                value = ctypes.c_int(1)
+                if ctypes.windll.user32.SystemParametersInfoW(0x1042, 0, ctypes.byref(value), 0):
+                    return value.value == 0
+            except Exception:
+                return False
+        return False
+
+    def _position_drawer(self, animate: bool = False) -> None:
+        layer = getattr(self, "_drawer_layer", None)
+        if layer is None or not getattr(self, "_drawer_open", False):
+            return
+        from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation
+
+        header_h = self._map_header_row.height() if hasattr(self, "_map_header_row") else 0
+        host = self._map_tab.rect()
+        layer.setGeometry(0, header_h, host.width(), max(0, host.height() - header_h))
+        self._drawer_scrim.setGeometry(layer.rect())
+        panel_w = min(304, max(0, layer.width()))
+        end = QPoint(max(0, layer.width() - panel_w), 0)
+        self._side_pane.setFixedWidth(panel_w)
+        self._side_pane.setMinimumHeight(layer.height())
+        self._side_pane.setMaximumHeight(layer.height())
+        if animate and not self._reduced_motion():
+            self._side_pane.move(layer.width(), 0)
+            self._side_pane.show()
+            anim = QPropertyAnimation(self._side_pane, b"pos", self)
+            anim.setDuration(160)
+            anim.setStartValue(QPoint(layer.width(), 0))
+            anim.setEndValue(end)
+            anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+            anim.start()
+            self._drawer_anim = anim
+        else:
+            self._side_pane.move(end)
+            self._side_pane.show()
+        layer.raise_()
+        self._side_pane.raise_()
+
+    def _open_compact_drawer(self) -> None:
+        if not getattr(self, "_compact", False):
+            return
+        self._ensure_drawer()
+        tabs = self._compact_tabs
+        index = tabs.indexOf(self._side_pane)
+        if index != -1:
+            tabs.removeTab(index)
+        if tabs.indexOf(self._map_tab) != -1:
+            tabs.setCurrentWidget(self._map_tab)
+        self._side_pane.setParent(self._drawer_layer)
+        self._drawer_layer.show()
+        self._drawer_open = True
+        self._position_drawer(animate=True)
+        self.map_widget.update()
+
+    def _close_compact_drawer(self) -> None:
+        was_open = bool(getattr(self, "_drawer_open", False))
+        self._drawer_open = False
+        layer = getattr(self, "_drawer_layer", None)
+        if layer is not None:
+            layer.hide()
+        tabs = getattr(self, "_compact_tabs", None)
+        pane = getattr(self, "_side_pane", None)
+        if self._compact and tabs is not None and pane is not None and tabs.indexOf(pane) == -1:
+            pane.setParent(tabs)
+            pane.setMinimumHeight(0)
+            pane.setMaximumHeight(16777215)
+            pane.setMinimumWidth(0)
+            pane.setMaximumWidth(16777215)
+            tabs.addTab(pane, "Conditions")
+        if self._compact and tabs is not None and tabs.indexOf(self._map_tab) != -1:
+            tabs.setCurrentWidget(self._map_tab)
+        if was_open:
+            button = getattr(self, "_drawer_btn", None)
+            if button is not None and button.isVisible():
+                button.setFocus()
 
     def _open_plot_tab(self) -> None:
         """View menu "Open plot…" (SPEC §6.1): the Stats/Plot tab bar is
@@ -1968,15 +2221,67 @@ class QtOrbitRxApplication(QMainWindow):
         for i, node in enumerate(nodes):
             label = f"{node.get('name', '?')} ({node.get('host')}:{node.get('port', 23)})"
             self.cluster_combo.addItem(label, node)
+            self.cluster_combo.setItemData(i, label, Qt.ItemDataRole.ToolTipRole)
             if node.get("host") == current_host:
                 select_idx = i
         if not nodes:
+            label = f"Custom ({current_host})"
             self.cluster_combo.addItem(
-                f"Custom ({current_host})", {"host": current_host, "port": self.ctrl.cfg.get("dx_cluster_port", 23)}
+                label, {"host": current_host, "port": self.ctrl.cfg.get("dx_cluster_port", 23)}
             )
+            self.cluster_combo.setItemData(0, label, Qt.ItemDataRole.ToolTipRole)
         else:
             self.cluster_combo.setCurrentIndex(select_idx)
         self.cluster_combo.blockSignals(False)
+        self._refresh_cluster_combo_text()
+
+    def _refresh_cluster_combo_text(self) -> None:
+        combo = getattr(self, "cluster_combo", None)
+        if combo is None or not hasattr(combo, "setDisplayText"):
+            return
+        index = combo.currentIndex()
+        full = combo.itemData(index, Qt.ItemDataRole.ToolTipRole) or combo.itemText(index)
+        full = str(full or "")
+        if getattr(self, "_cluster_pill", False):
+            combo.setDisplayText(full.split(" (", 1)[0])
+            combo.setDotColor(getattr(self, "_cluster_dot_color", None))
+        else:
+            combo.setDisplayText(None)
+            combo.setDotColor(None)
+        state = getattr(self.ctrl.state, "cluster_status", "")
+        tip = f"{full} · {state}" if full else state
+        combo.setToolTip(tip)
+        combo.setAccessibleName(tip or "Cluster")
+
+    def _apply_cluster_header(self) -> None:
+        """Cluster combo width, compact pill, and the drawer button.
+
+        Pill below 820 (hysteresis 804/836). 220 px at 1100 and above
+        (hysteresis 1084/1116), otherwise 180 px.
+        """
+        combo = getattr(self, "cluster_combo", None)
+        if combo is None or not hasattr(self, "_cluster_label") or not hasattr(self, "_drawer_btn"):
+            return
+        width = self.width()
+        pill = getattr(self, "_cluster_pill", False)
+        self._cluster_pill = width < (836 if pill else 804)
+        wide = getattr(self, "_cluster_wide", True)
+        self._cluster_wide = width >= (1084 if wide else 1116)
+        if self._cluster_pill:
+            combo.setObjectName("clusterPill")
+            combo.setFixedSize(132, 26)
+            self._cluster_label.setVisible(False)
+            self._cluster_dot_lbl.setVisible(False)
+            self._drawer_btn.setVisible(True)
+        else:
+            combo.setObjectName("")
+            combo.setFixedSize(220 if self._cluster_wide else 180, 28)
+            self._cluster_label.setVisible(True)
+            self._cluster_dot_lbl.setVisible(True)
+            self._drawer_btn.setVisible(False)
+        combo.style().unpolish(combo)
+        combo.style().polish(combo)
+        self._refresh_cluster_combo_text()
 
     def _cluster_node_changed(self, index: int) -> None:
         if index < 0:
@@ -2140,6 +2445,9 @@ class QtOrbitRxApplication(QMainWindow):
         loc_text = f"Location: {LOCATION_SOURCE_LABELS.get(location_source, 'not set')}"
         if location_source == "unset":
             loc_text = f'<span style="color:{FAIR}">{loc_text}</span>'
+            self._status_location_lbl.setToolTip("Set in Tools -> Settings (Ctrl+,)")
+        else:
+            self._status_location_lbl.setToolTip("")
         self._status_location_lbl.setText(loc_text)
         self._schedule_map_rebuild()
         self._refresh_kp_sparkline()
@@ -2700,6 +3008,8 @@ class QtOrbitRxApplication(QMainWindow):
         # above, not a static glyph.
         if hasattr(self, "_cluster_dot_lbl"):
             self._cluster_dot_lbl.setStyleSheet(f"color: {dot_color};")
+        self._cluster_dot_color = dot_color
+        self._refresh_cluster_combo_text()
         # P4-8/P5-r4 (SPEC §10/G14): the map's own "Cluster disconnected ·
         # Reconnect" pill, driven by the same real cluster_status the
         # corner/status-bar labels use -- "disconnected" (never started, or
@@ -2902,10 +3212,15 @@ class QtOrbitRxApplication(QMainWindow):
         QMessageBox.information(self, "Saved", path)
 
     def _eye_icon(self, crossed: bool, size: int = 16) -> QIcon:
-        """Small drawn eye glyph for the QRZ key show/hide action (no icon asset needed)."""
+        """Small drawn eye glyph for the QRZ key show/hide action (no icon asset needed).
+
+        Drawn at the widget's device pixel ratio so 150% stays sharp.
+        """
         from PySide6.QtGui import QColor, QPainter
 
-        pix = QPixmap(size, size)
+        ratio = self.devicePixelRatioF() if self is not None else 1.0
+        pix = QPixmap(max(1, int(size * ratio)), max(1, int(size * ratio)))
+        pix.setDevicePixelRatio(ratio)
         pix.fill(Qt.GlobalColor.transparent)
         p = QPainter(pix)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -2951,321 +3266,18 @@ class QtOrbitRxApplication(QMainWindow):
         return label
 
     def _build_settings_dialog(self, initial_page: str | None = None) -> QDialog:
-        from orbitrx.cat import RIG_PROFILES
-
-        dlg = QDialog(self)
-        dlg.setWindowTitle("Settings")
-        dlg.setMinimumSize(520, 380)
-        outer = QVBoxLayout(dlg)
-        # P2B: a separate toast surface anchored to the dialog itself -- the
-        # dialog is modal, so a toast on the main window underneath it would
-        # never be seen.
-        dlg._toasts = ToastManager(dlg)
-
-        # The list+pages area scrolls independently so a small/scaled-up screen can
-        # shrink the dialog without ever hiding the Save/Cancel buttons below it.
-        # S1: horizontal scrolling is never offered, even when it "would" fit by a
-        # sub-pixel margin (R2) -- rows wrap instead (see _update_settings_wrap_policy).
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll_body = QWidget()
-        body = QHBoxLayout(scroll_body)
-        scroll.setWidget(scroll_body)
-        outer.addWidget(scroll, stretch=1)
-        dlg.scroll = scroll
-
-        page_list = QListWidget()
-        page_list.setFixedWidth(SETTINGS_NAV_WIDTH_WIDE)
-        stack = QStackedWidget()
-        dlg.page_list = page_list
-        dlg.stack = stack
-        body.addWidget(page_list)
-        body.addWidget(stack, stretch=1)
-        page_list.currentRowChanged.connect(stack.setCurrentIndex)
-
-        cfg = self.ctrl.cfg
-        fields: dict[str, QWidget] = {}
-
-        # --- Station ---
-        station = self._add_form_page(page_list, stack, "Station")
-        fields["spots_callsign"] = QLineEdit(str(cfg.get("spots_callsign", "") or ""))
-        self._add_settings_row(station, "My callsign", fields["spots_callsign"])
-        fields["home_lat"] = QDoubleSpinBox()
-        fields["home_lat"].setRange(-90.0, 90.0)
-        fields["home_lat"].setDecimals(4)
-        fields["home_lat"].setSpecialValueText(NO_DATA)
-        fields["home_lat"].setMinimumHeight(30)  # M3: room for both spin arrows
-        fields["home_lat"].setValue(float(cfg.get("home_lat") or -90.0) if cfg.get("home_lat") is not None else -90.0)
-        self._add_settings_row(station, "Home latitude", fields["home_lat"])
-        fields["home_lon"] = QDoubleSpinBox()
-        fields["home_lon"].setRange(-180.0, 180.0)
-        fields["home_lon"].setDecimals(4)
-        fields["home_lon"].setSpecialValueText(NO_DATA)
-        fields["home_lon"].setMinimumHeight(30)
-        fields["home_lon"].setValue(float(cfg.get("home_lon") or -180.0) if cfg.get("home_lon") is not None else -180.0)
-        self._add_settings_row(station, "Home longitude", fields["home_lon"])
-        fields["ip_geolocation_enabled"] = QCheckBox("Look up my location from my IP")
-        fields["ip_geolocation_enabled"].setChecked(bool(cfg.get("ip_geolocation_enabled", False)))
-        fields["ip_geolocation_enabled"].setContentsMargins(0, 0, 0, 0)
-        # S1/R2: the checkbox is the sole field widget in its row (not nested in a
-        # vbox with the helper text below it) so its single line of text sits at the
-        # same height as the "Location" label; the helper text gets its own row with
-        # an empty label instead.
-        location_label = self._add_settings_row(station, "Location", fields["ip_geolocation_enabled"])
-        location_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
-        ip_note = QLabel("Sends your IP address to ipinfo.io to estimate your location.")
-        ip_note.setWordWrap(True)
-        ip_note.setObjectName("muted")
-        # M4: a small top margin (<=4px from its checkbox) and a 24px left indent,
-        # so the helper text visually belongs to the checkbox above it.
-        ip_note.setContentsMargins(24, 4, 0, 0)
-        station.addRow("", ip_note)
-
-        # --- Rig ---
-        rig = self._add_form_page(page_list, stack, "Rig")
-        cat_port = QComboBox()
-        cat_port.setEditable(True)
-        populate_port_combo(cat_port, self.ctrl.cat, str(cfg.get("cat_port", "") or ""))
-        fields["cat_port"] = cat_port
-        self._add_settings_row(rig, "Serial port", cat_port)
-        rig_profile = QComboBox()
-        rig_profile.addItems(sorted(RIG_PROFILES.keys()))
-        pidx = rig_profile.findText(str(cfg.get("cat_rig_profile", "kenwood")))
-        if pidx >= 0:
-            rig_profile.setCurrentIndex(pidx)
-        fields["cat_rig_profile"] = rig_profile
-        self._add_settings_row(rig, "Rig profile", rig_profile)
-        baud = QComboBox()
-        baud.addItems(["4800", "9600", "19200", "38400", "115200"])
-        bidx = baud.findText(str(cfg.get("cat_baud", 9600)))
-        if bidx >= 0:
-            baud.setCurrentIndex(bidx)
-        fields["cat_baud"] = baud
-        self._add_settings_row(rig, "Baud rate", baud)
-        rig_control = QComboBox()
-        rig_control.addItem("Serial CAT (pyserial)", "serial")
-        rig_control.addItem("OmniRig (Windows)", "omnirig")
-        ridx = rig_control.findData(self.ctrl.cat.backend())
-        if ridx >= 0:
-            rig_control.setCurrentIndex(ridx)
-        fields["rig_control"] = rig_control
-        self._add_settings_row(rig, "Rig control", rig_control)
-        test_cat_row = QHBoxLayout()
-        test_cat_btn = QPushButton("Test CAT")
-        test_cat_cancel_btn = QPushButton("Cancel")
-        test_cat_cancel_btn.setVisible(False)
-        test_cat_result = QLabel("")
-        test_cat_result.setWordWrap(True)
-        cat_runner = CatTestRunner(dlg)
-
-        def on_cat_test_done(kind: str, message: str) -> None:
-            test_cat_btn.setEnabled(True)
-            test_cat_cancel_btn.setVisible(False)
-            if kind == "cancelled":
-                test_cat_result.setText("Cancelled")
-                test_cat_result.setStyleSheet(f"color: {MUTED};")
-                return
-            if kind == "timeout":
-                test_cat_result.setText(message)
-                test_cat_result.setStyleSheet(f"color: {ERR};")
-                self._set_rig_status(False, "test timed out")
-                dlg._toasts.show_toast(f"CAT test failed: {message}", kind="error")
-                return
-            ok = "Sent CAT" in message
-            test_cat_result.setText(message)
-            test_cat_result.setStyleSheet(f"color: {OK if ok else ERR};")
-            self._set_rig_status(ok, "connected" if ok else "test failed")
-            if not ok:
-                dlg._toasts.show_toast(f"CAT test failed: {message}", kind="error")
-
-        def do_test_cat() -> None:
-            cfg.data["cat_port"] = (fields["cat_port"].currentData() or fields["cat_port"].currentText()).strip()
-            cfg.data["cat_baud"] = int(fields["cat_baud"].currentText())
-            cfg.data["cat_rig_profile"] = fields["cat_rig_profile"].currentText()
-            test_cat_btn.setEnabled(False)
-            test_cat_cancel_btn.setVisible(True)
-            test_cat_result.setText("Testing…")
-            test_cat_result.setStyleSheet("")
-            cat_runner.start(self.ctrl.cat, 14.200, on_cat_test_done, timeout_s=CAT_TEST_TIMEOUT_S)
-
-        test_cat_btn.clicked.connect(do_test_cat)
-        test_cat_cancel_btn.clicked.connect(cat_runner.cancel)
-        test_cat_row.addWidget(test_cat_btn)
-        test_cat_row.addWidget(test_cat_cancel_btn)
-        test_cat_row.addWidget(test_cat_result, stretch=1)
-        rig.addRow("", test_cat_row)
-        # Stable handles for tests, same convention as dlg.fields/band_checks below.
-        dlg.test_cat_btn = test_cat_btn
-        dlg.test_cat_cancel_btn = test_cat_cancel_btn
-        dlg.test_cat_result = test_cat_result
-        dlg._cat_runner = cat_runner
-
-        # --- DX cluster ---
-        dxc = self._add_form_page(page_list, stack, "DX cluster")
-        fields["dx_cluster_callsign"] = QLineEdit(str(cfg.get("dx_cluster_callsign", "") or ""))
-        self._add_settings_row(dxc, "Cluster callsign", fields["dx_cluster_callsign"])
-        fields["target_dx_callsign"] = QLineEdit(str(cfg.get("target_dx_callsign", "") or ""))
-        self._add_settings_row(dxc, "Target DX callsign", fields["target_dx_callsign"])
-        fields["target_dx_lat"] = QDoubleSpinBox()
-        fields["target_dx_lat"].setRange(-90.0, 90.0)
-        fields["target_dx_lat"].setDecimals(4)
-        fields["target_dx_lat"].setSpecialValueText(NO_DATA)
-        fields["target_dx_lat"].setMinimumHeight(30)
-        fields["target_dx_lat"].setValue(float(cfg.get("target_dx_lat") or -90.0) if cfg.get("target_dx_lat") is not None else -90.0)
-        self._add_settings_row(dxc, "Target latitude", fields["target_dx_lat"])
-        fields["target_dx_lon"] = QDoubleSpinBox()
-        fields["target_dx_lon"].setRange(-180.0, 180.0)
-        fields["target_dx_lon"].setDecimals(4)
-        fields["target_dx_lon"].setSpecialValueText(NO_DATA)
-        fields["target_dx_lon"].setMinimumHeight(30)
-        fields["target_dx_lon"].setValue(float(cfg.get("target_dx_lon") or -180.0) if cfg.get("target_dx_lon") is not None else -180.0)
-        self._add_settings_row(dxc, "Target longitude", fields["target_dx_lon"])
-
-        band_box = QGroupBox("DX band filters (empty = all)")
-        band_layout = QVBoxLayout(band_box)
-        band_checks: dict[float, QCheckBox] = {}
-        current_bands = set(cfg.get("dx_filter_bands_mhz") or [])
-        for name, meta in HF_BANDS.items():
-            cb = QCheckBox(f"{name} ({meta['freq']} MHz)")
-            cb.setChecked(meta["freq"] in current_bands)
-            band_checks[meta["freq"]] = cb
-            band_layout.addWidget(cb)
-        dxc.addRow(band_box)
-
-        cont_box = QGroupBox("DX continent filters (empty = all)")
-        cont_box_layout = QVBoxLayout(cont_box)
-        cont_checks: dict[str, QCheckBox] = {}
-        current_cont = set(cfg.get("dx_filter_continents") or [])
-        cont_widgets = []
-        for code, label in CONTINENT_OPTS:
-            cb = QCheckBox(code)
-            cb.setToolTip(label)
-            cb.setChecked(code in current_cont)
-            cont_checks[code] = cb
-            cont_widgets.append(cb)
-        # M4: a flow layout (6 per row down to 3) instead of one fixed row, so the
-        # continent checkboxes never force a horizontal scrollbar on a narrow page.
-        cont_box_layout.addWidget(_ReflowGrid(cont_widgets, min_item_width=90, min_cols=3, max_cols=6))
-        dxc.addRow(cont_box)
-
-        # --- Map & spots ---
-        map_page = self._add_form_page(page_list, stack, "Map & spots")
-        spots_mode = QComboBox()
-        spots_mode.addItems(["FT8", "FT4", "WSPR"])
-        midx = spots_mode.findText(str(cfg.get("spots_mode", "FT8")))
-        if midx >= 0:
-            spots_mode.setCurrentIndex(midx)
-        fields["spots_mode"] = spots_mode
-        self._add_settings_row(map_page, "Mode", spots_mode)
-        poll = QSpinBox()
-        poll.setRange(300, 3600)
-        poll.setSuffix(" s")
-        poll.setSingleStep(60)
-        poll.setMinimumHeight(30)
-        poll.setValue(clamp_poll_seconds(cfg.get("pskreporter_poll_seconds", 300)))
-        fields["pskreporter_poll_seconds"] = poll
-        self._add_settings_row(map_page, "Poll interval", poll)
-
-        # --- Services ---
-        services = self._add_form_page(page_list, stack, "Services")
-        qrz_key = QLineEdit(str(cfg.get("qrz_api_key", "") or ""))
-        qrz_key.setEchoMode(QLineEdit.EchoMode.Password)
-        show_action = QAction(self._eye_icon(crossed=True), "Show key", qrz_key)
-        show_action.setCheckable(True)
-
-        def toggle_qrz_echo(checked: bool) -> None:
-            qrz_key.setEchoMode(QLineEdit.EchoMode.Normal if checked else QLineEdit.EchoMode.Password)
-            show_action.setIcon(self._eye_icon(crossed=not checked))
-
-        show_action.toggled.connect(toggle_qrz_echo)
-        qrz_key.addAction(show_action, QLineEdit.ActionPosition.TrailingPosition)
-        fields["qrz_api_key"] = qrz_key
-        qrz_row = QHBoxLayout()
-        qrz_row.addWidget(qrz_key, stretch=1)
-        qrz_btn = QPushButton("Test QRZ")
-        qrz_row.addWidget(qrz_btn)
-        self._add_settings_row(services, "QRZ API key", qrz_row)
-        qrz_result = QLabel("")
-        qrz_result.setWordWrap(True)
-
-        def do_qrz_test() -> None:
-            ok, msg, _ = verify_qrz_api(qrz_key.text().strip())
-            qrz_result.setText(msg)
-            qrz_result.setStyleSheet(f"color: {OK if ok else ERR};")
-
-        qrz_btn.clicked.connect(do_qrz_test)
-        services.addRow("", qrz_result)
-        refresh_secs = QSpinBox()
-        refresh_secs.setRange(10, 3600)
-        refresh_secs.setSuffix(" s")
-        refresh_secs.setMinimumHeight(30)
-        refresh_secs.setValue(int(cfg.get("refresh_interval_seconds", 60)))
-        fields["refresh_interval_seconds"] = refresh_secs
-        self._add_settings_row(services, "Space weather refresh", refresh_secs)
-
-        dlg.fields = fields
-        dlg.band_checks = band_checks
-        dlg.cont_checks = cont_checks
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(dlg.accept)
-        buttons.rejected.connect(dlg.reject)
-        save_btn = buttons.button(QDialogButtonBox.StandardButton.Save)
-        if save_btn is not None:
-            save_btn.setObjectName("primaryButton")
-            save_btn.setDefault(True)
-            save_btn.setStyleSheet("")  # let QSS #primaryButton apply
-        outer.addWidget(buttons)
-        dlg.buttons = buttons
-
-        page_names = ["Station", "Rig", "DX cluster", "Map & spots", "Services"]
-        start_row = page_names.index(initial_page) if initial_page in page_names else 0
-        page_list.setCurrentRow(start_row)
-        # M3: spinbox text starts at the same inset as QLineEdit text (6px padding).
-        for _sb in dlg.findChildren(QAbstractSpinBox):
-            _sb.lineEdit().setTextMargins(6, 0, 0, 0)
-
-        # Natural size at 100%, then clamped to the available screen so Save/Cancel
-        # stay reachable on a small or scaled-up display.
-        dlg.resize(720, 520)
-        fit_to_screen(dlg, 520, 380)
-
-        # S1: re-check the wrap policy and nav width on every resize, not just once,
-        # so dragging the dialog narrower (or a small/scaled-up screen) keeps every
-        # field and helper label fully readable without horizontal scrolling.
-        dlg._settings_wrap_filter = _SettingsWrapFilter()
-        dlg.installEventFilter(dlg._settings_wrap_filter)
-        _update_settings_wrap_policy(dlg)
-        return dlg
+        from orbitrx.ui.settings_dialog import build_settings_dialog
+        return build_settings_dialog(self, initial_page=initial_page)
 
     def _apply_settings_dialog(self, dlg: QDialog) -> None:
-        # P1: one combined write instead of one cfg.save() per field (18 full-file
-        # disk writes on the UI thread in the old code) -- set_many() updates every
-        # key in memory and flush() writes the batch once.
-        fields = dlg.fields
+        # One combined write. The dialog validates before calling this; empty
+        # coordinates are stored as null, and out-of-range intervals are not
+        # silently clamped.
         cfg = self.ctrl.cfg
-        cfg.set_many({
-            "spots_callsign": fields["spots_callsign"].text().strip(),
-            "home_lat": None if fields["home_lat"].value() == -90.0 else fields["home_lat"].value(),
-            "home_lon": None if fields["home_lon"].value() == -180.0 else fields["home_lon"].value(),
-            "ip_geolocation_enabled": fields["ip_geolocation_enabled"].isChecked(),
-            "cat_port": (fields["cat_port"].currentData() or fields["cat_port"].currentText()).strip(),
-            "cat_baud": int(fields["cat_baud"].currentText()),
-            "cat_rig_profile": fields["cat_rig_profile"].currentText(),
-            "rig_control": fields["rig_control"].currentData(),
-            "dx_cluster_callsign": fields["dx_cluster_callsign"].text().strip(),
-            "target_dx_callsign": fields["target_dx_callsign"].text().strip(),
-            "target_dx_lat": None if fields["target_dx_lat"].value() == -90.0 else fields["target_dx_lat"].value(),
-            "target_dx_lon": None if fields["target_dx_lon"].value() == -180.0 else fields["target_dx_lon"].value(),
-            "dx_filter_bands_mhz": [f for f, cb in dlg.band_checks.items() if cb.isChecked()],
-            "dx_filter_continents": [c for c, cb in dlg.cont_checks.items() if cb.isChecked()],
-            "spots_mode": fields["spots_mode"].currentText(),
-            "pskreporter_poll_seconds": clamp_poll_seconds(fields["pskreporter_poll_seconds"].value()),
-            "qrz_api_key": fields["qrz_api_key"].text().strip(),
-            "refresh_interval_seconds": fields["refresh_interval_seconds"].value(),
-        })
+        values = dlg.collected_settings() if hasattr(dlg, "collected_settings") else {}
+        if not values:
+            return
+        cfg.set_many(values)
         cfg.flush()
         self._timer.setInterval(int(cfg.get("refresh_interval_seconds", 60)) * 1000)
         self._update_next_refresh_label()
@@ -3275,7 +3287,7 @@ class QtOrbitRxApplication(QMainWindow):
         t0 = time.perf_counter()
         dlg = self._build_settings_dialog(initial_page=initial_page)
         self.ctrl.log.info("perf: settings_dialog_build_ms=%.1f", (time.perf_counter() - t0) * 1000)
-        if dlg.exec() == QDialog.DialogCode.Accepted:
+        if dlg.exec() == QDialog.DialogCode.Accepted and not getattr(dlg, "_applied_on_accept", False):
             self._apply_settings_dialog(dlg)
 
     def _setup_tray(self) -> None:
@@ -3396,6 +3408,9 @@ class QtOrbitRxApplication(QMainWindow):
         # resolved synchronously.
         if hasattr(self, "_map_tab_layout"):
             self._map_tab_layout.activate()
+        self._apply_cluster_header()
+        if getattr(self, "_drawer_open", False):
+            self._position_drawer(animate=False)
 
     def _on_splitter_moved_by_user(self, pos: int, index: int) -> None:
         """QSplitter.setSizes() never emits splitterMoved (only an actual
@@ -3463,8 +3478,19 @@ class QtOrbitRxApplication(QMainWindow):
         # never jumps straight to Conditions just because the side panel
         # happened to be visible in the wide layout.
         self._compact_tabs.setCurrentWidget(self._map_tab)
+        # The drawer starts closed. Uncheck the action without touching
+        # _side_panel_visible, which still remembers the wide layout.
+        action = getattr(self, "_actions", {}).get("ShowSidePanel")
+        if action is not None:
+            action.blockSignals(True)
+            action.setChecked(False)
+            action.blockSignals(False)
+        self._apply_cluster_header()
+        self._sync_drawer_button()
 
     def _exit_compact_mode(self) -> None:
+        if getattr(self, "_drawer_open", False):
+            self._close_compact_drawer()
         self._compact = False
         central_layout = self.centralWidget().layout()
         central_layout.removeWidget(self._compact_tabs)
@@ -3483,6 +3509,11 @@ class QtOrbitRxApplication(QMainWindow):
         # though its new parent is shown.
         self._map_tab.show()
         self._side_pane.setVisible(self._side_panel_visible)
+        action = getattr(self, "_actions", {}).get("ShowSidePanel")
+        if action is not None and action.isChecked() != self._side_panel_visible:
+            action.blockSignals(True)
+            action.setChecked(self._side_panel_visible)
+            action.blockSignals(False)
         self.banner.setVisible(True)
         self._apply_default_splitter_sizes()
 
@@ -3492,11 +3523,16 @@ class QtOrbitRxApplication(QMainWindow):
         compact mode (the Conditions tab) -- never in the wide layout, where
         Esc has no other meaning here and shouldn't fight a user's own
         expectations for the key."""
+        drawer_open = bool(getattr(self, "_drawer_open", False))
+        tabs = getattr(self, "_compact_tabs", None)
+        side_tab = (
+            tabs is not None
+            and tabs.currentWidget() is getattr(self, "_side_pane", None)
+        )
         if (
             event.key() == Qt.Key.Key_Escape
             and getattr(self, "_compact", False)
-            and getattr(self, "_compact_tabs", None) is not None
-            and self._compact_tabs.currentWidget() is self._side_pane
+            and (drawer_open or side_tab)
         ):
             self._actions["ShowSidePanel"].setChecked(False)
             event.accept()
@@ -3761,6 +3797,11 @@ def run_release_capture_hook(out_dir: str | Path) -> int:
     save_visible = _save_button_fully_visible(settings_dlg)
     settings_on_screen = settings_dlg.screen().availableGeometry().contains(settings_dlg.frameGeometry())
     settings_size = (settings_dlg.width(), settings_dlg.height())
+    # The port scan can select a port that differs from the saved one. That is
+    # a real unsaved change for a person, but this capture is closing the
+    # dialog on its own and must not stop on the discard prompt.
+    if hasattr(settings_dlg, "collected_settings"):
+        settings_dlg._snapshot = settings_dlg.collected_settings()
     settings_dlg.reject()
 
     from orbitrx.ui.about import _build_about_dialog

@@ -145,7 +145,7 @@ def test_settings_helper_labels_word_wrap_at_667x441(window, avail_667x441): # S
     dlg = win._build_settings_dialog()
     helper_labels = [
         lbl for lbl in dlg.findChildren(QLabel)
-        if lbl.objectName() == "muted" and lbl.text().strip()
+        if lbl.objectName() in ("pageDescription", "fieldHelp") and lbl.text().strip()
     ]
     assert helper_labels
     assert all(lbl.wordWrap() for lbl in helper_labels)

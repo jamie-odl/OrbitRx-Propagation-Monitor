@@ -258,7 +258,11 @@ def test_save_fig_failure_shows_toast_not_modal(window, no_modals, monkeypatch):
 
 
 def test_settings_cat_test_failure_shows_toast_and_rig_status(window, no_modals, monkeypatch):
-    monkeypatch.setattr(window.ctrl.cat, "tune", lambda freq, confirm=None: "Could not open serial port")
+    """A failed Test CAT stays inline. It does not also raise a toast."""
+    monkeypatch.setattr(
+        window.ctrl.cat, "probe",
+        lambda **_kwargs: "error\nCould not open serial port",
+    )
 
     dlg = window._build_settings_dialog()
     dlg.show()
@@ -268,8 +272,12 @@ def test_settings_cat_test_failure_shows_toast_and_rig_status(window, no_modals,
     dlg.test_cat_btn.click()
     _pump(qapp, 1.0)
 
-    assert dlg._toasts.is_visible()
+    assert not dlg._toasts.is_visible()
+    assert "Could not open serial port" in dlg.test_cat_result.text()
     assert "error" in window._status_rig_lbl.text().lower() or "fail" in window._status_rig_lbl.text().lower()
+    # A port scan can select a different port than the snapshot. Discard that
+    # without opening the unsaved-changes prompt, which would block the test.
+    dlg._snapshot = dlg._collect()
     dlg.reject()
 
 

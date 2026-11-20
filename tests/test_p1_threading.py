@@ -180,10 +180,18 @@ def _slow_tune(delay: float, result: str = "Sent CAT: 14.2 MHz"):
     return tune
 
 
+def _slow_probe(delay: float, result: str = "ok\nRead 14.200000 MHz"):
+    def probe(*_args, **_kwargs):
+        time.sleep(delay)
+        return result
+
+    return probe
+
+
 def test_settings_test_cat_does_not_block_ui_thread(window, monkeypatch):
     from PySide6.QtWidgets import QApplication
 
-    monkeypatch.setattr(window.ctrl.cat, "tune", _slow_tune(0.3))
+    monkeypatch.setattr(window.ctrl.cat, "probe", _slow_probe(0.3))
     dlg = window._build_settings_dialog(initial_page="Rig")
     app = QApplication.instance()
 
@@ -197,7 +205,7 @@ def test_settings_test_cat_does_not_block_ui_thread(window, monkeypatch):
 def test_settings_test_cat_cancel_ignores_late_result(window, monkeypatch):
     from PySide6.QtWidgets import QApplication
 
-    monkeypatch.setattr(window.ctrl.cat, "tune", _slow_tune(0.3))
+    monkeypatch.setattr(window.ctrl.cat, "probe", _slow_probe(0.3))
     dlg = window._build_settings_dialog(initial_page="Rig")
     app = QApplication.instance()
 
@@ -223,7 +231,7 @@ def test_settings_test_cat_timeout(window, monkeypatch):
     from PySide6.QtWidgets import QApplication
 
     monkeypatch.setattr(qt_app, "CAT_TEST_TIMEOUT_S", 0.05)
-    monkeypatch.setattr(window.ctrl.cat, "tune", _slow_tune(2.0))
+    monkeypatch.setattr(window.ctrl.cat, "probe", _slow_probe(2.0))
     dlg = window._build_settings_dialog(initial_page="Rig")
     app = QApplication.instance()
 

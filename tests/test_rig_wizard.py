@@ -85,18 +85,15 @@ def test_rig_wizard_labels_match_settings_dialog(app, cfg, monkeypatch, tmp_path
     settings_dlg = win._build_settings_dialog(initial_page="Rig")
     wizard = RigWizardDialog(cfg, CatController(cfg))
 
-    def labels_of(form_layout):
-        out = []
-        for i in range(form_layout.rowCount()):
-            item = form_layout.itemAt(i, form_layout.ItemRole.LabelRole)
-            if item and item.widget():
-                out.append(item.widget().text())
-        return out
+    from PySide6.QtWidgets import QLabel
+
+    def labels_of(root):
+        return [lbl.text().replace("&", "") for lbl in root.findChildren(QLabel)]
 
     rig_row = next(i for i in range(settings_dlg.page_list.count()) if settings_dlg.page_list.item(i).text() == "Rig")
     settings_rig_page = settings_dlg.stack.widget(rig_row)
-    settings_labels = labels_of(settings_rig_page.layout())
-    wizard_labels = labels_of(wizard.layout().itemAt(0).layout())
+    settings_labels = labels_of(settings_rig_page)
+    wizard_labels = labels_of(wizard)
 
     assert "Serial port" in wizard_labels and "Serial port" in settings_labels
     assert "Rig profile" in wizard_labels and "Rig profile" in settings_labels

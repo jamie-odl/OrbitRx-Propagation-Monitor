@@ -61,6 +61,38 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
+# The old Settings spin boxes used -90 / -180 as the "not set" sentinel.
+# That pair is the South Pole on the date line, so it must not stay stored
+# as a real coordinate. A lone -90 or a lone -180 is left alone.
+_UNSET_LAT = -90.0
+_UNSET_LON = -180.0
+_COORD_PAIRS = (("home_lat", "home_lon"), ("target_dx_lat", "target_dx_lon"))
+
+
+def _number_equals(value: Any, target: float) -> bool:
+    if isinstance(value, bool) or value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return float(value) == target
+    if isinstance(value, str):
+        try:
+            return float(value.strip()) == target
+        except ValueError:
+            return False
+    return False
+
+
+def migrate_unset_coordinates(data: dict[str, Any]) -> bool:
+    """Rewrite a stored sentinel pair (-90, -180) to null. Returns True if changed."""
+    changed = False
+    for lat_key, lon_key in _COORD_PAIRS:
+        if _number_equals(data.get(lat_key), _UNSET_LAT) and _number_equals(data.get(lon_key), _UNSET_LON):
+            data[lat_key] = None
+            data[lon_key] = None
+            changed = True
+    return changed
+
+
 @dataclass
 class AppConfig:
     path: Path = field(default_factory=lambda: user_data_path("config.json"))
@@ -73,7 +105,11 @@ class AppConfig:
                 loaded = json.load(f)
             merged = deepcopy(DEFAULT_CONFIG)
             merged.update(loaded)
-            self.data = merged
+            if migrate_unset_coordinates(merged):
+                self.data = merged
+                self.save()
+            else:
+                self.data = merged
         else:
             self.save()
         return self

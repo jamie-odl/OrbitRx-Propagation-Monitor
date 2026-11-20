@@ -252,11 +252,18 @@ QTabBar::tab:selected {{
 }}
 QTabBar::tab:hover {{ color: {TEXT}; }}
 QSlider::groove:horizontal {{
-    height: 4px; background: {BORDER_STRONG}; border-radius: 2px;
+    height: 4px; background: {BORDER_DEFAULT}; border-radius: 2px;
 }}
+QSlider::sub-page:horizontal {{ background: #3A465A; border-radius: 2px; }}
 QSlider::handle:horizontal {{
-    background: {ACCENT}; width: 14px; height: 14px; margin: -5px 0; border-radius: 7px;
+    background: {TEXT_PRIMARY}; border: 2px solid {BG_CANVAS};
+    width: 10px; height: 10px; margin: -5px 0; border-radius: 7px;
 }}
+QSlider::handle:horizontal:hover {{ background: #FFFFFF; border-color: {BORDER_CONTROL}; }}
+QSlider::handle:horizontal:pressed {{ background: {ACCENT}; border-color: {BG_CANVAS}; }}
+QSlider::sub-page:horizontal:pressed {{ background: {ACCENT_SOFT}; }}
+QSlider::handle:horizontal:disabled {{ background: {TEXT_DISABLED}; }}
+QSlider::groove:horizontal:disabled {{ background: {BORDER_SUBTLE}; }}
 QCheckBox {{ spacing: 8px; color: {MUTED}; }}
 QCheckBox::indicator {{
     width: 16px; height: 16px; border-radius: 4px;
@@ -349,12 +356,17 @@ QToolButton#layersMenuButton::menu-indicator, QToolButton#timePopoverButton::men
 /* Round 6 (SPEC §11): slider value labels, Mono, min-width set in code
    (SLIDER_VALUE_MIN_WIDTH) so "+0 h"/"Live" never jump the slider beside them. */
 QLabel#sliderValue {{ font-family: {FONT_MONO}; font-size: {FONT_CAPTION}px; color: {TEXT_PRIMARY}; background: transparent; }}
-QSlider::groove:horizontal {{ height: 2px; background: {BORDER_DEFAULT}; border-radius: 1px; }}
-QSlider::handle:horizontal {{
-    background: {TEXT_PRIMARY}; border: 2px solid {BG_CANVAS}; width: 12px; height: 12px;
-    margin: -6px 0; border-radius: 8px;
-}}
 QSlider::handle:horizontal:focus {{ border-color: {ACCENT}; }}
+QComboBox#clusterPill {{
+    border: 1px solid {BORDER_DEFAULT}; border-radius: 13px; min-height: 24px; padding: 0 10px;
+}}
+QToolButton#drawerButton {{
+    min-width: 26px; max-width: 26px; min-height: 26px; max-height: 26px;
+    padding: 0; border-radius: 6px; border: 1px solid transparent; background: transparent;
+}}
+QToolButton#drawerButton:hover {{ background: {BG_HOVER}; }}
+QToolButton#drawerButton:checked {{ background: {ACCENT_SOFT}; }}
+QToolButton#drawerButton:focus {{ border: 1px solid {ACCENT}; }}
 /* Round 6 (SPEC §9 "At 683"): menu-bar corner space-weather summary
    (SFI/Kp/A), shown only when the window is narrow enough to hide the side
    panel -- labels tertiary, values Mono secondary, per §12 callout 1. Its

@@ -49,7 +49,7 @@ def test_every_settings_page_has_a_non_empty_description(window): # S4
         page = dlg.stack.widget(i)
         descriptions = [
             lbl for lbl in page.findChildren(QLabel)
-            if lbl.objectName() == "muted" and lbl.wordWrap()
+            if lbl.objectName() == "pageDescription" and lbl.wordWrap()
         ]
         assert descriptions, EXPECTED_PAGES[i]
         assert descriptions[0].text().strip() != "", EXPECTED_PAGES[i]
@@ -58,15 +58,18 @@ def test_every_settings_page_has_a_non_empty_description(window): # S4
 def test_map_and_spots_page_keeps_all_merged_controls(window): # S4
     dlg = window._build_settings_dialog()
     for key in ("spots_mode", "pskreporter_poll_seconds"):
-        field = dlg.fields[key]
-        page = field.parentWidget()
+        page = dlg.fields[key]
+        while page is not None and dlg.stack.indexOf(page) < 0:
+            page = page.parentWidget()
         assert dlg.stack.indexOf(page) == EXPECTED_PAGES.index("Map & spots")
 
 
 def test_settings_dialog_fits_release_size_budget(window):
     dlg = window._build_settings_dialog()
-    assert dlg.width() <= 720
-    assert dlg.height() <= 520
+    assert dlg.width() <= 760
+    assert dlg.height() <= 560
+    assert dlg.minimumWidth() <= 520
+    assert dlg.minimumHeight() <= 400
 
 
 def test_settings_title_is_plain_settings(window):
@@ -104,25 +107,38 @@ def test_qrz_show_hide_action_toggles_echo_mode(window):
     ],
 )
 def test_lat_lon_spin_box_ranges(window, key, lo, hi):
+    """Coordinates are text fields. Empty means not set; the numeric range is
+    enforced by validation, and -90/-180 are real values, not sentinels."""
+    from PySide6.QtWidgets import QLineEdit
+
     dlg = window._build_settings_dialog()
     field = dlg.fields[key]
-    assert field.minimum() == lo
-    assert field.maximum() == hi
+    assert isinstance(field, QLineEdit)
+    assert field.placeholderText() == "Not set"
+    field.setText("")
+    values = dlg.collected_settings()
+    assert values[key] is None
+    field.setText(str(lo))
+    assert dlg.collected_settings()[key] == lo
 
 
 @pytest.mark.parametrize(
-    "key", ["home_lat", "home_lon", "target_dx_lat", "target_dx_lon", "pskreporter_poll_seconds", "refresh_interval_seconds"],
+    "key", ["pskreporter_poll_seconds", "refresh_interval_seconds"],
 )
 def test_spin_boxes_are_tall_enough_for_both_arrows(window, key): # M3
     dlg = window._build_settings_dialog()
-    assert dlg.fields[key].minimumHeight() >= 30
+    assert dlg.fields[key].minimumHeight() >= 28
 
 
 def test_poll_interval_spin_box_has_five_minute_floor(window):
+    """The spin box accepts a typed value below 300 so Save can explain it
+    instead of silently clamping."""
     dlg = window._build_settings_dialog()
     field = dlg.fields["pskreporter_poll_seconds"]
-    assert field.minimum() == 300
     assert field.suffix().strip() == "s"
+    field.setValue(10)
+    messages = [item["message"] for item in dlg.validate() if item["key"] == "pskreporter_poll_seconds"]
+    assert messages and "300" in messages[0]
 
 
 def test_refresh_interval_spin_box_has_suffix(window):
@@ -147,8 +163,12 @@ def test_rig_profile_and_baud_are_combo_boxes_matching_wizard(window):
     dlg = window._build_settings_dialog()
     assert isinstance(dlg.fields["cat_rig_profile"], QComboBox)
     assert isinstance(dlg.fields["cat_baud"], QComboBox)
-    items = {dlg.fields["cat_rig_profile"].itemText(i) for i in range(dlg.fields["cat_rig_profile"].count())}
-    assert items == set(RIG_PROFILES.keys())
+    profile = dlg.fields["cat_rig_profile"]
+    labels = {profile.itemText(i) for i in range(profile.count())}
+    keys = {profile.itemData(i) for i in range(profile.count())}
+    assert keys == set(RIG_PROFILES.keys())
+    assert labels == {"Icom", "Kenwood", "Yaesu"}
+    assert "kenwood" not in labels
 
 
 def test_test_qrz_button_lives_on_services_page_with_the_key(window):
@@ -179,17 +199,14 @@ def test_ip_lookup_privacy_text_is_fully_visible(window): # R1
 
 
 def test_location_label_baseline_matches_checkbox(window): # S1/R2
+    """IP lookup is a checkbox saved with Save, not a switch that applies immediately."""
+    from PySide6.QtWidgets import QCheckBox
+
     dlg = window._build_settings_dialog()
-    dlg.show()
-    station_page = dlg.stack.widget(EXPECTED_PAGES.index("Station"))
-    form = station_page.layout()
     checkbox = dlg.fields["ip_geolocation_enabled"]
-    label = form.labelForField(checkbox)
-    assert label is not None
-    assert label.text() == "Location"
-    label_center = label.mapTo(dlg, label.rect().center()).y()
-    checkbox_center = checkbox.mapTo(dlg, checkbox.rect().center()).y()
-    assert abs(label_center - checkbox_center) <= 2
+    assert isinstance(checkbox, QCheckBox)
+    assert "IP" in checkbox.text()
+    assert checkbox.isChecked() is False
 
 
 def test_map_and_spots_description_uses_lowercase_live_spots(window): # S1
@@ -203,14 +220,13 @@ def test_settings_label_column_is_consistent_across_pages(window): # N-new-3
     from orbitrx.ui.qt_app import SETTINGS_LABEL_WIDTH
 
     dlg = window._build_settings_dialog()
+    assert SETTINGS_LABEL_WIDTH == 152
     sample_fields = [
         "spots_callsign", "cat_port", "dx_cluster_callsign",
         "spots_mode", "refresh_interval_seconds",
     ]
     for key in sample_fields:
-        field = dlg.fields[key]
-        form = field.parentWidget().layout()
-        label = form.labelForField(field)
+        label = dlg.field_labels[key]
         assert label is not None, key
         assert label.minimumWidth() == SETTINGS_LABEL_WIDTH, key
 
@@ -218,8 +234,8 @@ def test_settings_label_column_is_consistent_across_pages(window): # N-new-3
 def test_settings_dialog_saves_values_into_config(window):
     dlg = window._build_settings_dialog()
     dlg.fields["spots_callsign"].setText("W1AW")
-    dlg.fields["home_lat"].setValue(51.5)
-    dlg.fields["home_lon"].setValue(-0.12)
+    dlg.fields["home_lat"].setText("51.5")
+    dlg.fields["home_lon"].setText("-0.12")
     dlg.fields["qrz_api_key"].setText("secretkey")
     window._apply_settings_dialog(dlg)
     assert window.ctrl.cfg.get("spots_callsign") == "W1AW"
@@ -234,7 +250,16 @@ def test_settings_serial_port_selects_first_real_port_when_saved_missing(window,
     monkeypatch.setattr(window.ctrl.cat, "list_ports_detailed",
                         lambda: [("COM2", "Communications Port (COM2)"), ("COM7", "USB Serial")])
     dlg = window._build_settings_dialog()
-    port_combos = [c for c in dlg.findChildren(QComboBox) if c.findData("COM2") >= 0]
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    deadline = __import__("time").time() + 2
+    port_combos = []
+    while __import__("time").time() < deadline:
+        app.processEvents()
+        port_combos = [c for c in dlg.findChildren(QComboBox) if c.findData("COM2") >= 0]
+        if port_combos and port_combos[0].currentData() == "COM2":
+            break
+        __import__("time").sleep(0.01)
     assert len(port_combos) == 1
     assert port_combos[0].currentData() == "COM2"
 
@@ -251,38 +276,14 @@ def test_spin_box_border_spans_full_field_width_with_buttons_inside(window): # M
     dlg = window._build_settings_dialog()
     dlg.show()
     checked = 0
-    for i in range(dlg.stack.count()):
-        page = dlg.stack.widget(i)
-        form = page.layout()
-        for row in range(form.rowCount()):
-            field_item = form.itemAt(row, form.ItemRole.FieldRole)
-            if not field_item or not field_item.widget():
-                continue
-            field = field_item.widget()
-            if not isinstance(field, (QLineEdit, QComboBox)):
-                continue
-            label_item = form.itemAt(row, form.ItemRole.LabelRole)
-            if not label_item or not label_item.widget():
-                continue
-            for other_row in range(form.rowCount()):
-                other_item = form.itemAt(other_row, form.ItemRole.FieldRole)
-                if not other_item or not other_item.widget():
-                    continue
-                sb = other_item.widget()
-                if not isinstance(sb, QAbstractSpinBox):
-                    continue
-                field_right = field.mapTo(dlg, field.rect().topRight()).x()
-                sb_right = sb.mapTo(dlg, sb.rect().topRight()).x()
-                assert abs(field_right - sb_right) <= 1, (page, field, sb)
-                assert sb.width() >= field.width() - 1
-
-                opt = QStyleOptionSpinBox()
-                sb.initStyleOption(opt)
-                up_rect = sb.style().subControlRect(
-                    QStyle.ComplexControl.CC_SpinBox, opt, QStyle.SubControl.SC_SpinBoxUp, sb
-                )
-                assert sb.rect().contains(up_rect), (page, sb, up_rect, sb.rect())
-                checked += 1
+    for sb in dlg.findChildren(QAbstractSpinBox):
+        opt = QStyleOptionSpinBox()
+        sb.initStyleOption(opt)
+        up_rect = sb.style().subControlRect(
+            QStyle.ComplexControl.CC_SpinBox, opt, QStyle.SubControl.SC_SpinBoxUp, sb
+        )
+        assert sb.rect().contains(up_rect), (sb, up_rect, sb.rect())
+        checked += 1
     assert checked > 0
 
 

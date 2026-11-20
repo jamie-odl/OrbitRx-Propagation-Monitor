@@ -64,6 +64,7 @@ class CatTestRunner(QObject):
         freq: float,
         on_done: Callable[[str, str], None],
         timeout_s: float | None = None,
+        operation: Callable[[], object] | None = None,
     ) -> None:
         self.cancel()
         self._generation += 1
@@ -73,7 +74,12 @@ class CatTestRunner(QObject):
 
         def worker() -> None:
             try:
-                result = cat.tune(freq, confirm=None)
+                # operation lets Settings probe the rig without calling tune()
+                # (tune retunes). The rig wizard still uses the default.
+                if operation is not None:
+                    result = operation()
+                else:
+                    result = cat.tune(freq, confirm=None)
             except Exception as e:
                 result = str(e)
             deliver(result)
@@ -102,4 +108,72 @@ class CatTestRunner(QObject):
             return  # superseded by cancel(), a timeout, or a newer start()
         self._timer.stop()
         on_done, self._on_done = self._on_done, None
+        on_done("ok", result)
+
+
+class BackgroundTask(QObject):
+    """Runs one callable off the UI thread. Same cancel/timeout contract as
+    CatTestRunner: exactly one on_done(kind, result) on the GUI thread.
+    Used for Test QRZ and the serial-port scan so neither blocks the dialog."""
+
+    def __init__(self, parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._invoker = UiInvoker(self)
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self._on_timeout)
+        self._generation = 0
+        self._on_done: Callable[[str, object], None] | None = None
+        self._thread: threading.Thread | None = None
+
+    def is_active(self) -> bool:
+        return self._on_done is not None
+
+    def start(
+        self,
+        fn: Callable[[], object],
+        on_done: Callable[[str, object], None],
+        timeout_s: float | None = None,
+    ) -> None:
+        self.cancel()
+        self._generation += 1
+        gen = self._generation
+        self._on_done = on_done
+        deliver = self._invoker.wrap(lambda result: self._finish(gen, result))
+
+        def worker() -> None:
+            try:
+                result = fn()
+            except Exception as exc:
+                result = exc
+            deliver(result)
+
+        self._thread = threading.Thread(target=worker, daemon=True, name="bg-task")
+        self._thread.start()
+        if timeout_s is not None:
+            self._timer.start(max(1, int(timeout_s * 1000)))
+
+    def cancel(self) -> None:
+        if self._on_done is None:
+            return
+        self._generation += 1
+        self._timer.stop()
+        on_done, self._on_done = self._on_done, None
+        on_done("cancelled", "Cancelled")
+
+    def _on_timeout(self) -> None:
+        if self._on_done is None:
+            return
+        self._generation += 1
+        on_done, self._on_done = self._on_done, None
+        on_done("timeout", "Timed out")
+
+    def _finish(self, gen: int, result: object) -> None:
+        if gen != self._generation or self._on_done is None:
+            return
+        self._timer.stop()
+        on_done, self._on_done = self._on_done, None
+        if isinstance(result, Exception):
+            on_done("error", str(result))
+            return
         on_done("ok", result)

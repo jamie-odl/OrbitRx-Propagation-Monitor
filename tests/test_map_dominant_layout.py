@@ -394,10 +394,13 @@ def test_side_panel_action_stays_enabled_in_compact_mode_and_switches_tabs(windo
     assert window._compact_tabs.currentWidget() is window._map_tab
 
     window._actions["ShowSidePanel"].setChecked(True)
-    assert window._compact_tabs.currentWidget() is window._side_pane
+    assert window._drawer_open
+    assert window._compact_tabs.currentWidget() is window._map_tab
     assert window._side_pane.isVisible()
+    assert window.map_widget.isVisible()
 
     window._actions["ShowSidePanel"].setChecked(False)
+    assert not window._drawer_open
     assert window._compact_tabs.currentWidget() is window._map_tab
 
     window.resize(1280, 800)
@@ -423,10 +426,13 @@ def test_ctrl_b_shows_and_esc_closes_the_side_panel_in_compact_mode(window):
     assert window._compact_tabs.currentWidget() is window._map_tab
 
     QTest.keyClick(window, Qt.Key.Key_B, Qt.KeyboardModifier.ControlModifier)
-    assert window._compact_tabs.currentWidget() is window._side_pane
+    assert window._drawer_open
+    assert window._compact_tabs.currentWidget() is window._map_tab
     assert window._actions["ShowSidePanel"].isChecked() is True
+    assert window.map_widget.isVisible()
 
     QTest.keyClick(window, Qt.Key.Key_Escape)
+    assert not window._drawer_open
     assert window._compact_tabs.currentWidget() is window._map_tab
     assert window._actions["ShowSidePanel"].isChecked() is False
 
@@ -1283,12 +1289,8 @@ def test_path_header_hint_links_to_location_settings_when_unset(window, monkeypa
     window.ctrl.state.user_lon = None
     window._update_location_hint_visibility()
     assert not window._path_hint_lbl.isHidden()
-    assert "Set location to enable" in window._path_hint_lbl.text()
-
-    opened = {}
-    monkeypatch.setattr(window, "_settings", lambda **kw: opened.update(kw))
-    window._path_hint_lbl.linkActivated.emit("#")
-    assert opened == {"initial_page": "Station"}
+    assert "Set location in Settings (Ctrl+,)" in window._path_hint_lbl.text()
+    assert "href" not in window._path_hint_lbl.text()
 
     window.ctrl.state.user_lat = 51.5
     window.ctrl.state.user_lon = -0.1
