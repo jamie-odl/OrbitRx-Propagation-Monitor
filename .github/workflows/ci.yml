@@ -165,12 +165,10 @@ jobs:
             Write-Host ("ARTIFACT {0}  {1} bytes  sha256={2}" -f $item.Name, $item.Length, $hash)
           } | Out-File dist\SHA256SUMS.txt -Encoding ascii
           Get-Content dist\SHA256SUMS.txt
-      # No ship-set artifact is ever uploaded from this public repository's CI
-      # (any signed-in GitHub user can download Actions artifacts). The onedir
-      # build, the exe, the installer and any zip of them stay on the runner.
-      # Only a text inventory of what was built goes into release-shots/
-      # (screenshots and text), so QA can see the shipped file list and hashes
-      # without the binaries being published.
+      # The text inventory in release-shots/ is screenshots and text. The
+      # release zip packed at the end of this job is the one distributable
+      # this workflow uploads, and only as a CI artifact. It is not a GitHub
+      # Release and it does not replace the public 5.1.0 download.
       - name: Ship-set inventory (text only, binaries are not uploaded)
         shell: pwsh
         run: |
@@ -426,3 +424,59 @@ jobs:
           path: release-shots/
           retention-days: 30
           if-no-files-found: warn
+      # Release QA artifact. Not a GitHub Release and not the public 5.1.0 download.
+      - name: Pack OrbitRx-5.2.0-win-x64.zip
+        shell: pwsh
+        run: |
+          $ver = (Get-Content VERSION).Trim()
+          if ($ver -ne "5.2.0") { throw "VERSION is $ver, this pack step is for 5.2.0" }
+          # Same roots as the live 5.1.0 zip: the portable onedir (exe, NOTICE,
+          # third-party licence texts) plus the installer, then SHA256SUMS.txt.
+          $name = "OrbitRx-$ver-win-x64.zip"
+          if (Test-Path $name) { Remove-Item $name -Force }
+          tar -a -c -f $name -C dist OrbitRxMonitor OrbitRxMonitor-Setup.exe SHA256SUMS.txt
+          if ($LASTEXITCODE -ne 0) { throw "tar failed" }
+          $zip = Get-Item $name
+          $zipHash = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLower()
+          Write-Host ("ARTIFACT {0}  {1} bytes  sha256={2}" -f $zip.Name, $zip.Length, $zipHash)
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $name))
+          $names = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\','/') })
+          Write-Host ("ZIP members {0}" -f $names.Count)
+          foreach ($required in @(
+            "OrbitRxMonitor/OrbitRxMonitor.exe",
+            "OrbitRxMonitor-Setup.exe",
+            "OrbitRxMonitor/_internal/NOTICE",
+            "SHA256SUMS.txt"
+          )) {
+            if ($names -notcontains $required) { throw "zip missing $required" }
+          }
+          if (-not ($names | Where-Object { $_.StartsWith("OrbitRxMonitor/_internal/third_party/") })) {
+            throw "zip is missing third-party licence texts"
+          }
+          if ($names | Where-Object { $_.EndsWith("Qt6WebEngineCore.dll") }) {
+            throw "Qt WebEngine reached the release zip"
+          }
+          $sha256 = [System.Security.Cryptography.SHA256]::Create()
+          foreach ($entry in $archive.Entries) {
+            $rel = $entry.FullName.Replace('\','/')
+            if ($rel -in @(
+              "OrbitRxMonitor/OrbitRxMonitor.exe",
+              "OrbitRxMonitor-Setup.exe",
+              "OrbitRxMonitor/_internal/NOTICE",
+              "SHA256SUMS.txt"
+            )) {
+              $stream = $entry.Open()
+              $hashBytes = $sha256.ComputeHash($stream)
+              $stream.Close()
+              $sha = [System.BitConverter]::ToString($hashBytes).Replace("-","").ToLower()
+              Write-Host ("ARTIFACT {0}  {1} bytes  sha256={2}" -f $rel, $entry.Length, $sha)
+            }
+          }
+          $archive.Dispose()
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OrbitRx-5.2.0-win-x64
+          path: OrbitRx-5.2.0-win-x64.zip
+          retention-days: 14
+          if-no-files-found: error

@@ -3,10 +3,9 @@
 All notable changes to OrbitRx are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
-## [5.2.0] - unreleased
+## [5.2.0] - 2026-11-21
 
-Release candidate prepared 21 November 2026. Not published. 5.1.0 remains
-the public release.
+5.2.0, 21 November 2026. Not published. 5.1.0 remains the public release.
 
 This candidate is the redesigned window and Settings dialog. The map is the
 main view, with band cards underneath and space weather in the side panel.
