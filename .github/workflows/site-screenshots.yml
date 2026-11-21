@@ -1,0 +1,66 @@
+name: Site screenshots
+
+# Website PNGs only. workflow_dispatch, and this branch, so a push here
+# produces the artifact without going through the release pack job.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ci/site-screenshots]
+
+permissions:
+  contents: read
+
+jobs:
+  site-screenshots:
+    name: Site screenshots (5.2.1)
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.10"
+          cache: pip
+      - name: Install the same Windows build lock the release uses
+        run: |
+          python -m pip install --require-hashes --no-deps -r packaging\requirements-windows-build.lock.txt
+          python -m pip check
+      - name: Build the executable
+        run: |
+          pyinstaller OrbitRxMonitor.spec --noconfirm
+          if (!(Test-Path dist\OrbitRxMonitor\OrbitRxMonitor.exe)) { throw "exe missing" }
+      - name: Capture from a smoke copy
+        shell: pwsh
+        run: |
+          if (Test-Path dist-smoke) { Remove-Item -Recurse -Force dist-smoke }
+          New-Item -ItemType Directory -Force -Path dist-smoke, site-shots | Out-Null
+          Copy-Item -Recurse dist\OrbitRxMonitor dist-smoke\OrbitRxMonitor
+          $exe = (Resolve-Path dist-smoke\OrbitRxMonitor\OrbitRxMonitor.exe).Path
+          $out = (Resolve-Path site-shots).Path
+          $env:ORBITRX_OFFLINE_FIXTURE = "1"
+          $env:ORBITRX_SITE_SHOTS = $out
+          $env:QT_SCALE_FACTOR = "1"
+          $env:QT_ENABLE_HIGHDPI_SCALING = "0"
+          Remove-Item Env:ORBITRX_CAPTURE_DIR -ErrorAction SilentlyContinue
+          Remove-Item Env:ORBITRX_TEST_SIMULATED_RIG -ErrorAction SilentlyContinue
+          $proc = Start-Process -FilePath $exe -WorkingDirectory (Split-Path $exe) -PassThru
+          $null = $proc.Handle
+          if (-not $proc.WaitForExit(180000)) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            throw "site capture did not exit within 180s"
+          }
+          if ($proc.ExitCode -ne 0) { throw "site capture exited $($proc.ExitCode)" }
+          python -c "from pathlib import Path; from PIL import Image; root=Path(r'$out'); need=('main-window.png','history.png','settings-rig.png');
+missing=[n for n in need if not (root/n).is_file()];
+assert not missing, missing
+for n in need:
+    im=Image.open(root/n); assert im.size==(1460,928), (n, im.size); print(n, im.size)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site-screenshots-5.2.1
+          path: |
+            site-shots/main-window.png
+            site-shots/history.png
+            site-shots/settings-rig.png
+          retention-days: 14
+          if-no-files-found: error

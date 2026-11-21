@@ -4,6 +4,7 @@ import datetime
 import faulthandler
 import gc
 import json
+import math
 import os
 import sys
 import threading
@@ -4057,7 +4058,157 @@ def shutdown_capture_process(app, win, exit_code: int, stage_log: Path | None) -
     return exit_code
 
 
-def run_capture_and_exit(capture_dir: str | Path) -> None:
+SITE_SHOT_W = 1460
+SITE_SHOT_H = 928
+
+
+def _lock_site_shot_size(widget) -> None:
+    """Stop the show-time screen fit, then pin the widget to the site size."""
+    refit = getattr(widget, "_fit_refit", None)
+    if refit is not None:
+        refit._done = True
+    widget.setFixedSize(SITE_SHOT_W, SITE_SHOT_H)
+
+
+def _save_site_shot(widget, path: Path) -> None:
+    """Window contents only: no desktop and no taskbar. The PNG is exactly
+    1460x928."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtGui import QColor, QImage, QPainter
+
+    _lock_site_shot_size(widget)
+    widget.show()
+    widget.raise_()
+    app = QApplication.instance()
+    assert app is not None
+    for _ in range(8):
+        app.processEvents()
+        time.sleep(0.02)
+    if (widget.width(), widget.height()) != (SITE_SHOT_W, SITE_SHOT_H):
+        raise RuntimeError(
+            f"{path.name} widget is {widget.width()}x{widget.height()}, want {SITE_SHOT_W}x{SITE_SHOT_H}"
+        )
+    image = QImage(SITE_SHOT_W, SITE_SHOT_H, QImage.Format.Format_RGB32)
+    image.fill(QColor("#070B14"))
+    painter = QPainter(image)
+    widget.render(painter, QPoint(0, 0))
+    painter.end()
+    if not image.save(str(path), "PNG"):
+        raise RuntimeError(f"could not write {path}")
+    if (image.width(), image.height()) != (SITE_SHOT_W, SITE_SHOT_H):
+        raise RuntimeError(f"{path.name} is {image.width()}x{image.height()}")
+
+
+def _site_history_rows() -> list[dict]:
+    """48 hourly Kp and solar-flux samples. No station identity."""
+    now = datetime.datetime.now(datetime.timezone.utc).replace(minute=0, second=0, microsecond=0)
+    rows = []
+    for hours_ago in range(47, -1, -1):
+        when = now - datetime.timedelta(hours=hours_ago)
+        # A smooth two-day sample, not a live feed and not a station log.
+        kp = 2.2 + 1.1 * math.sin(hours_ago / 7.0)
+        flux = 128 + 10 * math.sin(hours_ago / 11.0 + 0.6)
+        rows.append({
+            "ts": when.isoformat(),
+            "kp": kp,
+            "flux": flux,
+            "sunspot": 80,
+            "muf": 18,
+            "luf": 3,
+            "band_cond": "fair",
+            "lat": 51.5081,
+            "lon": -0.1281,
+            "a_index": 8,
+            "solar_wind": 400,
+            "bz": 0.0,
+        })
+    return rows
+
+
+def _site_live_spots():
+    """Sample paths only. The callsigns are placeholders, not a person."""
+    from orbitrx.spots.models import Spot
+
+    pairs = [
+        ("W1AAA", 42.3, -71.1, "G0AAA", 51.5081, -0.1281, 14_074_000),
+        ("VK2BBB", -33.9, 151.2, "JA1BBB", 35.7, 139.7, 21_074_000),
+        ("PY2CCC", -23.5, -46.6, "EA1CCC", 40.4, -3.7, 7_074_000),
+        ("ZL1DDD", -36.8, 174.7, "W6DDD", 37.8, -122.4, 28_074_000),
+    ]
+    spots = []
+    for sender, tx_lat, tx_lon, receiver, rx_lat, rx_lon, hz in pairs:
+        spots.append(Spot(
+            rx_lat=rx_lat, rx_lon=rx_lon, tx_lat=tx_lat, tx_lon=tx_lon,
+            frequency_hz=hz, mode="FT8", sender=sender, receiver=receiver,
+            snr_db=-8, flow_start_seconds=0,
+        ))
+    return spots
+
+
+def run_site_screenshot_hook(out_dir: str | Path) -> int:
+    """Three website PNGs from the running window. Offline fixture data only:
+    London home pin, sample paths, and a 48 hour Kp/SFI chart. Does not
+    retune a radio and does not write the release tree."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    set_high_dpi_rounding_policy()
+    app = QApplication.instance() or QApplication([])
+    apply_theme(app)
+    QtOrbitRxApplication._alarm_excellent = lambda self: None
+    QtOrbitRxApplication._alarm_storm = lambda self: None
+    win = QtOrbitRxApplication()
+    win.ctrl.cfg.set("home_lat", 51.5081)
+    win.ctrl.cfg.set("home_lon", -0.1281)
+    win.ctrl.cfg.set("spots_callsign", "")
+    win.ctrl.cfg.set("ip_geolocation_enabled", False)
+    win.ctrl.cfg.set("show_demo_spots", True)
+    win.ctrl.refresh_location()
+    win.ctrl.seed_demo_spots()
+    win.ctrl.spots.latest = _site_live_spots()
+    for row in _site_history_rows():
+        win.ctrl.store.log_propagation(row)
+    try:
+        win.ctrl.fetch_weather()
+    except Exception:
+        pass
+    win._set_cluster("connected")
+    win._refresh_labels_and_map()
+    for _ in range(20):
+        app.processEvents()
+        time.sleep(0.05)
+    pill = win.map_widget._cluster_pill
+    if pill.isVisible() and "disconnected" in pill.text().lower():
+        raise RuntimeError("main window still shows the Cluster disconnected banner")
+    _save_site_shot(win, out_dir / "main-window.png")
+
+    win._open_plot_tab()
+    fig, _has_line = _build_history_figure(_site_history_rows(), 3600.0)
+    while win.plot_container.count():
+        item = win.plot_container.takeAt(0)
+        if item.widget() is not None and item.widget() is not win.plot_placeholder:
+            item.widget().deleteLater()
+    if FigureCanvas is None:
+        raise RuntimeError("matplotlib Qt backend is required for the history shot")
+    win.plot_container.addWidget(FigureCanvas(fig))
+    app.processEvents()
+    _save_site_shot(win, out_dir / "history.png")
+
+    dlg = win._build_settings_dialog(initial_page="Rig")
+    dlg.fields["rig_control"].set_value("omnirig")
+    if dlg.fields["omnirig_rig_number"].currentData() != "1":
+        raise RuntimeError("Settings did not show Rig 1")
+    if not dlg.fields["cat_confirm_before_tune"].isChecked():
+        raise RuntimeError("Confirm before tuning was off")
+    # The OmniRig choice is for this picture only. Match the snapshot so the
+    # footer does not say the page has unsaved changes.
+    dlg._snapshot = dlg.collected_settings()
+    dlg._refresh_dirty()
+    _save_site_shot(dlg, out_dir / "settings-rig.png")
+    dlg.reject()
+    return 0
+
+
+def run_capture_and_exit(capture_dir: str | Path, hook=None) -> None:
     """Drive the self-capture hook and then end the process. Shared by
     run_qt_app (the frozen exe, when ORBITRX_CAPTURE_DIR is set) and
     tools/capture_shutdown_probe.py, so the probe exercises exactly the
@@ -4078,7 +4229,7 @@ def run_capture_and_exit(capture_dir: str | Path) -> None:
     faulthandler.enable(file=fault_file)
     faulthandler.dump_traceback_later(75.0, exit=True, file=fault_file)
     try:
-        code = run_release_capture_hook(capture_dir)
+        code = (hook or run_release_capture_hook)(capture_dir)
         app = QApplication.instance()
         win = next(
             (w for w in app.topLevelWidgets() if isinstance(w, QtOrbitRxApplication)), None
@@ -4130,6 +4281,14 @@ FINALISE_WATCHDOG_SECONDS = 20.0
 
 def run_qt_app() -> None:
     set_high_dpi_rounding_policy()
+    site_dir = os.environ.get("ORBITRX_SITE_SHOTS")
+    if site_dir:
+        # Website captures only. Forces the offline fixture so this process
+        # does not open PSKReporter, NOAA, or a cluster, then ends the same
+        # way as the release self-capture.
+        os.environ["ORBITRX_OFFLINE_FIXTURE"] = "1"
+        run_capture_and_exit(site_dir, hook=run_site_screenshot_hook)
+        return  # pragma: no cover - unreachable, run_capture_and_exit always exits
     capture_dir = os.environ.get("ORBITRX_CAPTURE_DIR")
     if capture_dir:
         run_capture_and_exit(capture_dir)
