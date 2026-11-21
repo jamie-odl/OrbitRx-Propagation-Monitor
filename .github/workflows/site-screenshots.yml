@@ -50,11 +50,7 @@ jobs:
             throw "site capture did not exit within 180s"
           }
           if ($proc.ExitCode -ne 0) { throw "site capture exited $($proc.ExitCode)" }
-          python -c "from pathlib import Path; from PIL import Image; root=Path(r'$out'); need=('main-window.png','history.png','settings-rig.png');
-missing=[n for n in need if not (root/n).is_file()];
-assert not missing, missing
-for n in need:
-    im=Image.open(root/n); assert im.size==(1460,928), (n, im.size); print(n, im.size)"
+          python -c "import os; from pathlib import Path; from PIL import Image; root=Path(os.environ['ORBITRX_SITE_SHOTS']); need=('main-window.png','history.png','settings-rig.png'); bad=[(n, Image.open(root/n).size) for n in need if not (root/n).is_file() or Image.open(root/n).size!=(1460,928)]; assert not bad, bad; print('ok', [(n, Image.open(root/n).size) for n in need])"
       - uses: actions/upload-artifact@v4
         with:
           name: site-screenshots-5.2.1
