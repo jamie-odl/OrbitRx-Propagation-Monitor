@@ -287,6 +287,36 @@ def test_spin_box_border_spans_full_field_width_with_buttons_inside(window): # M
     assert checked > 0
 
 
+def test_rig_number_and_confirm_before_tuning(window):
+    """Defaults stay Rig 1 and confirm on. A saved choice is what the dialog
+    shows and what Apply writes back, including the London home pin."""
+    dlg = window._build_settings_dialog()
+    assert dlg.collected_settings()["omnirig_rig_number"] == 1
+    assert dlg.collected_settings()["cat_confirm_before_tune"] is True
+    assert dlg.fields["omnirig_rig_number"].isEnabled() is False
+
+    window.ctrl.cfg.set("omnirig_rig_number", 2)
+    window.ctrl.cfg.set("cat_confirm_before_tune", False)
+    window.ctrl.cfg.set("rig_control", "omnirig")
+    kept = window._build_settings_dialog()
+    assert kept.collected_settings()["omnirig_rig_number"] == 2
+    assert kept.collected_settings()["cat_confirm_before_tune"] is False
+    assert kept.fields["omnirig_rig_number"].isEnabled() is True
+    assert kept.collected_settings()["home_lat"] == 51.5081
+    assert kept.collected_settings()["home_lon"] == -0.1281
+
+    kept.fields["omnirig_rig_number"].set_value("1")
+    kept.fields["cat_confirm_before_tune"].setChecked(True)
+    chosen = kept.collected_settings()
+    assert chosen["omnirig_rig_number"] == 1
+    assert chosen["cat_confirm_before_tune"] is True
+    window._apply_settings_dialog(kept)
+    assert window.ctrl.cfg.get("omnirig_rig_number") == 1
+    assert window.ctrl.cfg.get("cat_confirm_before_tune") is True
+    assert window.ctrl.cfg.get("home_lat") == 51.5081
+    assert window.ctrl.cfg.get("home_lon") == -0.1281
+
+
 def test_cluster_live_indicator_in_menu_bar_corner(window):
     """P4-3: the panel-header cluster indicator was deleted as a duplicate of
     the status bar, and G5/G6 (P5-r2) later deleted the status bar's own

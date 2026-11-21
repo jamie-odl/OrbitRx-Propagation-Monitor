@@ -141,16 +141,16 @@ def test_version_file_matches_package():
     assert f"## [{orbitrx.__version__}]" in (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
 
-def test_this_build_is_5_2_0_and_never_identifies_as_5_1_0():
-    """F1 follow-up: this build must identify as the plain, PEP 440-valid
-    5.2.0 everywhere an operator or CI gate would look at identity, and
-    must never be mistaken for the 5.1.0 release."""
+def test_this_build_is_5_2_1_and_never_identifies_as_5_1_0():
+    """This build must identify as the plain, PEP 440-valid 5.2.1 everywhere
+    an operator or CI gate would look at identity, and must never be
+    mistaken for the 5.1.0 release."""
     import tomllib
 
-    assert orbitrx.__version__ == "5.2.0"
-    assert (ROOT / "VERSION").read_text().strip() == "5.2.0"
+    assert orbitrx.__version__ == "5.2.1"
+    assert (ROOT / "VERSION").read_text().strip() == "5.2.1"
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    assert pyproject["project"]["version"] == "5.2.0"
+    assert pyproject["project"]["version"] == "5.2.1"
 
     try:
         from packaging.version import Version
@@ -159,11 +159,11 @@ def test_this_build_is_5_2_0_and_never_identifies_as_5_1_0():
         assert re.fullmatch(r"\d+\.\d+\.\d+", orbitrx.__version__)
 
     from tools.make_version_info import version_tuple4
-    assert version_tuple4(orbitrx.__version__) == (5, 2, 0, 0)
+    assert version_tuple4(orbitrx.__version__) == (5, 2, 1, 0)
 
     iss = (ROOT / "installer" / "OrbitRxMonitor.iss").read_text(encoding="utf-8")
-    assert '#define AppVer "5.2.0"' in iss
-    assert '#define AppVerNumeric "5.2.0.0"' in iss
+    assert '#define AppVer "5.2.1"' in iss
+    assert '#define AppVerNumeric "5.2.1.0"' in iss
     assert "5.1.0" not in iss
 
     qt_app = (ROOT / "orbitrx" / "ui" / "qt_app.py").read_text(encoding="utf-8")

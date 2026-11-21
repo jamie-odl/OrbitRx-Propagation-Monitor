@@ -76,7 +76,7 @@ def test_ci_launches_a_copy_and_requires_a_pristine_folder_zip_and_installer():
     installer = build.split("name: Check the installer payload is pristine")[1].split("\n      - name:")[0]
     assert "/VERYSILENT" in installer
     assert "check_pristine_payload.py" in installer
-    assert build.index("name: Check the installer payload is pristine") < build.index("name: Pack OrbitRx-5.2.0-win-x64.zip")
-    pack = build.split("name: Pack OrbitRx-5.2.0-win-x64.zip")[1]
+    assert build.index("name: Check the installer payload is pristine") < build.index("name: Pack OrbitRx-5.2.1-win-x64.zip")
+    pack = build.split("name: Pack OrbitRx-5.2.1-win-x64.zip")[1]
     assert "check_pristine_payload.py dist\\OrbitRxMonitor" in pack
     assert "check_pristine_payload.py --zip" in pack

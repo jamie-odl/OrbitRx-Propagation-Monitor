@@ -109,7 +109,7 @@ def test_default_zip_name_uses_the_version_file():
     from tools.pack_setup_zip import default_zip_name
 
     version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
-    assert default_zip_name(version) == "OrbitRx-Setup-5.2.0.zip"
+    assert default_zip_name(version) == "OrbitRx-Setup-5.2.1.zip"
 
 
 def test_setup_zip_doc_names_the_live_5_1_0_digest_not_the_superseded_one():

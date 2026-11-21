@@ -988,6 +988,30 @@ class SettingsDialog(QDialog):
             profile.addItem(RIG_PROFILE_LABELS.get(key, key), key)
         self._add_row(layout, "cat_rig_profile", 1, FieldRow("Rig p&rofile", profile))
 
+        self._add_group(layout, "Tuning", False)
+        rig_number = SegmentedChoice([("Rig 1", "1"), ("Rig 2", "2")])
+        self._add_row(
+            layout,
+            "omnirig_rig_number",
+            1,
+            FieldRow(
+                "OmniRig &rig",
+                rig_number,
+                "Which radio OmniRig should use. Serial CAT does not use this.",
+            ),
+        )
+        rig_number.on_change(self._on_edited)
+        confirm = QCheckBox("Confirm before &tuning")
+        confirm_row = FieldRow(
+            "",
+            confirm,
+            "Ask before OrbitRx changes the radio's frequency.",
+        )
+        confirm_row.label.setText("")
+        confirm_row.label.setBuddy(confirm)
+        confirm_row.optional.setVisible(False)
+        self._add_row(layout, "cat_confirm_before_tune", 1, confirm_row)
+
         self._add_group(layout, "Test connection", False)
         self._cat_runner = CatTestRunner(self)
         self._port_task = BackgroundTask(self)
@@ -1260,6 +1284,9 @@ class SettingsDialog(QDialog):
         pidx = profile.findData(str(cfg.get("cat_rig_profile") or "kenwood"))
         if pidx >= 0:
             profile.setCurrentIndex(pidx)
+        number = int(cfg.get("omnirig_rig_number", 1) or 1)
+        self.fields["omnirig_rig_number"].set_value("2" if number == 2 else "1")
+        self.fields["cat_confirm_before_tune"].setChecked(bool(cfg.get("cat_confirm_before_tune", True)))
         self.fields["dx_cluster_callsign"].setText(str(cfg.get("dx_cluster_callsign") or ""))
         self.fields["target_dx_callsign"].setText(str(cfg.get("target_dx_callsign") or ""))
         self._target_pair.lat.setText(_fmt_coord(cfg.get("target_dx_lat")))
@@ -1304,6 +1331,8 @@ class SettingsDialog(QDialog):
             "cat_port": self._port_value(),
             "cat_baud": int(self.fields["cat_baud"].currentData() or self.fields["cat_baud"].currentText() or 9600),
             "cat_rig_profile": self.fields["cat_rig_profile"].currentData() or "kenwood",
+            "omnirig_rig_number": 2 if str(self.fields["omnirig_rig_number"].currentData()) == "2" else 1,
+            "cat_confirm_before_tune": bool(self.fields["cat_confirm_before_tune"].isChecked()),
             "dx_cluster_callsign": self.fields["dx_cluster_callsign"].text().strip().upper(),
             "target_dx_callsign": self.fields["target_dx_callsign"].text().strip().upper(),
             "target_dx_lat": coord(self._target_pair.lat),
@@ -1448,6 +1477,7 @@ class SettingsDialog(QDialog):
                 widget.editingFinished.connect(self._validate_quietly)
                 widget.valueChanged.connect(self._on_edited)
         self.fields["ip_geolocation_enabled"].toggled.connect(lambda _c: self._on_edited())
+        self.fields["cat_confirm_before_tune"].toggled.connect(lambda _c: self._on_edited())
         self.fields["cat_baud"].currentIndexChanged.connect(lambda _i: self._on_edited())
         self.fields["cat_rig_profile"].currentIndexChanged.connect(lambda _i: self._on_edited())
         self.fields["spots_mode"].currentIndexChanged.connect(lambda _i: self._on_edited())
@@ -1716,6 +1746,12 @@ class SettingsDialog(QDialog):
                 field.setEnabled(serial)
             if label is not None:
                 label.setEnabled(serial)
+        rig_number = self.fields.get("omnirig_rig_number")
+        rig_label = self.field_labels.get("omnirig_rig_number")
+        if rig_number is not None:
+            rig_number.setEnabled(not serial)
+        if rig_label is not None:
+            rig_label.setEnabled(not serial)
         self._rescan_btn.setEnabled(serial and not self._port_task.is_active())
         self._on_edited()
 

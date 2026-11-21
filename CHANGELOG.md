@@ -3,11 +3,15 @@
 All notable changes to OrbitRx are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); versions follow SemVer.
 
+## [5.2.1] - 2026-11-21
+
+- Settings can choose OmniRig Rig 1 or Rig 2, and whether OrbitRx asks before it tunes the radio. A new install still uses Rig 1 and asks first. A choice you already saved is kept.
+
 ## [5.2.0] - 2026-11-21
 
-5.2.0, 21 November 2026. Not published. 5.1.0 remains the public release.
+Released 21 November 2026.
 
-This candidate is the redesigned window and Settings dialog. The map is the
+This release is the redesigned window and Settings dialog. The map is the
 main view, with band cards underneath and space weather in the side panel.
 Settings opens from the Tools menu or Ctrl+, and has five sections: Station,
 Rig, DX cluster, Map & spots, and Services.
@@ -25,7 +29,6 @@ Rig, DX cluster, Map & spots, and Services.
 
 F1 (2026-11-12): native-map build, with no Qt WebEngine. Identifies itself
 as 5.2.0 everywhere (exe version resource, installer, window title, About).
-Prepared as the next release candidate; not published until a release go.
 See NOTICE for the trimmed Qt ship set.
 
 ### Packaging and notices (Risk publish conditions P1-P3, 2026-11-13)

@@ -159,26 +159,28 @@ def test_ci_release_build_self_captures_and_checks_for_simulated_rig(): # M3
 
 
 def test_ci_uploads_only_the_named_release_zip():
-    """The Windows build may upload one CI artifact, OrbitRx-5.2.0-win-x64,
-    whose path is that zip. It is not a GitHub Release. Every other upload
-    stays text or screenshots. release.yml still uploads nothing."""
+    """The Windows build may upload the 5.2.1 zip and the About screenshot.
+    Neither is a GitHub Release. Every other upload stays text or screenshots.
+    release.yml still uploads nothing."""
     import re
 
     text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     assert "OrbitRx-windows-unsigned" not in text
     assert "OrbitRx-native-prototype-unsigned" not in text
     assert "dist-zip" not in text
-    assert "OrbitRx-5.2.0-win-x64.zip" in text
+    assert "OrbitRx-5.2.1-win-x64.zip" in text
+    assert "about-5.2.1" in text
+    assert "release-shots/100/about.png" in text
     assert "Not a GitHub Release" in text
     names = re.findall(r"uses: actions/upload-artifact@v4\n(?:.*\n)*?\s+name: (\S+)", text)
     assert sorted(set(names)) == sorted({
         "pytest-${{", "rig-wizard-windows-screenshot", "release-exe-captures",
-        "OrbitRx-5.2.0-win-x64",
+        "OrbitRx-5.2.1-win-x64", "about-5.2.1",
     }), names
     for block in text.split("uses: actions/upload-artifact@v4")[1:]:
         upload = block.split("\n      - ")[0]
         path_part = upload.split("path:", 1)[1]
-        if "OrbitRx-5.2.0-win-x64.zip" in path_part:
+        if "OrbitRx-5.2.1-win-x64.zip" in path_part:
             continue
         for banned in ("dist", ".exe", ".zip", "OrbitRxMonitor"):
             assert banned not in path_part, (banned, upload)
@@ -193,7 +195,7 @@ def test_ci_uploads_only_the_named_release_zip():
 
 
 def test_no_upload_artifact_step_in_ci_has_a_distributable_path():
-    """No upload except the named 5.2.0 release zip may point at dist/, an
+    """No upload except the named 5.2.1 release zip may point at dist/, an
     exe, a zip, or the onedir."""
     text = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     blocks = text.split("uses: actions/upload-artifact@v4")[1:]
@@ -201,7 +203,7 @@ def test_no_upload_artifact_step_in_ci_has_a_distributable_path():
     for block in blocks:
         step = block.split("\n      - ")[0]
         path_part = step.split("path:", 1)[1]
-        if "OrbitRx-5.2.0-win-x64.zip" in path_part:
+        if "OrbitRx-5.2.1-win-x64.zip" in path_part:
             assert "dist/" not in path_part
             assert "OrbitRxMonitor/" not in path_part
             continue

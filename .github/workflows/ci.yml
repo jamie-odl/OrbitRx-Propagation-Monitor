@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "feat/**"]
+    branches: [main, "feat/**", "release/**"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -341,6 +341,13 @@ jobs:
           }
           Remove-Item Env:ORBITRX_TEST_SIMULATED_RIG -ErrorAction SilentlyContinue
           Remove-Item Env:ORBITRX_CAPTURE_DIR, Env:QT_SCALE_FACTOR -ErrorAction SilentlyContinue
+      - name: Upload the About dialog screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: about-5.2.1
+          path: release-shots/100/about.png
+          retention-days: 14
+          if-no-files-found: error
       - name: Fail if the simulated rig leaked into the release build
         shell: pwsh
         run: |
@@ -455,11 +462,11 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
       # Release QA artifact. Not a GitHub Release and not the public 5.1.0 download.
-      - name: Pack OrbitRx-5.2.0-win-x64.zip
+      - name: Pack OrbitRx-5.2.1-win-x64.zip
         shell: pwsh
         run: |
           $ver = (Get-Content VERSION).Trim()
-          if ($ver -ne "5.2.0") { throw "VERSION is $ver, this pack step is for 5.2.0" }
+          if ($ver -ne "5.2.1") { throw "VERSION is $ver, this pack step is for 5.2.1" }
           python tools/check_pristine_payload.py dist\OrbitRxMonitor
           if ($LASTEXITCODE -ne 0) { throw "refusing to pack a launched portable folder" }
           # Same roots as the live 5.1.0 zip: the portable onedir (exe, NOTICE,
@@ -510,7 +517,7 @@ jobs:
           $archive.Dispose()
       - uses: actions/upload-artifact@v4
         with:
-          name: OrbitRx-5.2.0-win-x64
-          path: OrbitRx-5.2.0-win-x64.zip
+          name: OrbitRx-5.2.1-win-x64
+          path: OrbitRx-5.2.1-win-x64.zip
           retention-days: 14
           if-no-files-found: error
