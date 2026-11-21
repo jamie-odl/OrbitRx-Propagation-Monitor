@@ -268,4 +268,11 @@ class RigWizardDialog(QDialog):
         self.cfg.set("cat_port", profile["port"])
         self.cfg.set("cat_baud", profile["baud"])
         self.cfg.set("cat_rig_profile", profile["rig_profile"])
+        # Fresh installs and a wizard save on a config that never recorded
+        # these keep the owner's defaults: OmniRig Rig 1, and ask before tune.
+        # An existing choice (Rig 2, or confirm turned off) is left alone.
+        if self.cfg.get("omnirig_rig_number") in (None, ""):
+            self.cfg.set("omnirig_rig_number", 1)
+        if self.cfg.data.get("cat_confirm_before_tune") is None:
+            self.cfg.set("cat_confirm_before_tune", True)
         self.accept()

@@ -153,7 +153,18 @@ jobs:
           if (!(Test-Path dist\OrbitRxMonitor-Setup.exe)) { throw "installer missing" }
       - name: Checksums
         shell: pwsh
-        run: Get-FileHash dist\OrbitRxMonitor\OrbitRxMonitor.exe, dist\OrbitRxMonitor-Setup.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Out-File dist\SHA256SUMS.txt -Encoding ascii
+        run: |
+          $files = @(
+            "dist\OrbitRxMonitor\OrbitRxMonitor.exe",
+            "dist\OrbitRxMonitor-Setup.exe"
+          )
+          $files | ForEach-Object {
+            $item = Get-Item $_
+            $hash = (Get-FileHash $item.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($item.Name)"
+            Write-Host ("ARTIFACT {0}  {1} bytes  sha256={2}" -f $item.Name, $item.Length, $hash)
+          } | Out-File dist\SHA256SUMS.txt -Encoding ascii
+          Get-Content dist\SHA256SUMS.txt
       # No ship-set artifact is ever uploaded from this public repository's CI
       # (any signed-in GitHub user can download Actions artifacts). The onedir
       # build, the exe, the installer and any zip of them stay on the runner.
@@ -168,6 +179,9 @@ jobs:
           $root = (Resolve-Path dist\OrbitRxMonitor).Path
           "version=$((Get-Content VERSION).Trim()) commit=$env:GITHUB_SHA" | Out-File $inv -Encoding utf8
           Get-Content dist\SHA256SUMS.txt | Out-File $inv -Append -Encoding utf8
+          Get-Item dist\OrbitRxMonitor\OrbitRxMonitor.exe, dist\OrbitRxMonitor-Setup.exe | ForEach-Object {
+            "size $($_.Name) $($_.Length)" | Out-File $inv -Append -Encoding utf8
+          }
           Get-ChildItem -Path $root -Recurse -File | Sort-Object FullName | ForEach-Object {
             "{0}`t{1}" -f $_.FullName.Substring($root.Length + 1).Replace('\','/'), $_.Length
           } | Out-File $inv -Append -Encoding utf8

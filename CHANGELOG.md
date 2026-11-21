@@ -5,6 +5,25 @@ All notable changes to OrbitRx are documented here. Format follows
 
 ## [5.2.0] - unreleased
 
+Release candidate prepared 21 November 2026. Not published. 5.1.0 remains
+the public release.
+
+This candidate is the redesigned window and Settings dialog. The map is the
+main view, with band cards underneath and space weather in the side panel.
+Settings opens from the Tools menu or Ctrl+, and has five sections: Station,
+Rig, DX cluster, Map & spots, and Services.
+
+- A home or target location you have not set is stored as empty. The status
+  bar reads "Location: not set" until you enter coordinates. The old -90/-180
+  stand-in is no longer treated as a real place.
+- Test CAT, in Settings and in the rig wizard, asks the radio for its
+  frequency and does not retune it. The test succeeds only when the radio
+  answers.
+- A new install asks you to confirm before OrbitRx tunes the radio.
+- OmniRig uses Rig 1 unless you have already chosen another rig.
+- The sample home location stays London (51.5081, -0.1281). The publisher
+  name stays thevenom.
+
 F1 (2026-11-12): native-map build, with no Qt WebEngine. Identifies itself
 as 5.2.0 everywhere (exe version resource, installer, window title, About).
 Prepared as the next release candidate; not published until a release go.

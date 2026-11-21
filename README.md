@@ -6,7 +6,7 @@ reports on one map, so you can see what is open and who is hearing whom.
 
 ![OrbitRx main window with Live Spots](docs/screenshots/01-main-static.png)
 
-> Status: 5.1.0 is the current public release. 5.2.0 (native map, no embedded browser) is prepared but not yet published. Windows is the primary target; Linux and macOS run from source.
+> Status: 5.1.0 is the current public release. 5.2.0 is a release candidate prepared on 21 November 2026 and is not published yet. Windows is the primary target; Linux and macOS run from source.
 
 ## Features
 

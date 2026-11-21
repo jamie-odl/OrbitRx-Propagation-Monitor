@@ -156,6 +156,37 @@ def test_missing_saved_port_selects_first_enumerated_port(app, cfg, monkeypatch)
     assert "COM3" not in combo.currentText()
 
 
+def test_fresh_install_and_wizard_keep_rig_defaults(app, cfg, tmp_path):
+    """New configs ask before a tune and use OmniRig Rig 1. The wizard writes
+    those defaults when they are missing and does not overwrite a real choice."""
+    from orbitrx.cat import CatController
+    from orbitrx.config import DEFAULT_CONFIG, AppConfig
+    from orbitrx.ui.rig_wizard import RigWizardDialog
+
+    assert DEFAULT_CONFIG["omnirig_rig_number"] == 1
+    assert DEFAULT_CONFIG["cat_confirm_before_tune"] is True
+    assert DEFAULT_CONFIG["home_lat"] == 51.5081
+    assert DEFAULT_CONFIG["home_lon"] == -0.1281
+
+    fresh = AppConfig(path=tmp_path / "fresh.json").load()
+    assert fresh.get("omnirig_rig_number") == 1
+    assert fresh.get("cat_confirm_before_tune") is True
+
+    cfg.data.pop("omnirig_rig_number", None)
+    cfg.data.pop("cat_confirm_before_tune", None)
+    dlg = RigWizardDialog(cfg, CatController(cfg))
+    dlg._save()
+    assert cfg.get("omnirig_rig_number") == 1
+    assert cfg.get("cat_confirm_before_tune") is True
+
+    cfg.set("omnirig_rig_number", 2)
+    cfg.set("cat_confirm_before_tune", False)
+    dlg2 = RigWizardDialog(cfg, CatController(cfg))
+    dlg2._save()
+    assert cfg.get("omnirig_rig_number") == 2
+    assert cfg.get("cat_confirm_before_tune") is False
+
+
 def test_present_saved_port_is_kept(app, cfg, monkeypatch):
     from orbitrx.cat import CatController
     from orbitrx.ui.rig_wizard import populate_port_combo
