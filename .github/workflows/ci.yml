@@ -264,13 +264,26 @@ jobs:
           Write-Host "SHIP-SET-GATE: PASS"
           Get-Content release-shots\ship-set-qt.txt
           Get-Content release-shots\ship-set-tls.txt
+      # Screenshots and the System32 launch write logs/ and data/ beside the
+      # exe. Those runs use this copy. dist\OrbitRxMonitor stays unlaunched
+      # and is what the installer and the zip ship.
+      - name: Stage a launch copy
+        shell: pwsh
+        run: |
+          python tools/check_pristine_payload.py dist\OrbitRxMonitor
+          if ($LASTEXITCODE -ne 0) { throw "portable folder was already dirty before any launch" }
+          if (Test-Path dist-smoke) { Remove-Item -Recurse -Force dist-smoke }
+          New-Item -ItemType Directory -Force -Path dist-smoke | Out-Null
+          Copy-Item -Recurse dist\OrbitRxMonitor dist-smoke\OrbitRxMonitor
+          if (!(Test-Path dist-smoke\OrbitRxMonitor\OrbitRxMonitor.exe)) { throw "launch copy missing" }
+          Write-Host "LAUNCH-COPY: dist-smoke (dist\OrbitRxMonitor left unlaunched)"
       # Distributable upload stays off while packaging/distribution_manifest.json
       # lists release_blockers. release.yml runs that gate and uploads nothing.
       # release-shots later in this job are screenshots and text, not the exe.
       - name: Self-capture the release exe at 100% and 150% scale (M3 evidence)
         shell: pwsh
         run: |
-          $exe = (Resolve-Path dist\OrbitRxMonitor\OrbitRxMonitor.exe).Path
+          $exe = (Resolve-Path dist-smoke\OrbitRxMonitor\OrbitRxMonitor.exe).Path
           New-Item -ItemType Directory -Force -Path release-shots\100, release-shots\150 | Out-Null
 
           function Show-CaptureDiagnostics([string]$CaptureDir) {
@@ -351,7 +364,7 @@ jobs:
       - name: Launch the release exe from an unwritable folder (C:\Windows\System32)
         shell: pwsh
         run: |
-          $exe = (Resolve-Path dist\OrbitRxMonitor\OrbitRxMonitor.exe).Path
+          $exe = (Resolve-Path dist-smoke\OrbitRxMonitor\OrbitRxMonitor.exe).Path
           Remove-Item Env:ORBITRX_CAPTURE_DIR, Env:ORBITRX_TEST_SIMULATED_RIG, Env:QT_SCALE_FACTOR -ErrorAction SilentlyContinue
           $cfg = Join-Path $env:APPDATA 'OrbitRx\config.json'
           Remove-Item $cfg -Force -ErrorAction SilentlyContinue
@@ -417,6 +430,23 @@ jobs:
             if (-not (Test-Path $f) -or ((Get-Content $f -Raw).Trim().Length -eq 0)) { throw "Edges file $f is empty" }
             Write-Host "$f :"; Get-Content $f
           }
+      - name: Check the installer payload is pristine
+        shell: pwsh
+        run: |
+          $dest = Join-Path $env:TEMP "orbitrx-pristine-install"
+          if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+          $log = "release-shots\install-pristine.log"
+          $setup = (Resolve-Path dist\OrbitRxMonitor-Setup.exe).Path
+          $proc = Start-Process -FilePath $setup -ArgumentList "/VERYSILENT","/SUPPRESSMSGBOXES","/NORESTART","/DIR=$dest","/LOG=$log" -Wait -PassThru
+          Write-Host "installer exit=$($proc.ExitCode) dest=$dest"
+          if ($proc.ExitCode -ne 0) {
+            if (Test-Path $log) { Get-Content $log -Tail 40 }
+            throw "installer exited $($proc.ExitCode)"
+          }
+          if (!(Test-Path (Join-Path $dest "OrbitRxMonitor.exe"))) { throw "installer did not extract OrbitRxMonitor.exe" }
+          python tools/check_pristine_payload.py $dest
+          if ($LASTEXITCODE -ne 0) { throw "installer payload is not pristine" }
+          Write-Host "INSTALLER-PRISTINE: PASS"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -430,12 +460,16 @@ jobs:
         run: |
           $ver = (Get-Content VERSION).Trim()
           if ($ver -ne "5.2.0") { throw "VERSION is $ver, this pack step is for 5.2.0" }
+          python tools/check_pristine_payload.py dist\OrbitRxMonitor
+          if ($LASTEXITCODE -ne 0) { throw "refusing to pack a launched portable folder" }
           # Same roots as the live 5.1.0 zip: the portable onedir (exe, NOTICE,
           # third-party licence texts) plus the installer, then SHA256SUMS.txt.
           $name = "OrbitRx-$ver-win-x64.zip"
           if (Test-Path $name) { Remove-Item $name -Force }
           tar -a -c -f $name -C dist OrbitRxMonitor OrbitRxMonitor-Setup.exe SHA256SUMS.txt
           if ($LASTEXITCODE -ne 0) { throw "tar failed" }
+          python tools/check_pristine_payload.py --zip $name
+          if ($LASTEXITCODE -ne 0) { throw "release zip is not pristine" }
           $zip = Get-Item $name
           $zipHash = (Get-FileHash $zip.FullName -Algorithm SHA256).Hash.ToLower()
           Write-Host ("ARTIFACT {0}  {1} bytes  sha256={2}" -f $zip.Name, $zip.Length, $zipHash)

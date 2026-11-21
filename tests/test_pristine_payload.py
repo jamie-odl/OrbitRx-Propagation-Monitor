@@ -1,6 +1,7 @@
+import zipfile
 from pathlib import Path
 
-from tools.check_pristine_payload import runtime_residue
+from tools.check_pristine_payload import runtime_residue, zip_runtime_residue
 
 
 def test_pristine_tree_is_accepted(tmp_path: Path):
@@ -28,3 +29,54 @@ def test_runtime_profile_is_rejected(tmp_path: Path):
     assert "propagation_log.csv" in found
     assert "logs/" in found
     assert "data/" in found
+
+
+def _zip_with(tmp_path: Path, names: list[str]) -> Path:
+    path = tmp_path / "OrbitRx-5.2.0-win-x64.zip"
+    with zipfile.ZipFile(path, "w") as archive:
+        for name in names:
+            archive.writestr(name, b"x")
+    return path
+
+
+def test_clean_release_zip_is_accepted(tmp_path: Path):
+    path = _zip_with(tmp_path, [
+        "OrbitRxMonitor/OrbitRxMonitor.exe",
+        "OrbitRxMonitor/_internal/NOTICE",
+        "OrbitRxMonitor-Setup.exe",
+        "SHA256SUMS.txt",
+    ])
+    assert zip_runtime_residue(path) == []
+
+
+def test_release_zip_with_runtime_files_is_rejected(tmp_path: Path):
+    path = _zip_with(tmp_path, [
+        "OrbitRxMonitor/OrbitRxMonitor.exe",
+        "OrbitRxMonitor/logs/orbitrx.log",
+        "OrbitRxMonitor/data/orbitrx_spots.db",
+        "OrbitRxMonitor/config.json",
+    ])
+    found = set(zip_runtime_residue(path))
+    assert "logs/" in found
+    assert "data/" in found
+    assert "config.json" in found
+
+
+def test_ci_launches_a_copy_and_requires_a_pristine_folder_zip_and_installer():
+    text = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    build = text.split("  build-windows:")[1]
+    capture = build.split("name: Self-capture")[1].split("\n      - name:")[0]
+    assert "dist-smoke\\OrbitRxMonitor\\OrbitRxMonitor.exe" in capture
+    assert "dist\\OrbitRxMonitor\\OrbitRxMonitor.exe" not in capture
+    unwritable = build.split("name: Launch the release exe")[1].split("\n      - name:")[0]
+    assert "dist-smoke\\OrbitRxMonitor\\OrbitRxMonitor.exe" in unwritable
+    assert build.index("name: Stage a launch copy") < build.index("name: Self-capture")
+    assert build.count("check_pristine_payload.py dist\\OrbitRxMonitor") >= 2
+    assert "check_pristine_payload.py --zip" in build
+    installer = build.split("name: Check the installer payload is pristine")[1].split("\n      - name:")[0]
+    assert "/VERYSILENT" in installer
+    assert "check_pristine_payload.py" in installer
+    assert build.index("name: Check the installer payload is pristine") < build.index("name: Pack OrbitRx-5.2.0-win-x64.zip")
+    pack = build.split("name: Pack OrbitRx-5.2.0-win-x64.zip")[1]
+    assert "check_pristine_payload.py dist\\OrbitRxMonitor" in pack
+    assert "check_pristine_payload.py --zip" in pack
